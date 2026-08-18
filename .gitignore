@@ -5,3 +5,4 @@
 .env
 *.exe
 *.test
+docker-compose.yml

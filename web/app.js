@@ -1,7 +1,15 @@
 (() => {
   const grid = document.getElementById("grid");
+  const albumGrid = document.getElementById("album-grid");
   const countEl = document.getElementById("count");
   const note = document.getElementById("note");
+  const pageTitle = document.getElementById("page-title");
+  const pageContext = document.getElementById("page-context");
+  const albumBack = document.getElementById("album-back");
+  const navPhotos = document.getElementById("nav-photos");
+  const navAlbums = document.getElementById("nav-albums");
+  const sidebarToggle = document.getElementById("sidebar-toggle");
+  const navScrim = document.getElementById("nav-scrim");
   const lb = document.getElementById("lightbox");
   const lbStage = document.getElementById("lb-stage");
   const lbImg = document.getElementById("lb-img");
@@ -15,9 +23,14 @@
 
   const THEME_KEY = "juens-theme";
   const THEME_AUTO_KEY = "juens-theme-auto";
+  const SIDEBAR_KEY = "juens-sidebar";
   const MODES = ["auto", "night", "day"];
   const MODE_LABEL = { day: "白天", auto: "自动", night: "黑夜" };
   const GAP = 6;
+
+  const query = new URLSearchParams(location.search);
+  const albumID = query.has("album") ? query.get("album") : null;
+  const pageView = albumID !== null ? "album" : (query.get("view") === "albums" ? "albums" : "photos");
 
   const items = [];
   const byId = new Map();
@@ -101,6 +114,45 @@
     setMode(MODES[(i + 1) % MODES.length]);
   }
 
+  function applySidebar(expanded, persist) {
+    const value = expanded ? "expanded" : "collapsed";
+    root.dataset.sidebar = value;
+    sidebarToggle.setAttribute("aria-expanded", expanded ? "true" : "false");
+    const label = expanded ? "收起导航" : "展开导航";
+    sidebarToggle.setAttribute("aria-label", label);
+    sidebarToggle.setAttribute("title", label);
+    const text = sidebarToggle.querySelector(".sr-only");
+    if (text) text.textContent = label;
+    if (persist) {
+      try { localStorage.setItem(SIDEBAR_KEY, value); } catch (err) {}
+    }
+    requestAnimationFrame(relayout);
+  }
+
+  function albumNameFromID(id) {
+    if (id === ".") return "根目录";
+    const parts = String(id || "").split("/");
+    return parts[parts.length - 1] || "相册";
+  }
+
+  function setHeading(title, context) {
+    pageTitle.textContent = title;
+    pageContext.textContent = context;
+    document.title = title + " · Juen's";
+  }
+
+  function configurePage() {
+    const albumsActive = pageView === "albums" || pageView === "album";
+    if (albumsActive) navAlbums.setAttribute("aria-current", "page");
+    else navPhotos.setAttribute("aria-current", "page");
+    albumBack.hidden = pageView !== "album";
+    albumGrid.hidden = pageView !== "albums";
+    grid.hidden = pageView === "albums";
+    if (pageView === "albums") setHeading("相册", "图库");
+    else if (pageView === "album") setHeading(albumNameFromID(albumID), "相册");
+    else setHeading("照片", "图库");
+  }
+
   function photoIdFromHash() {
     const m = /^#p\/(\d+)$/.exec(location.hash);
     return m ? m[1] : "";
@@ -148,6 +200,7 @@
   }
 
   function relayout() {
+    if (pageView === "albums") return;
     const width = grid.clientWidth;
     if (width <= 0) {
       grid.style.height = "0px";
@@ -204,27 +257,28 @@
   }
 
   function paint() {
+    if (pageView === "albums") return;
     const gridTop = grid.getBoundingClientRect().top + window.scrollY;
     const viewTop = window.scrollY - window.innerHeight;
     const viewBot = window.scrollY + window.innerHeight * 2;
     const vis = new Set();
     for (let i = 0; i < layouts.length; i++) {
-      const L = layouts[i];
-      const top = gridTop + L.y;
-      const bot = top + L.ch;
+      const layout = layouts[i];
+      const top = gridTop + layout.y;
+      const bot = top + layout.ch;
       if (bot < viewTop || top > viewBot) continue;
-      vis.add(L.id);
-      let el = rendered.get(L.id);
+      vis.add(layout.id);
+      let el = rendered.get(layout.id);
       if (!el) {
-        const p = byId.get(L.id);
+        const p = byId.get(layout.id);
         if (!p) continue;
         el = card(p);
-        rendered.set(L.id, el);
+        rendered.set(layout.id, el);
         grid.appendChild(el);
       }
-      el.style.transform = "translate(" + L.x + "px," + L.y + "px)";
-      el.style.width = L.cw + "px";
-      el.style.height = L.ch + "px";
+      el.style.transform = "translate(" + layout.x + "px," + layout.y + "px)";
+      el.style.width = layout.cw + "px";
+      el.style.height = layout.ch + "px";
     }
     rendered.forEach((el, id) => {
       if (!vis.has(id)) {
@@ -239,12 +293,72 @@
   }
 
   function queuePaint() {
-    if (paintQueued) return;
+    if (paintQueued || pageView === "albums") return;
     paintQueued = true;
     requestAnimationFrame(() => {
       paintQueued = false;
       paint();
     });
+  }
+
+  function albumCard(album) {
+    const link = document.createElement("a");
+    link.className = "album-card";
+    const q = new URLSearchParams();
+    q.set("album", album.id);
+    link.href = "/?" + q.toString();
+    link.title = album.id === "." ? album.name : album.id;
+    link.setAttribute("aria-label", album.name + "，" + album.count + " 张照片");
+
+    const img = document.createElement("img");
+    img.src = album.cover.thumb;
+    img.alt = "";
+    img.loading = "lazy";
+    img.decoding = "async";
+
+    const meta = document.createElement("span");
+    meta.className = "album-meta";
+    const name = document.createElement("strong");
+    name.textContent = album.name;
+    const total = document.createElement("small");
+    total.textContent = album.count + " 张照片";
+    meta.append(name, total);
+    link.append(img, meta);
+    return link;
+  }
+
+  async function loadAlbums() {
+    try {
+      const res = await fetch("/api/albums");
+      if (res.status === 401) {
+        goLogin();
+        return;
+      }
+      if (!res.ok) {
+        setNote("相册读不出来，稍后刷新页面。");
+        return;
+      }
+      const data = await res.json();
+      if (data.tz) tz = data.tz;
+      applyTheme();
+      countEl.textContent = String(data.total) + " 个";
+      albumGrid.replaceChildren();
+      for (const album of data.albums || []) {
+        albumGrid.appendChild(albumCard(album));
+      }
+      const scanning = data.status && data.status.scanning;
+      if (data.total === 0 && scanning) {
+        setNote("正在整理相册。");
+      } else if (data.total === 0) {
+        setNote("还没有可显示的相册。把照片放进图库目录或子文件夹后，它们会自动出现在这里。");
+      } else if (scanning) {
+        setNote("正在整理新照片。");
+      } else {
+        setNote("");
+      }
+    } catch (err) {
+      setNote("连不上相册服务，确认容器已经启动。");
+    }
   }
 
   function preferMeta() {
@@ -357,6 +471,7 @@
   }
 
   function syncFromURL() {
+    if (pageView === "albums") return;
     const id = photoIdFromHash();
     if (id) {
       if (lb.hidden) savedY = window.scrollY;
@@ -372,15 +487,22 @@
   }
 
   async function loadMore() {
-    if (loading || finished) return;
+    if (pageView === "albums" || loading || finished) return;
     loading = true;
     try {
       const q = new URLSearchParams({ limit: "40" });
       if (seed) q.set("seed", String(seed));
       if (next) q.set("after", next);
+      if (albumID !== null) q.set("album", albumID);
       const res = await fetch("/api/photos?" + q.toString());
       if (res.status === 401) {
         goLogin();
+        return;
+      }
+      if (res.status === 400 && albumID !== null) {
+        countEl.textContent = "0 张";
+        setNote("这个相册路径无效，请返回相册列表。");
+        finished = true;
         return;
       }
       if (!res.ok) {
@@ -390,6 +512,7 @@
       const data = await res.json();
       if (data.tz) tz = data.tz;
       if (data.seed && !seed) seed = data.seed;
+      if (data.album && data.album.name) setHeading(data.album.name, "相册");
       applyTheme();
       countEl.textContent = String(data.total) + " 张";
       for (const p of data.photos || []) {
@@ -403,6 +526,8 @@
       const scanning = data.status && data.status.scanning;
       if (data.total === 0 && scanning) {
         setNote("正在整理照片。");
+      } else if (data.total === 0 && pageView === "album") {
+        setNote("这个文件夹里没有可显示的照片。");
       } else if (data.total === 0) {
         setNote("目录里还没有可显示的照片。把 jpg、png、webp、gif 放进挂载的文件夹，子文件夹里的也会出现。");
       } else if (scanning) {
@@ -434,6 +559,10 @@
   }
 
   themeBtn.addEventListener("click", cycleMode);
+  sidebarToggle.addEventListener("click", () => {
+    applySidebar(root.dataset.sidebar !== "expanded", true);
+  });
+  navScrim.addEventListener("click", () => applySidebar(false, true));
 
   lbMetaToggle.addEventListener("click", (e) => {
     e.stopPropagation();
@@ -473,8 +602,10 @@
   });
   window.addEventListener("scroll", queuePaint, { passive: true });
   window.addEventListener("resize", relayout);
-  new ResizeObserver(relayout).observe(grid);
+  if ("ResizeObserver" in window) new ResizeObserver(relayout).observe(grid);
 
+  configurePage();
+  applySidebar(root.dataset.sidebar === "expanded", false);
   applyTheme();
   fetch("/api/health").then((r) => r.json()).then((h) => {
     if (h && h.tz) tz = h.tz;
@@ -483,5 +614,6 @@
   setInterval(() => {
     if (currentMode() === "auto") applyTheme();
   }, 60000);
-  loadMore();
+  if (pageView === "albums") loadAlbums();
+  else loadMore();
 })();

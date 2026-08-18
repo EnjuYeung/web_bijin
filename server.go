@@ -52,6 +52,9 @@ func newRouter(st *store, sc *scanner, thumbs *thumbCache, photosDir, tz string,
 	mux.Handle("GET /api/photos", gate.protect(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		handleList(w, r, st, sc, tz)
 	})))
+	mux.Handle("GET /api/albums", gate.protect(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		handleAlbums(w, r, st, sc, tz)
+	})))
 	mux.Handle("GET /thumb/{id}", gate.protect(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		handleThumb(w, r, st, thumbs)
 	})))
@@ -83,39 +86,21 @@ func handleList(w http.ResponseWriter, r *http.Request, st *store, sc *scanner, 
 		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "list failed"})
 		return
 	}
+	var selectedAlbum *albumRef
+	if r.URL.Query().Has("album") {
+		albumID, ok := validAlbumID(r.URL.Query().Get("album"))
+		if !ok {
+			writeJSON(w, http.StatusBadRequest, map[string]any{"error": "invalid album"})
+			return
+		}
+		all = filterAlbum(all, albumID)
+		selectedAlbum = &albumRef{ID: albumID, Name: albumDisplayName(albumID)}
+	}
 	sortByRank(all, seed)
 	photos := pageAfter(all, seed, afterRank, afterID, limit)
-	type item struct {
-		ID     int64  `json:"id"`
-		W      int    `json:"w"`
-		H      int    `json:"h"`
-		Name   string `json:"name"`
-		Title  string `json:"title"`
-		Format string `json:"format"`
-		Size   int64  `json:"size"`
-		Thumb  string `json:"thumb"`
-		Src    string `json:"src"`
-		Mtime  int64  `json:"mtime"`
-		Date   string `json:"date"`
-		Year   int    `json:"year"`
-	}
-	out := make([]item, 0, len(photos))
+	out := make([]photoItem, 0, len(photos))
 	for _, p := range photos {
-		date, year := formatDateInTZ(p.MtimeUnix, tz)
-		out = append(out, item{
-			ID:     p.ID,
-			W:      p.Width,
-			H:      p.Height,
-			Name:   filepath.ToSlash(p.RelPath),
-			Title:  photoTitle(p.RelPath),
-			Format: photoFormat(p.RelPath),
-			Size:   p.Size,
-			Thumb:  fmt.Sprintf("/thumb/%d", p.ID),
-			Src:    fmt.Sprintf("/original/%d", p.ID),
-			Mtime:  p.MtimeUnix,
-			Date:   date,
-			Year:   year,
-		})
+		out = append(out, makePhotoItem(p, tz))
 	}
 	var next *string
 	if len(photos) == pickLimit(limit) {
@@ -126,7 +111,76 @@ func handleList(w http.ResponseWriter, r *http.Request, st *store, sc *scanner, 
 		"photos": out,
 		"total":  len(all),
 		"next":   next,
-		"seed":   seed,
+		"seed":   strconv.FormatInt(seed, 10),
+		"tz":     tz,
+		"status": sc.snapshot(),
+		"album":  selectedAlbum,
+	})
+}
+
+type albumRef struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
+}
+
+type photoItem struct {
+	ID     int64  `json:"id"`
+	W      int    `json:"w"`
+	H      int    `json:"h"`
+	Name   string `json:"name"`
+	Title  string `json:"title"`
+	Format string `json:"format"`
+	Size   int64  `json:"size"`
+	Thumb  string `json:"thumb"`
+	Src    string `json:"src"`
+	Mtime  int64  `json:"mtime"`
+	Date   string `json:"date"`
+	Year   int    `json:"year"`
+}
+
+func makePhotoItem(p photo, tz string) photoItem {
+	date, year := formatDateInTZ(p.MtimeUnix, tz)
+	return photoItem{
+		ID:     p.ID,
+		W:      p.Width,
+		H:      p.Height,
+		Name:   filepath.ToSlash(p.RelPath),
+		Title:  photoTitle(p.RelPath),
+		Format: photoFormat(p.RelPath),
+		Size:   p.Size,
+		Thumb:  fmt.Sprintf("/thumb/%d", p.ID),
+		Src:    fmt.Sprintf("/original/%d", p.ID),
+		Mtime:  p.MtimeUnix,
+		Date:   date,
+		Year:   year,
+	}
+}
+
+func handleAlbums(w http.ResponseWriter, r *http.Request, st *store, sc *scanner, tz string) {
+	all, err := st.listOK()
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "list failed"})
+		return
+	}
+	type item struct {
+		ID    string    `json:"id"`
+		Name  string    `json:"name"`
+		Count int       `json:"count"`
+		Cover photoItem `json:"cover"`
+	}
+	albums := groupAlbums(all)
+	out := make([]item, 0, len(albums))
+	for _, a := range albums {
+		out = append(out, item{
+			ID:    a.ID,
+			Name:  a.Name,
+			Count: a.Count,
+			Cover: makePhotoItem(a.Cover, tz),
+		})
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"albums": out,
+		"total":  len(out),
 		"tz":     tz,
 		"status": sc.snapshot(),
 	})

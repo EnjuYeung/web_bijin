@@ -8,3 +8,4 @@ output
 *.exe
 *.test
 output
+docker-compose.yml

@@ -91,7 +91,7 @@ func TestUnauthHomeRedirectsToLogin(t *testing.T) {
 
 func TestUnauthAPIAndImagesRejected(t *testing.T) {
 	srv, _, _ := testApp(t)
-	for _, path := range []string{"/api/photos", "/thumb/1", "/original/1"} {
+	for _, path := range []string{"/api/photos", "/api/albums", "/thumb/1", "/original/1"} {
 		res, err := http.Get(srv.URL + path)
 		if err != nil {
 			t.Fatal(err)
@@ -100,6 +100,101 @@ func TestUnauthAPIAndImagesRejected(t *testing.T) {
 			t.Fatalf("%s got %d", path, res.StatusCode)
 		}
 		res.Body.Close()
+	}
+}
+
+func TestAlbumsAndAlbumPhotoFilter(t *testing.T) {
+	srv, st, _ := testApp(t)
+	now := time.Now().Unix()
+	for _, p := range []photo{
+		{RelPath: "2025/旅行/a.jpg", Size: 333, MtimeUnix: now - 20, Width: 300, Height: 200},
+		{RelPath: "2026/旅行/b.jpg", Size: 444, MtimeUnix: now - 10, Width: 200, Height: 300},
+		{RelPath: "2026/旅行/c.jpg", Size: 555, MtimeUnix: now, Width: 500, Height: 300},
+	} {
+		if _, err := st.upsert(p); err != nil {
+			t.Fatal(err)
+		}
+	}
+	c := loginCookie(t, srv, "juen", "secret")
+
+	req, _ := http.NewRequest(http.MethodGet, srv.URL+"/api/albums", nil)
+	req.AddCookie(c)
+	res, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer res.Body.Close()
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("albums %d", res.StatusCode)
+	}
+	var got struct {
+		Albums []struct {
+			ID    string `json:"id"`
+			Name  string `json:"name"`
+			Count int    `json:"count"`
+			Cover struct {
+				ID int64 `json:"id"`
+			} `json:"cover"`
+		} `json:"albums"`
+		Total int `json:"total"`
+	}
+	if err := json.NewDecoder(res.Body).Decode(&got); err != nil {
+		t.Fatal(err)
+	}
+	if got.Total != 3 || len(got.Albums) != 3 {
+		t.Fatalf("albums %+v", got)
+	}
+	var album2026 struct {
+		ID    string
+		Name  string
+		Count int
+		Cover struct{ ID int64 }
+	}
+	for _, a := range got.Albums {
+		if a.ID == "2026/旅行" {
+			album2026.ID, album2026.Name, album2026.Count, album2026.Cover.ID = a.ID, a.Name, a.Count, a.Cover.ID
+		}
+	}
+	if album2026.Name != "旅行" || album2026.Count != 2 || album2026.Cover.ID == 0 {
+		t.Fatalf("2026 album %+v", album2026)
+	}
+
+	filterURL := srv.URL + "/api/photos?limit=10&album=" + url.QueryEscape("2026/旅行")
+	req, _ = http.NewRequest(http.MethodGet, filterURL, nil)
+	req.AddCookie(c)
+	filtered, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer filtered.Body.Close()
+	var list struct {
+		Photos []struct {
+			Name string `json:"name"`
+		} `json:"photos"`
+		Total int      `json:"total"`
+		Album albumRef `json:"album"`
+	}
+	if err := json.NewDecoder(filtered.Body).Decode(&list); err != nil {
+		t.Fatal(err)
+	}
+	if list.Total != 2 || len(list.Photos) != 2 || list.Album.ID != "2026/旅行" || list.Album.Name != "旅行" {
+		t.Fatalf("filtered %+v", list)
+	}
+	for _, p := range list.Photos {
+		if !strings.HasPrefix(p.Name, "2026/旅行/") {
+			t.Fatalf("wrong album photo %q", p.Name)
+		}
+	}
+
+	req, _ = http.NewRequest(http.MethodGet, srv.URL+"/api/photos?album=../etc", nil)
+	req.AddCookie(c)
+	bad, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer bad.Body.Close()
+	if bad.StatusCode != http.StatusBadRequest {
+		t.Fatalf("invalid album got %d", bad.StatusCode)
 	}
 }
 
@@ -198,13 +293,17 @@ func TestLoginThenHomeAndList(t *testing.T) {
 			Date   string `json:"date"`
 			W, H   int
 		} `json:"photos"`
-		Total int `json:"total"`
+		Total int    `json:"total"`
+		Seed  string `json:"seed"`
 	}
 	if err := json.NewDecoder(list.Body).Decode(&data); err != nil {
 		t.Fatal(err)
 	}
 	if data.Total != 2 || len(data.Photos) != 2 {
 		t.Fatalf("photos %+v", data)
+	}
+	if data.Seed == "" {
+		t.Fatal("seed must be a JSON string so browsers preserve all int64 digits")
 	}
 	if data.Photos[0].Title == "" || data.Photos[0].Format != "JPEG" || data.Photos[0].Size == 0 || data.Photos[0].Date == "" {
 		t.Fatalf("metadata %+v", data.Photos[0])
