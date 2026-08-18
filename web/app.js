@@ -17,7 +17,7 @@
   const THEME_AUTO_KEY = "juens-theme-auto";
   const MODES = ["auto", "night", "day"];
   const MODE_LABEL = { day: "白天", auto: "自动", night: "黑夜" };
-  const GAP = 4;
+  const GAP = 6;
 
   const items = [];
   const byId = new Map();
@@ -82,8 +82,12 @@
     }
     root.dataset.theme = theme;
     if (themeBtn) {
-      themeBtn.textContent = MODE_LABEL[mode] || "自动";
-      themeBtn.setAttribute("aria-label", "显示模式 " + (MODE_LABEL[mode] || "自动") + "，点击切换");
+      const label = MODE_LABEL[mode] || "自动";
+      const hint = "显示模式：" + label + "；点击切换";
+      themeBtn.setAttribute("aria-label", hint);
+      themeBtn.setAttribute("title", hint);
+      const text = themeBtn.querySelector(".sr-only");
+      if (text) text.textContent = label;
     }
   }
 
@@ -251,8 +255,11 @@
     lb.classList.toggle("meta-on", open);
     lb.classList.toggle("meta-off", !open);
     lbMetaToggle.setAttribute("aria-expanded", open ? "true" : "false");
-    lbMetaToggle.textContent = open ? "收起" : "信息";
-    lbMetaToggle.setAttribute("aria-label", open ? "收起信息" : "显示信息");
+    const label = open ? "收起信息" : "显示信息";
+    lbMetaToggle.setAttribute("aria-label", label);
+    lbMetaToggle.setAttribute("title", label);
+    const text = lbMetaToggle.querySelector(".sr-only");
+    if (text) text.textContent = label;
   }
 
   function fillMeta(p) {
