@@ -1,0 +1,20 @@
+services:
+  bijin:
+    build: .
+    image: bijin:local
+    container_name: bijin
+    restart: unless-stopped
+    ports:
+      - "${HOST_PORT:-5001}:5001"
+    volumes:
+      - "${PHOTOS_DIR:-./photos}:/photos:ro"
+      - "${DATA_DIR:-./data}:/data"
+    environment:
+      TZ: ${TZ:-Asia/Shanghai}
+      SCAN_EVERY: ${SCAN_EVERY:-2m}
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:5001/api/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s

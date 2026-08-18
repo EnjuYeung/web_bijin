@@ -1,0 +1,10 @@
+data
+photos
+output
+.git
+.gitignore
+.env
+*.md
+*.exe
+*.test
+output

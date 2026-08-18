@@ -1,0 +1,7 @@
+/data
+/photos
+/output
+/.playwright-cli
+.env
+*.exe
+*.test
