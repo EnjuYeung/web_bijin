@@ -151,26 +151,10 @@ func (s *store) countOK() (int, error) {
 	return n, err
 }
 
-func (s *store) list(afterMtime, afterID int64, limit int) ([]photo, error) {
-	if limit <= 0 || limit > 80 {
-		limit = 40
-	}
-	var (
-		rows *sql.Rows
-		err  error
-	)
-	q := `SELECT id, rel_path, size, mtime_unix, width, height, broken
+func (s *store) listOK() ([]photo, error) {
+	rows, err := s.db.Query(`SELECT id, rel_path, size, mtime_unix, width, height, broken
 	      FROM photos
-	      WHERE broken=0 AND width>0 AND height>0`
-	if afterID > 0 {
-		rows, err = s.db.Query(
-			q+` AND (mtime_unix < ? OR (mtime_unix = ? AND id < ?))
-			    ORDER BY mtime_unix DESC, id DESC LIMIT ?`,
-			afterMtime, afterMtime, afterID, limit,
-		)
-	} else {
-		rows, err = s.db.Query(q+` ORDER BY mtime_unix DESC, id DESC LIMIT ?`, limit)
-	}
+	      WHERE broken=0 AND width>0 AND height>0`)
 	if err != nil {
 		return nil, err
 	}

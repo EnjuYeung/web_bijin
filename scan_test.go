@@ -86,7 +86,7 @@ func TestScanRecursiveAndFilters(t *testing.T) {
 	if n != 4 {
 		t.Fatalf("want 4 visible photos, got %d", n)
 	}
-	photos, err := st.list(0, 0, 40)
+	photos, err := st.listOK()
 	if err != nil {
 		t.Fatal(err)
 	}

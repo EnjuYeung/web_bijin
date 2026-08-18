@@ -17,7 +17,7 @@ import (
 //go:embed web
 var webEmbed embed.FS
 
-func newRouter(st *store, sc *scanner, thumbs *thumbCache, photosDir string) http.Handler {
+func newRouter(st *store, sc *scanner, thumbs *thumbCache, photosDir, tz string, gate *authGate) http.Handler {
 	webFS, err := fs.Sub(webEmbed, "web")
 	if err != nil {
 		panic(err)
@@ -27,83 +27,107 @@ func newRouter(st *store, sc *scanner, thumbs *thumbCache, photosDir string) htt
 	mux.Handle("GET /api/health", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]any{
 			"ok":     true,
+			"tz":     tz,
 			"status": sc.snapshot(),
 		})
 	}))
-	mux.Handle("GET /api/photos", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		handleList(w, r, st, sc)
+	mux.Handle("GET /api/login-bg", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		handleLoginBg(w, r, st, photosDir)
 	}))
-	mux.Handle("GET /thumb/{id}", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		handleThumb(w, r, st, thumbs)
-	}))
-	mux.Handle("GET /original/{id}", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		handleOriginal(w, r, st, photosDir)
-	}))
-	mux.Handle("GET /", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/" {
-			name := strings.TrimPrefix(r.URL.Path, "/")
-			if _, err := fs.Stat(webFS, name); err == nil && !strings.Contains(name, "..") {
-				http.FileServer(http.FS(webFS)).ServeHTTP(w, r)
-				return
-			}
-			http.NotFound(w, r)
+	mux.Handle("POST /api/login", http.HandlerFunc(gate.handleLogin))
+	mux.Handle("GET /login", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if gate.signedIn(r) {
+			http.Redirect(w, r, safeNext(r.URL.Query().Get("next")), http.StatusFound)
 			return
 		}
-		http.ServeFileFS(w, r, webFS, "index.html")
+		w.Header().Set("Cache-Control", "no-store")
+		http.ServeFileFS(w, r, webFS, "login.html")
 	}))
+	mux.Handle("GET /app.css", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.ServeFileFS(w, r, webFS, "app.css")
+	}))
+	mux.Handle("GET /app.js", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.ServeFileFS(w, r, webFS, "app.js")
+	}))
+	mux.Handle("GET /api/photos", gate.protect(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		handleList(w, r, st, sc, tz)
+	})))
+	mux.Handle("GET /thumb/{id}", gate.protect(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		handleThumb(w, r, st, thumbs)
+	})))
+	mux.Handle("GET /original/{id}", gate.protect(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		handleOriginal(w, r, st, photosDir)
+	})))
+	mux.Handle("GET /{$}", gate.protect(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Cache-Control", "no-store")
+		http.ServeFileFS(w, r, webFS, "index.html")
+	})))
 	return withLog(mux)
 }
 
-func handleList(w http.ResponseWriter, r *http.Request, st *store, sc *scanner) {
+func handleList(w http.ResponseWriter, r *http.Request, st *store, sc *scanner, tz string) {
 	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
-	var afterMtime, afterID int64
-	if after := r.URL.Query().Get("after"); after != "" {
-		parts := strings.SplitN(after, "-", 2)
-		if len(parts) == 2 {
-			afterMtime, _ = strconv.ParseInt(parts[0], 10, 64)
-			afterID, _ = strconv.ParseInt(parts[1], 10, 64)
+	seed, _ := strconv.ParseInt(r.URL.Query().Get("seed"), 10, 64)
+	if seed == 0 {
+		seed = time.Now().UnixNano()
+		if seed < 0 {
+			seed = -seed
+		}
+		if seed == 0 {
+			seed = 1
 		}
 	}
-	photos, err := st.list(afterMtime, afterID, limit)
+	afterRank, afterID := parseCursor(r.URL.Query().Get("after"))
+	all, err := st.listOK()
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "list failed"})
 		return
 	}
-	total, err := st.countOK()
-	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "count failed"})
-		return
-	}
+	sortByRank(all, seed)
+	photos := pageAfter(all, seed, afterRank, afterID, limit)
 	type item struct {
-		ID    int64  `json:"id"`
-		W     int    `json:"w"`
-		H     int    `json:"h"`
-		Name  string `json:"name"`
-		Thumb string `json:"thumb"`
-		Src   string `json:"src"`
-		Mtime int64  `json:"mtime"`
+		ID     int64  `json:"id"`
+		W      int    `json:"w"`
+		H      int    `json:"h"`
+		Name   string `json:"name"`
+		Title  string `json:"title"`
+		Format string `json:"format"`
+		Size   int64  `json:"size"`
+		Thumb  string `json:"thumb"`
+		Src    string `json:"src"`
+		Mtime  int64  `json:"mtime"`
+		Date   string `json:"date"`
+		Year   int    `json:"year"`
 	}
 	out := make([]item, 0, len(photos))
 	for _, p := range photos {
+		date, year := formatDateInTZ(p.MtimeUnix, tz)
 		out = append(out, item{
-			ID:    p.ID,
-			W:     p.Width,
-			H:     p.Height,
-			Name:  filepath.ToSlash(p.RelPath),
-			Thumb: fmt.Sprintf("/thumb/%d", p.ID),
-			Src:   fmt.Sprintf("/original/%d", p.ID),
-			Mtime: p.MtimeUnix,
+			ID:     p.ID,
+			W:      p.Width,
+			H:      p.Height,
+			Name:   filepath.ToSlash(p.RelPath),
+			Title:  photoTitle(p.RelPath),
+			Format: photoFormat(p.RelPath),
+			Size:   p.Size,
+			Thumb:  fmt.Sprintf("/thumb/%d", p.ID),
+			Src:    fmt.Sprintf("/original/%d", p.ID),
+			Mtime:  p.MtimeUnix,
+			Date:   date,
+			Year:   year,
 		})
 	}
 	var next *string
 	if len(photos) == pickLimit(limit) {
-		c := fmt.Sprintf("%d-%d", photos[len(photos)-1].MtimeUnix, photos[len(photos)-1].ID)
+		c := formatCursor(seed, photos[len(photos)-1])
 		next = &c
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"photos": out,
-		"total":  total,
+		"total":  len(all),
 		"next":   next,
+		"seed":   seed,
+		"tz":     tz,
 		"status": sc.snapshot(),
 	})
 }
@@ -113,6 +137,38 @@ func pickLimit(limit int) int {
 		return 40
 	}
 	return limit
+}
+
+func handleLoginBg(w http.ResponseWriter, r *http.Request, st *store, photosDir string) {
+	all, err := st.listOK()
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+	portrait := r.URL.Query().Get("orient") == "port"
+	p, ok := pickBackground(all, portrait)
+	if !ok {
+		http.NotFound(w, r)
+		return
+	}
+	full, err := safeRelPath(photosDir, filepath.FromSlash(p.RelPath))
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+	f, err := os.Open(full)
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+	defer f.Close()
+	stat, err := f.Stat()
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+	w.Header().Set("Cache-Control", "no-store")
+	http.ServeContent(w, r, filepath.Base(p.RelPath), stat.ModTime(), f)
 }
 
 func handleThumb(w http.ResponseWriter, r *http.Request, st *store, thumbs *thumbCache) {

@@ -12,6 +12,8 @@ services:
     environment:
       TZ: ${TZ:-Asia/Shanghai}
       SCAN_EVERY: ${SCAN_EVERY:-2m}
+      AUTH_USER: ${AUTH_USER:-juen}
+      AUTH_PASS: ${AUTH_PASS:-changeme}
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://127.0.0.1:5001/api/health"]
       interval: 30s

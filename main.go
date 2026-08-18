@@ -34,6 +34,13 @@ func main() {
 	thumbs := newThumbCache(cfg.ThumbDir(), cfg.PhotosDir)
 	scanner := newScanner(cfg, st, thumbs)
 
+	key, err := loadSessionKey(cfg.DataDir)
+	if err != nil {
+		slog.Error("session key", "err", err)
+		os.Exit(1)
+	}
+	gate := newAuthGate(cfg.AuthUser, cfg.AuthPass, key)
+
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
@@ -41,7 +48,7 @@ func main() {
 
 	srv := &http.Server{
 		Addr:              cfg.Listen,
-		Handler:           newRouter(st, scanner, thumbs, cfg.PhotosDir),
+		Handler:           newRouter(st, scanner, thumbs, cfg.PhotosDir, cfg.TZ, gate),
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 

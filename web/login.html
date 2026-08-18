@@ -1,0 +1,57 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-mode="auto" data-theme="dark">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="color-scheme" content="dark">
+  <title>Juen's</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect fill='%23141c24' width='32' height='32'/%3E%3Ctext x='16' y='23' text-anchor='middle' font-size='18' fill='%23dbe4eb' font-family='Didot,serif' font-style='italic'%3EJ%3C/text%3E%3C/svg%3E">
+  <link rel="stylesheet" href="/app.css">
+</head>
+<body class="gate-page">
+  <form class="gate" id="gate" method="post" action="/api/login" autocomplete="on">
+    <h1>Juen's</h1>
+    <label>
+      <span>用户名</span>
+      <input type="text" name="user" required autofocus autocomplete="username" spellcheck="false">
+    </label>
+    <label>
+      <span>密码</span>
+      <input type="password" name="pass" required autocomplete="current-password">
+    </label>
+    <input type="hidden" name="next" id="gate-next" value="/">
+    <p id="gate-err" class="gate-err" hidden>用户名或密码不对。</p>
+    <button type="submit">进入</button>
+  </form>
+  <script>
+    (function () {
+      var q = new URLSearchParams(location.search);
+      var next = q.get("next") || "/";
+      document.getElementById("gate-next").value = next;
+      if (q.get("err") === "1") {
+        var err = document.getElementById("gate-err");
+        err.hidden = false;
+      }
+      document.getElementById("gate").addEventListener("submit", function (e) {
+        e.preventDefault();
+        var form = e.target;
+        var err = document.getElementById("gate-err");
+        err.hidden = true;
+        fetch("/api/login", {
+          method: "POST",
+          headers: { Accept: "application/json" },
+          body: new FormData(form)
+        }).then(function (res) {
+          if (!res.ok) {
+            err.hidden = false;
+            return;
+          }
+          location.href = next + location.hash;
+        }).catch(function () {
+          err.hidden = false;
+        });
+      });
+    })();
+  </script>
+</body>
+</html>

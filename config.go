@@ -12,6 +12,9 @@ type config struct {
 	Listen       string
 	PhotosDir    string
 	DataDir      string
+	TZ           string
+	AuthUser     string
+	AuthPass     string
 	ScanEvery    time.Duration
 	MaxPixels    int64
 	ThumbMaxEdge int
@@ -22,9 +25,15 @@ func loadConfig() (config, error) {
 		Listen:       envOr("LISTEN", ":5001"),
 		PhotosDir:    envOr("PHOTOS_DIR", "/photos"),
 		DataDir:      envOr("DATA_DIR", "/data"),
+		TZ:           envOr("TZ", "Asia/Shanghai"),
+		AuthUser:     strings.TrimSpace(os.Getenv("AUTH_USER")),
+		AuthPass:     strings.TrimSpace(os.Getenv("AUTH_PASS")),
 		ScanEvery:    2 * time.Minute,
 		MaxPixels:    64_000_000,
 		ThumbMaxEdge: 720,
+	}
+	if _, err := time.LoadLocation(cfg.TZ); err != nil {
+		cfg.TZ = "Asia/Shanghai"
 	}
 	if !strings.Contains(cfg.Listen, ":") {
 		cfg.Listen = ":" + cfg.Listen
@@ -39,6 +48,9 @@ func loadConfig() (config, error) {
 	}
 	cfg.PhotosDir = photos
 	cfg.DataDir = data
+	if cfg.AuthUser == "" || cfg.AuthPass == "" {
+		return cfg, fmt.Errorf("AUTH_USER and AUTH_PASS must be set")
+	}
 	if v := strings.TrimSpace(os.Getenv("SCAN_EVERY")); v != "" {
 		d, err := time.ParseDuration(v)
 		if err != nil {
