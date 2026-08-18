@@ -2,67 +2,70 @@
 
 ## 测试环境说明
 
-- 日期：2026-08-18
-- 本机 macOS + Colima Docker，镜像 `bijin:local`，单容器 `0.0.0.0:5001->5001/tcp`
-- 开发验证另用 `go run` 监听 `:5002`（`AUTH_USER=juen` `AUTH_PASS=changeme` `TZ=Asia/Shanghai`）
-- 照片夹 `./photos`：58 张可显示图 + 坏图 / 非图片
-- 验证工具：`go test`、`curl`、Playwright（桌面 1280×800、手机 390×844）
+- 时间：2026-08-18 18:40:12 CST
+- 本机 macOS，Go `1.26.6 darwin/arm64`，Docker Compose 单容器 `bijin:local`，端口 `0.0.0.0:5001->5001/tcp`
+- 隔离开发实例监听 `:5002`，照片夹 `./photos` 共扫描 59 个文件，其中 58 张可显示、1 张坏图被跳过
+- 浏览器：Playwright Chromium，桌面 `1280×800`、手机 `390×844`
+- 验证工具：Node 语法检查、`go test`、`go vet`、Go 构建、Docker Compose、`curl`、Playwright DOM/截图/控制台
 
 ## 测试方法说明
 
-按 `TESTING.md` 顺序：启动 → 核心流程 → 异常 → 边界 → 持久化 → 回归 → 构建部署。  
-接口用 `curl` 对证据；页面用 Playwright 真机点击、读 DOM、截图。不靠读代码宣布通过。
+按 `TESTING.md` 的启动、核心流程、异常、边界、持久化、回归、构建部署顺序执行。后端用实际命令和 HTTP 状态验证；前端在真实 Chromium 中登录、点击、Hover、切换主题、开关信息卡，并同时读取元素坐标和计算样式。所有截图保存在 `output/playwright/`。
 
 ## 测试结果说明
 
-### T1 启动
-- T1.1 Compose 启动：通过。容器 `healthy`，日志 `scan done files=59`，`ready=58`。
-- T1.2 健康检查：通过。`/api/health` 未登录即可 200，含 `"tz":"Asia/Shanghai"`。
-- T1.3 缺账号不启动：通过。`go test` 中 `TestLoadConfigRequiresAuth`：空 `AUTH_USER`/`AUTH_PASS` 返回错误。
+### T1 语法、单元测试与构建
 
-### T2 核心流程
-- T2.1 未登录进不了首页：通过。`GET /` → 302 `/login?next=%2F`。Playwright 新会话打开 `/` 落在登录页。
-- T2.2 错密码：通过。JSON 登录返回 401，无 Cookie；页面提示「用户名或密码不对。」仍停在 `/login`。
-- T2.3 正确登录：通过。`juen` / `changeme` 后进首页，标题 `Juen's`，`58 张`。
-- T2.4 黑夜模式按钮：通过。右上角是一颗 `button.theme-btn`。点一次：`自动`→`黑夜`，背景 `rgb(20, 28, 36)`，`localStorage=night`。再点：`白天`，背景 `rgb(197, 206, 214)`。
-- T2.5 卡片 Hover Preview：通过。桌面悬停第一张：`scale=1.07`，`z-index=4`，底部 Overlay 三行可见（例：`36.jpg` / `2026年8月18日` / `JPEG · 400×340 · 3 KB`）。字号随卡片约 `13.44px`。截图 `output/playwright/desktop-hover.png`。
-- T2.6 大图信息栏（桌面默认开）：通过。点图后右侧栏展开，字段：文件名、格式、大小、分辨率、像素、存储空间。`aria-expanded=true`。点「收起」后 `display:none`，按钮改回「信息」。
-- T2.7 大图信息栏（手机默认关）：通过。390×844 打开大图：`meta-off`，栏 `display:none`，按钮为「信息」。点开后栏出现且「收起」可点，再点收回。
-- T2.8 登录页背景：通过。桌面 CSS 使用 `/api/login-bg?orient=land`，抽到的图宽>高（例 430×340）。手机使用 `orient=port`，抽到的图高>宽（例 400×420）。
-- T2.9 点大图返回：通过。点原图关闭浮层，hash 清空，瀑布流仍在。
+- 状态：通过。
+- 证据：`node --check web/app.js`、`go test ./...`、`go vet ./...`、`go build ./...` 均成功；`go test` 输出 `ok bijin`。
+- 覆盖：鉴权、会话密钥、随机分页、路径、图片元数据和登录背景方向等现有测试未回归。
 
-### T3 异常 / 不得绕过
-- T3.1 未登录列表：通过。`GET /api/photos` → 401。
-- T3.2 未登录缩略图 / 原图：通过。`/thumb/1`、`/original/1` → 401。
-- T3.3 直接要 `index.html`：通过。`GET /index.html` → 404。
-- T3.4 新浏览器会话：通过。清 Cookie 后再开 `/` 仍是登录页，进不了瀑布流。
+### T2 Hover Preview 收敛
 
-### T4 边界
-- T4.1 横竖背景回退：通过。单元测试 `splitByOrient`：有横图时 land 只抽横图，有竖图时 port 只抽竖图；正方形进后备池。
-- T4.2 低占用：通过。Docker `CPU 0.00%`，内存 `2.176MiB`。
-- T4.3 手机两列：通过。截图 `output/playwright/mobile-waterfall.png`。
+- 状态：通过。
+- 操作：桌面 Chromium 悬停首张卡片，悬停前后分别读取卡片矩形、层级、图片 transform 与 metadata opacity。
+- 证据：卡片前后都为 `x=6`、`y=62.390625`、`w=308.75`、`h=255.046875`，`scale=none`、`z-index=1`；内部图片从 `matrix(1)` 变为 `matrix(1.025)`，metadata 从 `opacity=0` 变为 `1`。卡片没有位移、变大或遮挡相邻照片。
+- 截图：`third-pass-home-desktop.png`、`third-pass-hover-desktop.png`。
 
-### T5 持久化
-- T5.1 主题：通过。点「黑夜」写入 `localStorage=night`。
-- T5.2 会话密钥：通过。`TestLoadSessionKeyPersists` 同一数据目录两次读到同一把 key。
-- T5.3 篡改 Cookie：通过。改 MAC 或过期会话一律无效。
+### T3 图形主题按钮
 
-### T6 回归
-- 健康检查仍公开，Compose 能变 `healthy`。
-- 点大图仍能关；左右翻页按钮仍在。
-- 虚拟滚动仍只挂视口附近卡片（桌面约 24 个 `.sheet`，不是 58）。
+- 状态：通过。
+- 操作：点击图形按钮循环主题，并检查 DOM、可见 SVG、无障碍名称和本地存储。
+- 证据：自动切到黑夜时 `data-mode=night`、`data-theme=dark`、`localStorage=night`；继续切到白天时只有 `theme-icon-day` 可见，按钮名称为「显示模式：白天；点击切换」，隐藏文本为「白天」。
+- 截图：`third-pass-night-desktop.png`、`third-pass-home-mobile.png`。
 
-### T7 构建
-- `docker build -t bijin:local .` 成功（本机 `credsStore=desktop` 缺可执行文件，改走 Colima socket 构建）。
-- `docker-compose up -d` 单容器，容器内 5001，环境里有 `AUTH_USER=juen`。
+### T4 大图与信息卡（桌面）
 
-### 单元测试
-- `go test ./...` 通过，含鉴权、登录背景取向、元数据格式、随机分页。
+- 状态：通过。
+- 操作：1280×800 点开照片，确认桌面默认展开信息卡，再点击图形按钮收起。
+- 证据：信息卡 `display=block`、尺寸 `304×779.21875`、圆角 `18.4px`；按钮 `aria-expanded=true`、名称「收起信息」，且只显示收起面板图标。收起后信息卡消失，按钮变为信息图标。
+- 折叠图标路径为 `M15 3v18M7 9l3 3-3 3`，箭头朝右侧屏幕边缘；实际点击后信息卡向右收起。Playwright 控制台 `Errors: 0, Warnings: 0`。
+- 大图文件名已变成绝对定位的左下角胶囊，不再参与图片居中布局。
+- 截图：`third-pass-lightbox-desktop.png`、`third-version-collapse-right.png`。
+
+### T5 手机布局与信息卡
+
+- 状态：通过。
+- 操作：390×844 打开首页和大图，检查瀑布流列数、横向溢出、信息卡默认状态、开关和尺寸。
+- 证据：首页列坐标为 `x=6/198`，两列宽均为 `186px`，`body.scrollWidth=390` 无横向溢出；可视区只渲染 20 张卡片。大图信息卡默认 `meta-off` / `display=none`；点击信息图标后卡片为 `304×826.40625`，四周留白，内容无需内部滚动。Escape 可关闭大图并回到瀑布流。
+- 截图：`third-pass-lightbox-mobile-closed.png`、`third-pass-lightbox-mobile-open.png`、`third-pass-home-mobile.png`。
+
+### T6 登录、异常与浏览器控制台
+
+- 状态：通过。
+- 证据：全新浏览器会话访问 `/` 落到登录页；输入 `juen` / `changeme` 后进入 58 张照片的首页。Playwright 完整流程后控制台 `Errors: 0, Warnings: 0`。
+- `curl`：未登录 `GET /` 为 302，未登录 `GET /api/photos` 为 401；登录为 200，登录后首页为 200，列表 `limit=1` 返回 1 张且 `total=58`。
+- 截图：`third-pass-login-desktop.png`。
+
+### T7 Compose 部署与资源占用
+
+- 状态：通过。
+- 证据：`docker compose build` 成功；`docker compose up -d` 重建单容器后状态 `healthy`。`/api/health` 返回 `ok=true`、`seen=59`、`ready=58`、`tz=Asia/Shanghai`。
+- 日志只包含预期的坏图跳过警告，没有未处理错误。
+- 空闲快照：CPU `0.00%`，内存 `2.223MiB`。
 
 ## 测试结论说明
 
-第二版在本机 Docker 和浏览器里可用：登录不能绕过；主题是一颗按钮；桌面卡片悬停放大并出三行信息；大图右侧信息栏桌面默认开、手机默认关，且可用按钮折叠；登录页按桌面横图 / 手机竖图随机抽背景。
+第三版 UI 优化通过本机真实浏览器、接口、单元测试和 Compose 部署验收：Hover 不再移动或放大卡片；主题与信息控制均为可访问的图形按钮；展开状态的折叠箭头与信息卡实际向右收起的方向一致；桌面和手机的信息卡行为正确；夜樱色、圆角和星标让界面更柔和，但没有增加运行依赖或常驻资源。
 
-未测：N100 / Unraid 真机；真实相机照片做登录背景时的观感（当前夹具多为纯色块，背景看起来像色块而不是风景照）；18:00 之后自动切黑夜的整点跳变。
-
-登录账号当前 Compose 默认是 `juen` / `changeme`，请在 `.env` 里改成自己的。
+未测试：Intel N100 / Unraid 真机；真实相机照片下的最终主观观感；18:00 整点自动从白天切到黑夜的长时间等待场景。
