@@ -1,0 +1,18 @@
+{
+  "scanned_at": "2026-08-21T11:37:45+08:00",
+  "framework": "vanilla HTML, CSS and JavaScript embedded by Go",
+  "font_stack": "local system fonts only; no web-font dependency",
+  "palette": "existing light and dark night-sakura custom properties in web/app.css",
+  "motion": "CSS transitions only; no motion library",
+  "spacing": "existing ad-hoc rem values and a 6px virtual-gallery gap",
+  "pages": [
+    "web/index.html",
+    "web/login.html"
+  ],
+  "preserve": [
+    "routes and native JavaScript architecture",
+    "light, auto and dark theme behavior",
+    "virtual masonry, albums and lightbox behavior",
+    "offline-first local deployment"
+  ]
+}

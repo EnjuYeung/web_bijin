@@ -6,7 +6,7 @@
 
 - 语言：Go。一个静态二进制同时提供页面、接口、原图和缩略图。
 - 数据：SQLite 文件，和缩略图一起放在数据目录。不另起数据库容器。
-- 前端：服务端内嵌的单页 HTML / CSS / JS，无前端框架、无构建步骤。
+- 前端：服务端内嵌的单页 HTML / CSS / JS；主样式消费根目录 `tokens.css` 的共享设计令牌，无前端框架、无构建步骤。
 - 运行：一个 Docker Compose 文件、一个容器、一个进程。容器内固定监听 `5001`。宿主机端口由 Compose 环境变量 `HOST_PORT` 决定。
 - 图片来源：容器内 `/photos`（只读挂载用户目录）。递归扫描子目录。
 
@@ -59,6 +59,7 @@ Compose 另提供 `HOST_PORT`、`PHOTOS_DIR`（宿主机路径）、`DATA_DIR`�
 | 路径 | 作用 |
 |---|---|
 | `GET /login` | 登录页（未登录可进） |
+| `GET /app.css`、`GET /tokens.css`、`GET /app.js` | 登录页与相册共用的内嵌静态资源（未登录可取） |
 | `POST /api/login` | 校验账号并写 Cookie |
 | `GET /api/login-bg` | 登录页随机背景图（桌面横图 / 手机竖图） |
 | `GET /` | 相册页面（需登录） |

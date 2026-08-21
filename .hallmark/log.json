@@ -1,0 +1,27 @@
+[
+  {
+    "date": "2026-08-21",
+    "scope": "app-refinement",
+    "macrostructure": "Portfolio Grid + Photographic",
+    "theme": "custom",
+    "theme_axes": "dark (light companion) / geometric-sans / chromatic-dusty-pink",
+    "vibe": "dreamlike, subtle anime, compact, calligraphic",
+    "enrichment": "none (user photography)",
+    "nav": "N3 Side-rail with sakura control",
+    "footer": "none (application)",
+    "variation_knobs": "152px rail / inline art-count / borderless sakura control",
+    "brief": "Compact title count and artistic sidebar refinement"
+  },
+  {
+    "date": "2026-08-21",
+    "scope": "app",
+    "macrostructure": "Portfolio Grid + Photographic",
+    "theme": "custom",
+    "theme_axes": "dark (light companion) / geometric-sans / chromatic-dusty-pink",
+    "vibe": "dreamlike, subtle anime, sharp, nocturnal",
+    "enrichment": "none (user photography)",
+    "nav": "N3 Side-rail (functional app adaptation)",
+    "footer": "none (application)",
+    "brief": "Juen's local photo gallery UI redesign"
+  }
+]

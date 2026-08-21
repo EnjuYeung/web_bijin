@@ -14,7 +14,7 @@ import (
 	"time"
 )
 
-//go:embed web
+//go:embed web tokens.css
 var webEmbed embed.FS
 
 func newRouter(st *store, sc *scanner, thumbs *thumbCache, photosDir, tz string, gate *authGate) http.Handler {
@@ -45,6 +45,9 @@ func newRouter(st *store, sc *scanner, thumbs *thumbCache, photosDir, tz string,
 	}))
 	mux.Handle("GET /app.css", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		http.ServeFileFS(w, r, webFS, "app.css")
+	}))
+	mux.Handle("GET /tokens.css", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.ServeFileFS(w, r, webEmbed, "tokens.css")
 	}))
 	mux.Handle("GET /app.js", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		http.ServeFileFS(w, r, webFS, "app.js")

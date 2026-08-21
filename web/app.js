@@ -4,7 +4,6 @@
   const countEl = document.getElementById("count");
   const note = document.getElementById("note");
   const pageTitle = document.getElementById("page-title");
-  const pageContext = document.getElementById("page-context");
   const albumBack = document.getElementById("album-back");
   const navPhotos = document.getElementById("nav-photos");
   const navAlbums = document.getElementById("nav-albums");
@@ -26,7 +25,7 @@
   const SIDEBAR_KEY = "juens-sidebar";
   const MODES = ["auto", "night", "day"];
   const MODE_LABEL = { day: "白天", auto: "自动", night: "黑夜" };
-  const GAP = 6;
+  const GAP = 8;
 
   const query = new URLSearchParams(location.search);
   const albumID = query.has("album") ? query.get("album") : null;
@@ -135,10 +134,15 @@
     return parts[parts.length - 1] || "相册";
   }
 
-  function setHeading(title, context) {
+  function setHeading(title) {
     pageTitle.textContent = title;
-    pageContext.textContent = context;
     document.title = title + " · Juen's";
+  }
+
+  function setCount(value, spokenUnit) {
+    const text = String(value);
+    countEl.textContent = text;
+    countEl.setAttribute("aria-label", text + " " + spokenUnit);
   }
 
   function configurePage() {
@@ -148,9 +152,9 @@
     albumBack.hidden = pageView !== "album";
     albumGrid.hidden = pageView !== "albums";
     grid.hidden = pageView === "albums";
-    if (pageView === "albums") setHeading("相册", "图库");
-    else if (pageView === "album") setHeading(albumNameFromID(albumID), "相册");
-    else setHeading("照片", "图库");
+    if (pageView === "albums") setHeading("相册");
+    else if (pageView === "album") setHeading(albumNameFromID(albumID));
+    else setHeading("照片");
   }
 
   function photoIdFromHash() {
@@ -341,7 +345,7 @@
       const data = await res.json();
       if (data.tz) tz = data.tz;
       applyTheme();
-      countEl.textContent = String(data.total) + " 个";
+      setCount(data.total, "个相册");
       albumGrid.replaceChildren();
       for (const album of data.albums || []) {
         albumGrid.appendChild(albumCard(album));
@@ -500,7 +504,7 @@
         return;
       }
       if (res.status === 400 && albumID !== null) {
-        countEl.textContent = "0 张";
+        setCount(0, "张照片");
         setNote("这个相册路径无效，请返回相册列表。");
         finished = true;
         return;
@@ -512,9 +516,9 @@
       const data = await res.json();
       if (data.tz) tz = data.tz;
       if (data.seed && !seed) seed = data.seed;
-      if (data.album && data.album.name) setHeading(data.album.name, "相册");
+      if (data.album && data.album.name) setHeading(data.album.name);
       applyTheme();
-      countEl.textContent = String(data.total) + " 张";
+      setCount(data.total, "张照片");
       for (const p of data.photos || []) {
         if (byId.has(p.id)) continue;
         items.push(p);

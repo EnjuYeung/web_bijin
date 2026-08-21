@@ -36,10 +36,13 @@
         <span class="brand-short" aria-hidden="true">J</span>
       </a>
       <button type="button" id="sidebar-toggle" class="icon-btn sidebar-toggle" aria-expanded="true" aria-controls="sidebar" aria-label="收起导航" title="收起导航">
-        <svg viewBox="0 0 24 24" aria-hidden="true">
-          <rect x="3" y="3" width="18" height="18" rx="3"></rect>
-          <path d="M9 3v18"></path>
-          <path class="sidebar-arrow" d="m15 9-3 3 3 3"></path>
+        <svg class="sakura-icon" viewBox="0 0 24 24" aria-hidden="true">
+          <path d="M12 12C9.8 10.1 9.3 6.4 12 3.5C14.7 6.4 14.2 10.1 12 12Z"></path>
+          <path d="M12 12C9.8 10.1 9.3 6.4 12 3.5C14.7 6.4 14.2 10.1 12 12Z" transform="rotate(72 12 12)"></path>
+          <path d="M12 12C9.8 10.1 9.3 6.4 12 3.5C14.7 6.4 14.2 10.1 12 12Z" transform="rotate(144 12 12)"></path>
+          <path d="M12 12C9.8 10.1 9.3 6.4 12 3.5C14.7 6.4 14.2 10.1 12 12Z" transform="rotate(216 12 12)"></path>
+          <path d="M12 12C9.8 10.1 9.3 6.4 12 3.5C14.7 6.4 14.2 10.1 12 12Z" transform="rotate(288 12 12)"></path>
+          <circle cx="12" cy="12" r="1.25"></circle>
         </svg>
         <span class="sr-only">收起导航</span>
       </button>
@@ -72,10 +75,8 @@
         <a id="album-back" class="icon-btn album-back" href="/?view=albums" aria-label="返回相册" title="返回相册" hidden>
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m15 18-6-6 6-6"></path></svg>
         </a>
-        <div>
-          <p id="page-context" class="page-context">图库</p>
-          <h1 id="page-title">照片</h1>
-        </div>
+        <h1 id="page-title">照片</h1>
+        <p id="count" aria-live="polite" aria-label="数量">—</p>
       </div>
       <div class="tools">
         <button type="button" id="theme-btn" class="icon-btn theme-btn" aria-label="显示模式：自动；点击切换" title="显示模式：自动；点击切换">
@@ -93,7 +94,6 @@
           </svg>
           <span class="sr-only">自动</span>
         </button>
-        <p id="count">—</p>
       </div>
     </header>
     <main>

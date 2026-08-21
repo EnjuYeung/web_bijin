@@ -1,0 +1,117 @@
+/* Hallmark · design tokens: Moonlit Sakura · source: design.md */
+:root {
+  --font-display: "Avenir Next Condensed", "Avenir Next", "Hiragino Sans", "PingFang SC", sans-serif;
+  --font-body: "Avenir Next", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+  --font-wordmark: "Bodoni 72", Didot, "Times New Roman", serif;
+  --font-brand-art: "Snell Roundhand", "Segoe Script", "Brush Script MT", cursive;
+
+  --space-3xs: 0.25rem;
+  --space-2xs: 0.5rem;
+  --space-xs: 0.75rem;
+  --space-sm: 1rem;
+  --space-md: 1.5rem;
+  --space-lg: 2rem;
+  --space-xl: 3rem;
+  --space-2xl: 4rem;
+  --space-3xl: 6rem;
+
+  --text-xs: 0.625rem;
+  --text-sm: 0.75rem;
+  --text-base: 1rem;
+  --text-md: 1.125rem;
+  --text-lg: 1.375rem;
+  --text-xl: 1.75rem;
+  --text-2xl: 2.25rem;
+  --text-display: clamp(2.25rem, 5vw, 3.5rem);
+  --text-wordmark: 1.9rem;
+  --text-count: 1.5rem;
+
+  --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-in: cubic-bezier(0.7, 0, 0.84, 0);
+  --ease-in-out: cubic-bezier(0.65, 0, 0.35, 1);
+  --dur-micro: 100ms;
+  --dur-short: 180ms;
+  --dur-medium: 260ms;
+  --dur-long: 420ms;
+
+  --rule-thin: 1px;
+  --rule-strong: 2px;
+  --radius-xs: 0.125rem;
+  --radius-sm: 0.25rem;
+  --radius-md: 0.375rem;
+  --radius-lg: 0.5rem;
+
+  --grid-gap: 0.5rem;
+  --control-size: 2.75rem;
+  --sidebar-expanded: 9.5rem;
+  --sidebar-collapsed: 4rem;
+  --sidebar-mobile: 3.5rem;
+
+  --z-base: 1;
+  --z-raised: 10;
+  --z-sticky: 200;
+  --z-modal: 400;
+  --z-tooltip: 600;
+}
+
+html[data-theme="dark"] {
+  color-scheme: dark;
+  --color-paper: oklch(15% 0.025 305);
+  --color-paper-2: oklch(19% 0.030 305);
+  --color-paper-3: oklch(23% 0.035 305);
+  --color-ink: oklch(94% 0.018 325);
+  --color-ink-2: oklch(78% 0.024 315);
+  --color-muted: oklch(68% 0.025 310);
+  --color-neutral: oklch(58% 0.024 305);
+  --color-rule: oklch(52% 0.035 305);
+  --color-rule-2: oklch(40% 0.030 305);
+  --color-accent: oklch(75% 0.150 350);
+  --color-accent-strong: oklch(81% 0.135 350);
+  --color-accent-soft: oklch(26% 0.060 345);
+  --color-accent-ink: oklch(17% 0.025 305);
+  --color-focus: oklch(84% 0.180 350);
+  --color-error: oklch(72% 0.170 25);
+  --color-success: oklch(74% 0.130 155);
+  --color-on-image: oklch(96% 0.014 340);
+  --color-void: oklch(9% 0.018 305);
+  --color-overlay: oklch(9% 0.018 305 / 0.96);
+  --color-overlay-control: oklch(22% 0.030 305 / 0.92);
+  --color-image-scrim: oklch(10% 0.025 305 / 0.88);
+  --color-transparent: oklch(50% 0.010 305 / 0);
+  --color-bloom-accent: oklch(72% 0.150 350 / 0.10);
+  --color-bloom-neutral: oklch(48% 0.100 305 / 0.10);
+  --color-shadow: oklch(5% 0.018 305 / 0.46);
+  --color-login-scrim: oklch(9% 0.020 305 / 0.78);
+  --color-login-scrim-soft: oklch(9% 0.020 305 / 0.22);
+}
+
+html[data-theme="light"] {
+  color-scheme: light;
+  --color-paper: oklch(96% 0.018 315);
+  --color-paper-2: oklch(93% 0.022 315);
+  --color-paper-3: oklch(89% 0.026 315);
+  --color-ink: oklch(21% 0.025 305);
+  --color-ink-2: oklch(36% 0.030 305);
+  --color-muted: oklch(42% 0.028 305);
+  --color-neutral: oklch(54% 0.026 305);
+  --color-rule: oklch(58% 0.030 310);
+  --color-rule-2: oklch(72% 0.026 312);
+  --color-accent: oklch(64% 0.180 350);
+  --color-accent-strong: oklch(57% 0.195 350);
+  --color-accent-soft: oklch(91% 0.038 345);
+  --color-accent-ink: oklch(18% 0.022 305);
+  --color-focus: oklch(50% 0.210 350);
+  --color-error: oklch(55% 0.200 25);
+  --color-success: oklch(48% 0.130 155);
+  --color-on-image: oklch(96% 0.014 340);
+  --color-void: oklch(9% 0.018 305);
+  --color-overlay: oklch(9% 0.018 305 / 0.96);
+  --color-overlay-control: oklch(22% 0.030 305 / 0.92);
+  --color-image-scrim: oklch(10% 0.025 305 / 0.88);
+  --color-transparent: oklch(50% 0.010 305 / 0);
+  --color-bloom-accent: oklch(70% 0.145 350 / 0.09);
+  --color-bloom-neutral: oklch(62% 0.085 305 / 0.08);
+  --color-shadow: oklch(12% 0.020 305 / 0.16);
+  --color-login-scrim: oklch(9% 0.020 305 / 0.78);
+  --color-login-scrim-soft: oklch(9% 0.020 305 / 0.22);
+}
