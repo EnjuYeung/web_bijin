@@ -16,6 +16,23 @@ docker compose up -d
 
 浏览器打开 `http://服务器IP:HOST_PORT`，先登录。没登录进不了首页，也看不到照片。
 
+### 使用对象存储
+
+支持 S3 兼容对象存储（MinIO、Cloudflare R2 及提供 S3 API 的服务）。前端操作和图片地址不变，只需在 `.env` 中切换图片来源：
+
+```dotenv
+STORAGE_BACKEND=s3
+S3_ENDPOINT=https://s3.example.com
+S3_REGION=us-east-1
+S3_BUCKET=my-photos
+S3_PREFIX=gallery
+S3_ACCESS_KEY=replace-me
+S3_SECRET_KEY=replace-me
+S3_USE_SSL=true
+```
+
+`S3_PREFIX` 可留空。endpoint 已包含 `http://` 或 `https://` 时，以其中的协议为准；没有协议时由 `S3_USE_SSL` 决定。对象存储模式下 `PHOTOS_DIR` 挂载会被忽略，SQLite、会话密钥和缩略图仍保存在 `DATA_DIR`。对象存储访问失败时会保留已有索引，不会把图库误判为空。
+
 ## 浏览照片和相册
 
 - 左侧导航的「照片」是全部照片瀑布流；「相册」按图片直接所在文件夹展示封面、文件夹名和照片数量。
@@ -35,6 +52,14 @@ docker compose up -d
 | `HOST_PORT` | `5001` | 宿主机端口。容器内永远是 5001 |
 | `PHOTOS_DIR` | `./photos` | 宿主机上的照片目录 |
 | `DATA_DIR` | `./data` | 索引和缩略图 |
+| `STORAGE_BACKEND` | `local` | 图片来源：`local` 或 `s3` |
+| `S3_ENDPOINT` | （对象存储必填） | S3 兼容 endpoint，可含 `http://` 或 `https://` |
+| `S3_REGION` | `us-east-1` | S3 region |
+| `S3_BUCKET` | （对象存储必填） | bucket 名称 |
+| `S3_PREFIX` | 空 | 可选的对象 key 前缀 |
+| `S3_ACCESS_KEY` | （对象存储必填） | S3 access key，只写入 `.env` |
+| `S3_SECRET_KEY` | （对象存储必填） | S3 secret key，只写入 `.env` |
+| `S3_USE_SSL` | `true` | endpoint 不含协议时是否使用 HTTPS |
 | `TZ` | `Asia/Shanghai` | 日志时间和日期显示 |
 | `SCAN_EVERY` | `2m` | 自动再扫间隔，最短 10 秒 |
 | `AUTH_USER` | `juen` | 登录用户名，必须有 |
@@ -62,4 +87,4 @@ docker compose logs -f
 docker compose down
 ```
 
-数据和缩略图在 `DATA_DIR`，照片本身只读挂载，不会被改。
+数据和缩略图在 `DATA_DIR`。本地模式只读挂载照片，对象存储模式只读取 bucket 中的对象，不会修改或上传原图。

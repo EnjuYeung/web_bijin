@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"image/jpeg"
 	"os"
@@ -13,13 +14,13 @@ import (
 
 type thumbCache struct {
 	dir    string
-	photos string
+	source photoSource
 	edge   int
 	mu     sync.Mutex
 }
 
-func newThumbCache(dir, photos string) *thumbCache {
-	return &thumbCache{dir: dir, photos: photos, edge: 720}
+func newThumbCache(dir string, source photoSource) *thumbCache {
+	return &thumbCache{dir: dir, source: source, edge: 720}
 }
 
 func (t *thumbCache) path(id int64) string {
@@ -35,17 +36,18 @@ func (t *thumbCache) remove(id int64) {
 	_ = os.Remove(t.path(id))
 }
 
-func (t *thumbCache) ensure(p photo) error {
+func (t *thumbCache) ensure(ctx context.Context, p photo) error {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	if err := os.MkdirAll(t.dir, 0o755); err != nil {
 		return err
 	}
-	src, err := safeRelPath(t.photos, filepath.FromSlash(p.RelPath))
+	src, err := t.source.Open(ctx, p.RelPath)
 	if err != nil {
 		return err
 	}
-	img, err := imaging.Open(src, imaging.AutoOrientation(true))
+	defer src.Close()
+	img, err := imaging.Decode(src, imaging.AutoOrientation(true))
 	if err != nil {
 		return err
 	}
@@ -62,15 +64,16 @@ func (t *thumbCache) ensure(p photo) error {
 		return err
 	}
 	tmp := t.path(p.ID) + ".tmp"
+	defer os.Remove(tmp)
 	if err := os.WriteFile(tmp, buf.Bytes(), 0o644); err != nil {
 		return err
 	}
 	return os.Rename(tmp, t.path(p.ID))
 }
 
-func (t *thumbCache) serveBytes(p photo) ([]byte, error) {
+func (t *thumbCache) serveBytes(ctx context.Context, p photo) ([]byte, error) {
 	if !t.exists(p.ID) {
-		if err := t.ensure(p); err != nil {
+		if err := t.ensure(ctx, p); err != nil {
 			return nil, err
 		}
 	}

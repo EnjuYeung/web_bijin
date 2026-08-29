@@ -68,14 +68,15 @@ func TestScanRecursiveAndFilters(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer st.Close()
-	th := newThumbCache(filepath.Join(data, "thumbs"), root)
+	source := &localPhotoSource{root: root}
+	th := newThumbCache(filepath.Join(data, "thumbs"), source)
 	sc := newScanner(config{
 		PhotosDir:    root,
 		DataDir:      data,
 		ScanEvery:    time.Hour,
 		MaxPixels:    64_000_000,
 		ThumbMaxEdge: 720,
-	}, st, th)
+	}, st, th, source)
 	if err := sc.walk(context.Background()); err != nil {
 		t.Fatal(err)
 	}

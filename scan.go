@@ -2,14 +2,13 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"image"
 	_ "image/gif"
 	_ "image/jpeg"
 	_ "image/png"
 	"io"
-	"io/fs"
 	"log/slog"
-	"os"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -38,13 +37,14 @@ type scanner struct {
 	cfg    config
 	store  *store
 	thumbs *thumbCache
+	source photoSource
 
 	mu    sync.Mutex
 	state scanState
 }
 
-func newScanner(cfg config, store *store, thumbs *thumbCache) *scanner {
-	return &scanner{cfg: cfg, store: store, thumbs: thumbs}
+func newScanner(cfg config, store *store, thumbs *thumbCache, source photoSource) *scanner {
+	return &scanner{cfg: cfg, store: store, thumbs: thumbs, source: source}
 }
 
 func (s *scanner) snapshot() scanState {
@@ -94,63 +94,18 @@ func (s *scanner) run(ctx context.Context) {
 }
 
 func (s *scanner) walk(ctx context.Context) error {
-	root := s.cfg.PhotosDir
-	st, err := os.Stat(root)
-	if err != nil || !st.IsDir() {
-		slog.Warn("photos dir missing or not a directory", "dir", root, "err", err)
-		gone, delErr := s.store.deleteMissing(map[string]struct{}{})
-		if delErr != nil {
-			return delErr
-		}
-		for _, p := range gone {
-			s.thumbs.remove(p.ID)
-		}
-		s.mu.Lock()
-		s.state.Seen = 0
-		s.mu.Unlock()
-		return nil
-	}
-
 	keep := make(map[string]struct{})
 	seen := 0
-	err = filepath.WalkDir(root, func(path string, d fs.DirEntry, walkErr error) error {
-		if ctx.Err() != nil {
-			return ctx.Err()
-		}
-		if walkErr != nil {
-			slog.Warn("walk", "path", path, "err", walkErr)
-			return nil
-		}
-		name := d.Name()
-		if name != "." && strings.HasPrefix(name, ".") {
-			if d.IsDir() {
-				return filepath.SkipDir
-			}
-			return nil
-		}
-		if d.IsDir() {
-			return nil
-		}
-		if !isImageName(name) {
-			return nil
-		}
-		rel, err := filepath.Rel(root, path)
-		if err != nil {
-			return nil
-		}
-		rel = filepath.ToSlash(rel)
-		if hiddenRel(rel) {
-			return nil
-		}
-		keep[rel] = struct{}{}
+	err := s.source.Walk(ctx, func(object sourceObject) error {
+		keep[object.RelPath] = struct{}{}
 		seen++
-		if err := s.ingest(path, rel); err != nil {
-			slog.Warn("ingest", "path", rel, "err", err)
+		if err := s.ingest(ctx, object); err != nil {
+			slog.Warn("ingest", "path", object.RelPath, "err", err)
 		}
 		return nil
 	})
 	if err != nil {
-		return err
+		return fmt.Errorf("walk %s source: %w", s.source.Name(), err)
 	}
 
 	gone, err := s.store.deleteMissing(keep)
@@ -168,36 +123,44 @@ func (s *scanner) walk(ctx context.Context) error {
 	return nil
 }
 
-func (s *scanner) ingest(absPath, rel string) error {
-	info, err := os.Stat(absPath)
+func (s *scanner) ingest(ctx context.Context, object sourceObject) error {
+	existing, ok, err := s.store.getByPath(object.RelPath)
 	if err != nil {
 		return err
 	}
-	mtime := info.ModTime().Unix()
-	size := info.Size()
-
-	existing, ok, err := s.store.getByPath(rel)
-	if err != nil {
-		return err
+	if ok && s.source.Name() == "local" && existing.SourceVersion == "" &&
+		existing.Size == object.Size && existing.MtimeUnix == object.Mtime.Unix() &&
+		!existing.Broken && existing.Width > 0 && existing.Height > 0 {
+		existing.SourceVersion = object.Version
+		if _, err := s.store.upsert(existing); err != nil {
+			return err
+		}
+		if !s.thumbs.exists(existing.ID) {
+			if err := s.thumbs.ensure(ctx, existing); err != nil {
+				slog.Warn("thumb", "id", existing.ID, "err", err)
+			}
+		}
+		return nil
 	}
-	unchanged := ok && existing.Size == size && existing.MtimeUnix == mtime && !existing.Broken && existing.Width > 0
+	unchanged := ok && existing.SourceVersion == object.Version && !existing.Broken && existing.Width > 0
 	if unchanged {
 		if !s.thumbs.exists(existing.ID) {
-			if err := s.thumbs.ensure(existing); err != nil {
+			if err := s.thumbs.ensure(ctx, existing); err != nil {
 				slog.Warn("thumb", "id", existing.ID, "err", err)
 			}
 		}
 		return nil
 	}
 
-	w, h, decErr := imageSize(absPath, s.cfg.MaxPixels)
+	w, h, decErr := imageSize(ctx, s.source, object.RelPath, s.cfg.MaxPixels)
 	p := photo{
-		RelPath:   rel,
-		Size:      size,
-		MtimeUnix: mtime,
-		Width:     w,
-		Height:    h,
-		Broken:    decErr != nil || w == 0 || h == 0,
+		RelPath:       object.RelPath,
+		Size:          object.Size,
+		MtimeUnix:     object.Mtime.Unix(),
+		Width:         w,
+		Height:        h,
+		Broken:        decErr != nil || w == 0 || h == 0,
+		SourceVersion: object.Version,
 	}
 	id, err := s.store.upsert(p)
 	if err != nil {
@@ -205,12 +168,12 @@ func (s *scanner) ingest(absPath, rel string) error {
 	}
 	p.ID = id
 	if p.Broken {
-		slog.Warn("skip broken image", "path", rel, "err", decErr)
+		slog.Warn("skip broken image", "path", object.RelPath, "err", decErr)
 		s.thumbs.remove(id)
 		return nil
 	}
-	if err := s.thumbs.ensure(p); err != nil {
-		slog.Warn("thumb", "id", id, "path", rel, "err", err)
+	if err := s.thumbs.ensure(ctx, p); err != nil {
+		slog.Warn("thumb", "id", id, "path", object.RelPath, "err", err)
 	}
 	return nil
 }
@@ -229,8 +192,8 @@ func hiddenRel(rel string) bool {
 	return false
 }
 
-func imageSize(path string, maxPixels int64) (int, int, error) {
-	f, err := os.Open(path)
+func imageSize(ctx context.Context, source photoSource, rel string, maxPixels int64) (int, int, error) {
+	f, err := source.Open(ctx, rel)
 	if err != nil {
 		return 0, 0, err
 	}
@@ -246,8 +209,12 @@ func imageSize(path string, maxPixels int64) (int, int, error) {
 		return 0, 0, errTooManyPixels
 	}
 	w, h := cfg.Width, cfg.Height
-	if rot := exifSwap(path); rot {
-		w, h = h, w
+	orientationReader, err := source.Open(ctx, rel)
+	if err == nil {
+		if orientation, readErr := readOrientation(orientationReader); readErr == nil && orientation >= 5 && orientation <= 8 {
+			w, h = h, w
+		}
+		_ = orientationReader.Close()
 	}
 	return w, h, nil
 }

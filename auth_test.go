@@ -36,9 +36,10 @@ func testApp(t *testing.T) (*httptest.Server, *store, string) {
 	if _, err := st.upsert(photo{RelPath: "tall.jpg", Size: 222, MtimeUnix: time.Now().Unix(), Width: 200, Height: 400}); err != nil {
 		t.Fatal(err)
 	}
-	th := newThumbCache(filepath.Join(data, "thumbs"), photos)
-	sc := newScanner(config{PhotosDir: photos, DataDir: data, ScanEvery: time.Hour, MaxPixels: 64_000_000, ThumbMaxEdge: 720}, st, th)
-	h := newRouter(st, sc, th, photos, "Asia/Shanghai", testGate())
+	source := &localPhotoSource{root: photos}
+	th := newThumbCache(filepath.Join(data, "thumbs"), source)
+	sc := newScanner(config{PhotosDir: photos, DataDir: data, ScanEvery: time.Hour, MaxPixels: 64_000_000, ThumbMaxEdge: 720}, st, th, source)
+	h := newRouter(st, sc, th, source, "Asia/Shanghai", testGate())
 	srv := httptest.NewServer(h)
 	t.Cleanup(srv.Close)
 	return srv, st, photos

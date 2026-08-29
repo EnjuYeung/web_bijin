@@ -10,13 +10,14 @@ import (
 )
 
 type photo struct {
-	ID        int64
-	RelPath   string
-	Size      int64
-	MtimeUnix int64
-	Width     int
-	Height    int
-	Broken    bool
+	ID            int64
+	RelPath       string
+	Size          int64
+	MtimeUnix     int64
+	Width         int
+	Height        int
+	Broken        bool
+	SourceVersion string
 }
 
 type store struct {
@@ -43,7 +44,7 @@ func (s *store) Close() error {
 }
 
 func (s *store) migrate() error {
-	_, err := s.db.Exec(`
+	if _, err := s.db.Exec(`
 CREATE TABLE IF NOT EXISTS photos (
   id INTEGER PRIMARY KEY,
   rel_path TEXT NOT NULL UNIQUE,
@@ -51,20 +52,50 @@ CREATE TABLE IF NOT EXISTS photos (
   mtime_unix INTEGER NOT NULL,
   width INTEGER NOT NULL DEFAULT 0,
   height INTEGER NOT NULL DEFAULT 0,
-  broken INTEGER NOT NULL DEFAULT 0
+  broken INTEGER NOT NULL DEFAULT 0,
+  source_version TEXT NOT NULL DEFAULT ''
 );
 CREATE INDEX IF NOT EXISTS photos_mtime ON photos(mtime_unix DESC, id DESC);
-`)
+`); err != nil {
+		return err
+	}
+	hasVersion, err := s.hasColumn("photos", "source_version")
+	if err != nil {
+		return err
+	}
+	if !hasVersion {
+		_, err = s.db.Exec(`ALTER TABLE photos ADD COLUMN source_version TEXT NOT NULL DEFAULT ''`)
+	}
 	return err
+}
+
+func (s *store) hasColumn(table, column string) (bool, error) {
+	rows, err := s.db.Query(`PRAGMA table_info(` + table + `)`)
+	if err != nil {
+		return false, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var cid, notNull, primaryKey int
+		var name, kind string
+		var defaultValue any
+		if err := rows.Scan(&cid, &name, &kind, &notNull, &defaultValue, &primaryKey); err != nil {
+			return false, err
+		}
+		if name == column {
+			return true, nil
+		}
+	}
+	return false, rows.Err()
 }
 
 func (s *store) getByID(id int64) (photo, bool, error) {
 	var p photo
 	var broken int
 	err := s.db.QueryRow(
-		`SELECT id, rel_path, size, mtime_unix, width, height, broken FROM photos WHERE id = ?`,
+		`SELECT id, rel_path, size, mtime_unix, width, height, broken, source_version FROM photos WHERE id = ?`,
 		id,
-	).Scan(&p.ID, &p.RelPath, &p.Size, &p.MtimeUnix, &p.Width, &p.Height, &broken)
+	).Scan(&p.ID, &p.RelPath, &p.Size, &p.MtimeUnix, &p.Width, &p.Height, &broken, &p.SourceVersion)
 	if err == sql.ErrNoRows {
 		return photo{}, false, nil
 	}
@@ -79,9 +110,9 @@ func (s *store) getByPath(rel string) (photo, bool, error) {
 	var p photo
 	var broken int
 	err := s.db.QueryRow(
-		`SELECT id, rel_path, size, mtime_unix, width, height, broken FROM photos WHERE rel_path = ?`,
+		`SELECT id, rel_path, size, mtime_unix, width, height, broken, source_version FROM photos WHERE rel_path = ?`,
 		rel,
-	).Scan(&p.ID, &p.RelPath, &p.Size, &p.MtimeUnix, &p.Width, &p.Height, &broken)
+	).Scan(&p.ID, &p.RelPath, &p.Size, &p.MtimeUnix, &p.Width, &p.Height, &broken, &p.SourceVersion)
 	if err == sql.ErrNoRows {
 		return photo{}, false, nil
 	}
@@ -103,14 +134,14 @@ func (s *store) upsert(p photo) (int64, error) {
 	}
 	if ok {
 		_, err = s.db.Exec(
-			`UPDATE photos SET size=?, mtime_unix=?, width=?, height=?, broken=? WHERE id=?`,
-			p.Size, p.MtimeUnix, p.Width, p.Height, broken, existing.ID,
+			`UPDATE photos SET size=?, mtime_unix=?, width=?, height=?, broken=?, source_version=? WHERE id=?`,
+			p.Size, p.MtimeUnix, p.Width, p.Height, broken, p.SourceVersion, existing.ID,
 		)
 		return existing.ID, err
 	}
 	res, err := s.db.Exec(
-		`INSERT INTO photos (rel_path, size, mtime_unix, width, height, broken) VALUES (?,?,?,?,?,?)`,
-		p.RelPath, p.Size, p.MtimeUnix, p.Width, p.Height, broken,
+		`INSERT INTO photos (rel_path, size, mtime_unix, width, height, broken, source_version) VALUES (?,?,?,?,?,?,?)`,
+		p.RelPath, p.Size, p.MtimeUnix, p.Width, p.Height, broken, p.SourceVersion,
 	)
 	if err != nil {
 		return 0, err
@@ -152,7 +183,7 @@ func (s *store) countOK() (int, error) {
 }
 
 func (s *store) listOK() ([]photo, error) {
-	rows, err := s.db.Query(`SELECT id, rel_path, size, mtime_unix, width, height, broken
+	rows, err := s.db.Query(`SELECT id, rel_path, size, mtime_unix, width, height, broken, source_version
 	      FROM photos
 	      WHERE broken=0 AND width>0 AND height>0`)
 	if err != nil {
@@ -163,7 +194,7 @@ func (s *store) listOK() ([]photo, error) {
 	for rows.Next() {
 		var p photo
 		var broken int
-		if err := rows.Scan(&p.ID, &p.RelPath, &p.Size, &p.MtimeUnix, &p.Width, &p.Height, &broken); err != nil {
+		if err := rows.Scan(&p.ID, &p.RelPath, &p.Size, &p.MtimeUnix, &p.Width, &p.Height, &broken, &p.SourceVersion); err != nil {
 			return nil, err
 		}
 		p.Broken = broken != 0

@@ -7,7 +7,6 @@ import (
 	"io/fs"
 	"log/slog"
 	"net/http"
-	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -17,7 +16,7 @@ import (
 //go:embed web tokens.css
 var webEmbed embed.FS
 
-func newRouter(st *store, sc *scanner, thumbs *thumbCache, photosDir, tz string, gate *authGate) http.Handler {
+func newRouter(st *store, sc *scanner, thumbs *thumbCache, source photoSource, tz string, gate *authGate) http.Handler {
 	webFS, err := fs.Sub(webEmbed, "web")
 	if err != nil {
 		panic(err)
@@ -32,7 +31,7 @@ func newRouter(st *store, sc *scanner, thumbs *thumbCache, photosDir, tz string,
 		})
 	}))
 	mux.Handle("GET /api/login-bg", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		handleLoginBg(w, r, st, photosDir)
+		handleLoginBg(w, r, st, source)
 	}))
 	mux.Handle("POST /api/login", http.HandlerFunc(gate.handleLogin))
 	mux.Handle("GET /login", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -62,7 +61,7 @@ func newRouter(st *store, sc *scanner, thumbs *thumbCache, photosDir, tz string,
 		handleThumb(w, r, st, thumbs)
 	})))
 	mux.Handle("GET /original/{id}", gate.protect(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		handleOriginal(w, r, st, photosDir)
+		handleOriginal(w, r, st, source)
 	})))
 	mux.Handle("GET /{$}", gate.protect(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Cache-Control", "no-store")
@@ -196,7 +195,7 @@ func pickLimit(limit int) int {
 	return limit
 }
 
-func handleLoginBg(w http.ResponseWriter, r *http.Request, st *store, photosDir string) {
+func handleLoginBg(w http.ResponseWriter, r *http.Request, st *store, source photoSource) {
 	all, err := st.listOK()
 	if err != nil {
 		http.NotFound(w, r)
@@ -208,24 +207,14 @@ func handleLoginBg(w http.ResponseWriter, r *http.Request, st *store, photosDir 
 		http.NotFound(w, r)
 		return
 	}
-	full, err := safeRelPath(photosDir, filepath.FromSlash(p.RelPath))
-	if err != nil {
-		http.NotFound(w, r)
-		return
-	}
-	f, err := os.Open(full)
+	f, err := source.Open(r.Context(), p.RelPath)
 	if err != nil {
 		http.NotFound(w, r)
 		return
 	}
 	defer f.Close()
-	stat, err := f.Stat()
-	if err != nil {
-		http.NotFound(w, r)
-		return
-	}
 	w.Header().Set("Cache-Control", "no-store")
-	http.ServeContent(w, r, filepath.Base(p.RelPath), stat.ModTime(), f)
+	http.ServeContent(w, r, filepath.Base(p.RelPath), time.Unix(p.MtimeUnix, 0), f)
 }
 
 func handleThumb(w http.ResponseWriter, r *http.Request, st *store, thumbs *thumbCache) {
@@ -244,7 +233,7 @@ func handleThumb(w http.ResponseWriter, r *http.Request, st *store, thumbs *thum
 		w.WriteHeader(http.StatusNotModified)
 		return
 	}
-	b, err := thumbs.serveBytes(p)
+	b, err := thumbs.serveBytes(r.Context(), p)
 	if err != nil {
 		http.Error(w, "thumb failed", http.StatusInternalServerError)
 		return
@@ -254,31 +243,21 @@ func handleThumb(w http.ResponseWriter, r *http.Request, st *store, thumbs *thum
 	_, _ = w.Write(b)
 }
 
-func handleOriginal(w http.ResponseWriter, r *http.Request, st *store, photosDir string) {
+func handleOriginal(w http.ResponseWriter, r *http.Request, st *store, source photoSource) {
 	p, ok := photoFromReq(w, r, st)
 	if !ok {
 		return
 	}
-	full, err := safeRelPath(photosDir, filepath.FromSlash(p.RelPath))
-	if err != nil {
-		http.NotFound(w, r)
-		return
-	}
-	f, err := os.Open(full)
+	f, err := source.Open(r.Context(), p.RelPath)
 	if err != nil {
 		http.NotFound(w, r)
 		return
 	}
 	defer f.Close()
-	stat, err := f.Stat()
-	if err != nil {
-		http.NotFound(w, r)
-		return
-	}
 	etag := fmt.Sprintf(`"%d-%d-%d-orig"`, p.ID, p.Size, p.MtimeUnix)
 	w.Header().Set("ETag", etag)
 	w.Header().Set("Cache-Control", "private, max-age=3600")
-	http.ServeContent(w, r, filepath.Base(p.RelPath), stat.ModTime(), f)
+	http.ServeContent(w, r, filepath.Base(p.RelPath), time.Unix(p.MtimeUnix, 0), f)
 }
 
 func photoFromReq(w http.ResponseWriter, r *http.Request, st *store) (photo, bool) {
