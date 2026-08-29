@@ -97,7 +97,7 @@ func (s *scanner) walk(ctx context.Context) error {
 	keep := make(map[string]struct{})
 	seen := 0
 	err := s.source.Walk(ctx, func(object sourceObject) error {
-		keep[object.RelPath] = struct{}{}
+		keep[object.Key] = struct{}{}
 		seen++
 		if err := s.ingest(ctx, object); err != nil {
 			slog.Warn("ingest", "path", object.RelPath, "err", err)
@@ -124,11 +124,11 @@ func (s *scanner) walk(ctx context.Context) error {
 }
 
 func (s *scanner) ingest(ctx context.Context, object sourceObject) error {
-	existing, ok, err := s.store.getByPath(object.RelPath)
+	existing, ok, err := s.store.getByPath(object.Key)
 	if err != nil {
 		return err
 	}
-	if ok && s.source.Name() == "local" && existing.SourceVersion == "" &&
+	if ok && object.Backend == "local" && existing.SourceVersion == "" &&
 		existing.Size == object.Size && existing.MtimeUnix == object.Mtime.Unix() &&
 		!existing.Broken && existing.Width > 0 && existing.Height > 0 {
 		existing.SourceVersion = object.Version
@@ -152,8 +152,9 @@ func (s *scanner) ingest(ctx context.Context, object sourceObject) error {
 		return nil
 	}
 
-	w, h, decErr := imageSize(ctx, s.source, object.RelPath, s.cfg.MaxPixels)
+	w, h, decErr := imageSize(ctx, s.source, object.Key, s.cfg.MaxPixels)
 	p := photo{
+		SourceKey:     object.Key,
 		RelPath:       object.RelPath,
 		Size:          object.Size,
 		MtimeUnix:     object.Mtime.Unix(),

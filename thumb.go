@@ -42,7 +42,7 @@ func (t *thumbCache) ensure(ctx context.Context, p photo) error {
 	if err := os.MkdirAll(t.dir, 0o755); err != nil {
 		return err
 	}
-	src, err := t.source.Open(ctx, p.RelPath)
+	src, err := t.source.Open(ctx, p.sourceKey())
 	if err != nil {
 		return err
 	}

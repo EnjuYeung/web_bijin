@@ -45,6 +45,9 @@ VALUES ('old.jpg', 10, 1234, 100, 80, 0);
 	if old.SourceVersion != "" {
 		t.Fatalf("migrated row version = %q", old.SourceVersion)
 	}
+	if old.SourceKey != "old.jpg" || old.RelPath != "old.jpg" {
+		t.Fatalf("migrated paths = key:%q display:%q", old.SourceKey, old.RelPath)
+	}
 	old.SourceVersion = "etag-v1"
 	if _, err := store.upsert(old); err != nil {
 		t.Fatal(err)

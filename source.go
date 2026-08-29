@@ -18,10 +18,12 @@ import (
 )
 
 type sourceObject struct {
+	Key     string
 	RelPath string
 	Size    int64
 	Mtime   time.Time
 	Version string
+	Backend string
 }
 
 type readSeekCloser interface {
@@ -37,11 +39,16 @@ type photoSource interface {
 }
 
 func newPhotoSource(cfg config) (photoSource, error) {
+	local := &localPhotoSource{root: cfg.PhotosDir}
 	switch cfg.StorageBackend {
 	case "local":
-		return &localPhotoSource{root: cfg.PhotosDir}, nil
+		return local, nil
 	case "s3":
-		return newS3PhotoSource(cfg)
+		s3, err := newS3PhotoSource(cfg)
+		if err != nil {
+			return nil, err
+		}
+		return &combinedPhotoSource{local: local, s3: s3}, nil
 	default:
 		return nil, fmt.Errorf("unsupported STORAGE_BACKEND %q", cfg.StorageBackend)
 	}
@@ -91,10 +98,12 @@ func (s *localPhotoSource) Walk(ctx context.Context, visit func(sourceObject) er
 			return err
 		}
 		return visit(sourceObject{
+			Key:     rel,
 			RelPath: rel,
 			Size:    info.Size(),
 			Mtime:   info.ModTime(),
 			Version: fmt.Sprintf("local:%d:%d", info.Size(), info.ModTime().UnixNano()),
+			Backend: "local",
 		})
 	})
 }
@@ -178,15 +187,43 @@ func (s *s3PhotoSource) Walk(ctx context.Context, visit func(sourceObject) error
 		}
 		version = "s3:" + version
 		if err := visit(sourceObject{
+			Key:     rel,
 			RelPath: rel,
 			Size:    object.Size,
 			Mtime:   object.LastModified,
 			Version: version,
+			Backend: "s3",
 		}); err != nil {
 			return err
 		}
 	}
 	return ctx.Err()
+}
+
+const s3SourceKeyPrefix = ".bijin-source/s3/"
+
+type combinedPhotoSource struct {
+	local photoSource
+	s3    photoSource
+}
+
+func (s *combinedPhotoSource) Name() string { return "local+s3" }
+
+func (s *combinedPhotoSource) Walk(ctx context.Context, visit func(sourceObject) error) error {
+	if err := s.local.Walk(ctx, visit); err != nil {
+		return err
+	}
+	return s.s3.Walk(ctx, func(object sourceObject) error {
+		object.Key = s3SourceKeyPrefix + object.RelPath
+		return visit(object)
+	})
+}
+
+func (s *combinedPhotoSource) Open(ctx context.Context, key string) (readSeekCloser, error) {
+	if strings.HasPrefix(key, s3SourceKeyPrefix) {
+		return s.s3.Open(ctx, strings.TrimPrefix(key, s3SourceKeyPrefix))
+	}
+	return s.local.Open(ctx, key)
 }
 
 func (s *s3PhotoSource) Open(ctx context.Context, rel string) (readSeekCloser, error) {

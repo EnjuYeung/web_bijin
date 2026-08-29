@@ -11,6 +11,7 @@ import (
 
 type photo struct {
 	ID            int64
+	SourceKey     string
 	RelPath       string
 	Size          int64
 	MtimeUnix     int64
@@ -18,6 +19,13 @@ type photo struct {
 	Height        int
 	Broken        bool
 	SourceVersion string
+}
+
+func (p photo) sourceKey() string {
+	if p.SourceKey != "" {
+		return p.SourceKey
+	}
+	return p.RelPath
 }
 
 type store struct {
@@ -53,7 +61,8 @@ CREATE TABLE IF NOT EXISTS photos (
   width INTEGER NOT NULL DEFAULT 0,
   height INTEGER NOT NULL DEFAULT 0,
   broken INTEGER NOT NULL DEFAULT 0,
-  source_version TEXT NOT NULL DEFAULT ''
+  source_version TEXT NOT NULL DEFAULT '',
+  display_path TEXT NOT NULL DEFAULT ''
 );
 CREATE INDEX IF NOT EXISTS photos_mtime ON photos(mtime_unix DESC, id DESC);
 `); err != nil {
@@ -65,6 +74,20 @@ CREATE INDEX IF NOT EXISTS photos_mtime ON photos(mtime_unix DESC, id DESC);
 	}
 	if !hasVersion {
 		_, err = s.db.Exec(`ALTER TABLE photos ADD COLUMN source_version TEXT NOT NULL DEFAULT ''`)
+		if err != nil {
+			return err
+		}
+	}
+	hasDisplayPath, err := s.hasColumn("photos", "display_path")
+	if err != nil {
+		return err
+	}
+	if !hasDisplayPath {
+		_, err = s.db.Exec(`ALTER TABLE photos ADD COLUMN display_path TEXT NOT NULL DEFAULT ''`)
+		if err != nil {
+			return err
+		}
+		_, err = s.db.Exec(`UPDATE photos SET display_path = rel_path WHERE display_path = ''`)
 	}
 	return err
 }
@@ -93,9 +116,9 @@ func (s *store) getByID(id int64) (photo, bool, error) {
 	var p photo
 	var broken int
 	err := s.db.QueryRow(
-		`SELECT id, rel_path, size, mtime_unix, width, height, broken, source_version FROM photos WHERE id = ?`,
+		`SELECT id, rel_path, display_path, size, mtime_unix, width, height, broken, source_version FROM photos WHERE id = ?`,
 		id,
-	).Scan(&p.ID, &p.RelPath, &p.Size, &p.MtimeUnix, &p.Width, &p.Height, &broken, &p.SourceVersion)
+	).Scan(&p.ID, &p.SourceKey, &p.RelPath, &p.Size, &p.MtimeUnix, &p.Width, &p.Height, &broken, &p.SourceVersion)
 	if err == sql.ErrNoRows {
 		return photo{}, false, nil
 	}
@@ -110,9 +133,9 @@ func (s *store) getByPath(rel string) (photo, bool, error) {
 	var p photo
 	var broken int
 	err := s.db.QueryRow(
-		`SELECT id, rel_path, size, mtime_unix, width, height, broken, source_version FROM photos WHERE rel_path = ?`,
+		`SELECT id, rel_path, display_path, size, mtime_unix, width, height, broken, source_version FROM photos WHERE rel_path = ?`,
 		rel,
-	).Scan(&p.ID, &p.RelPath, &p.Size, &p.MtimeUnix, &p.Width, &p.Height, &broken, &p.SourceVersion)
+	).Scan(&p.ID, &p.SourceKey, &p.RelPath, &p.Size, &p.MtimeUnix, &p.Width, &p.Height, &broken, &p.SourceVersion)
 	if err == sql.ErrNoRows {
 		return photo{}, false, nil
 	}
@@ -124,7 +147,11 @@ func (s *store) getByPath(rel string) (photo, bool, error) {
 }
 
 func (s *store) upsert(p photo) (int64, error) {
-	existing, ok, err := s.getByPath(p.RelPath)
+	key := p.SourceKey
+	if key == "" {
+		key = p.RelPath
+	}
+	existing, ok, err := s.getByPath(key)
 	if err != nil {
 		return 0, err
 	}
@@ -134,14 +161,14 @@ func (s *store) upsert(p photo) (int64, error) {
 	}
 	if ok {
 		_, err = s.db.Exec(
-			`UPDATE photos SET size=?, mtime_unix=?, width=?, height=?, broken=?, source_version=? WHERE id=?`,
-			p.Size, p.MtimeUnix, p.Width, p.Height, broken, p.SourceVersion, existing.ID,
+			`UPDATE photos SET display_path=?, size=?, mtime_unix=?, width=?, height=?, broken=?, source_version=? WHERE id=?`,
+			p.RelPath, p.Size, p.MtimeUnix, p.Width, p.Height, broken, p.SourceVersion, existing.ID,
 		)
 		return existing.ID, err
 	}
 	res, err := s.db.Exec(
-		`INSERT INTO photos (rel_path, size, mtime_unix, width, height, broken, source_version) VALUES (?,?,?,?,?,?,?)`,
-		p.RelPath, p.Size, p.MtimeUnix, p.Width, p.Height, broken, p.SourceVersion,
+		`INSERT INTO photos (rel_path, display_path, size, mtime_unix, width, height, broken, source_version) VALUES (?,?,?,?,?,?,?,?)`,
+		key, p.RelPath, p.Size, p.MtimeUnix, p.Width, p.Height, broken, p.SourceVersion,
 	)
 	if err != nil {
 		return 0, err
@@ -150,7 +177,7 @@ func (s *store) upsert(p photo) (int64, error) {
 }
 
 func (s *store) deleteMissing(keep map[string]struct{}) ([]photo, error) {
-	rows, err := s.db.Query(`SELECT id, rel_path FROM photos`)
+	rows, err := s.db.Query(`SELECT id, rel_path, display_path FROM photos`)
 	if err != nil {
 		return nil, err
 	}
@@ -158,10 +185,10 @@ func (s *store) deleteMissing(keep map[string]struct{}) ([]photo, error) {
 	var gone []photo
 	for rows.Next() {
 		var p photo
-		if err := rows.Scan(&p.ID, &p.RelPath); err != nil {
+		if err := rows.Scan(&p.ID, &p.SourceKey, &p.RelPath); err != nil {
 			return nil, err
 		}
-		if _, ok := keep[p.RelPath]; !ok {
+		if _, ok := keep[p.SourceKey]; !ok {
 			gone = append(gone, p)
 		}
 	}
@@ -183,7 +210,7 @@ func (s *store) countOK() (int, error) {
 }
 
 func (s *store) listOK() ([]photo, error) {
-	rows, err := s.db.Query(`SELECT id, rel_path, size, mtime_unix, width, height, broken, source_version
+	rows, err := s.db.Query(`SELECT id, rel_path, display_path, size, mtime_unix, width, height, broken, source_version
 	      FROM photos
 	      WHERE broken=0 AND width>0 AND height>0`)
 	if err != nil {
@@ -194,7 +221,7 @@ func (s *store) listOK() ([]photo, error) {
 	for rows.Next() {
 		var p photo
 		var broken int
-		if err := rows.Scan(&p.ID, &p.RelPath, &p.Size, &p.MtimeUnix, &p.Width, &p.Height, &broken, &p.SourceVersion); err != nil {
+		if err := rows.Scan(&p.ID, &p.SourceKey, &p.RelPath, &p.Size, &p.MtimeUnix, &p.Width, &p.Height, &broken, &p.SourceVersion); err != nil {
 			return nil, err
 		}
 		p.Broken = broken != 0

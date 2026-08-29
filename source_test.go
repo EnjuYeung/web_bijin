@@ -122,10 +122,12 @@ func TestLocalMigrationReusesExistingMetadataAndThumb(t *testing.T) {
 	}
 	scanner := newScanner(config{MaxPixels: 64_000_000}, st, thumbs, source)
 	object := sourceObject{
+		Key:     "existing.jpg",
 		RelPath: "existing.jpg",
 		Size:    10,
 		Mtime:   time.Unix(mtime, 0),
 		Version: "local:10:123",
+		Backend: "local",
 	}
 	if err := scanner.ingest(context.Background(), object); err != nil {
 		t.Fatal(err)
@@ -137,5 +139,73 @@ func TestLocalMigrationReusesExistingMetadataAndThumb(t *testing.T) {
 	thumb, err := os.ReadFile(thumbs.path(id))
 	if err != nil || string(thumb) != "existing-thumb" {
 		t.Fatalf("existing thumb changed: %q err=%v", thumb, err)
+	}
+}
+
+type staticSource struct {
+	name    string
+	objects []sourceObject
+}
+
+func (s staticSource) Name() string { return s.name }
+
+func (s staticSource) Walk(_ context.Context, visit func(sourceObject) error) error {
+	for _, object := range s.objects {
+		if err := visit(object); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (s staticSource) Open(context.Context, string) (readSeekCloser, error) {
+	return nil, errors.New("not used")
+}
+
+func TestCombinedSourceKeepsLocalAndS3ObjectsWithSameDisplayPath(t *testing.T) {
+	localObject := sourceObject{Key: "旅行/a.jpg", RelPath: "旅行/a.jpg", Backend: "local"}
+	s3Object := sourceObject{Key: "旅行/a.jpg", RelPath: "旅行/a.jpg", Backend: "s3"}
+	source := &combinedPhotoSource{
+		local: staticSource{name: "local", objects: []sourceObject{localObject}},
+		s3:    staticSource{name: "s3", objects: []sourceObject{s3Object}},
+	}
+	var got []sourceObject
+	if err := source.Walk(context.Background(), func(object sourceObject) error {
+		got = append(got, object)
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("objects = %d", len(got))
+	}
+	if got[0].Key != "旅行/a.jpg" || got[1].Key != s3SourceKeyPrefix+"旅行/a.jpg" {
+		t.Fatalf("unexpected keys: %q, %q", got[0].Key, got[1].Key)
+	}
+	if got[0].RelPath != got[1].RelPath {
+		t.Fatalf("display paths differ: %q, %q", got[0].RelPath, got[1].RelPath)
+	}
+}
+
+func TestStoreKeepsLocalAndS3RowsWithSameDisplayPath(t *testing.T) {
+	st, err := openStore(filepath.Join(t.TempDir(), "bijin.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	for _, p := range []photo{
+		{SourceKey: "旅行/a.jpg", RelPath: "旅行/a.jpg", Width: 100, Height: 80, SourceVersion: "local:v1"},
+		{SourceKey: s3SourceKeyPrefix + "旅行/a.jpg", RelPath: "旅行/a.jpg", Width: 100, Height: 80, SourceVersion: "s3:v1"},
+	} {
+		if _, err := st.upsert(p); err != nil {
+			t.Fatal(err)
+		}
+	}
+	photos, err := st.listOK()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(photos) != 2 || photos[0].RelPath != "旅行/a.jpg" || photos[1].RelPath != "旅行/a.jpg" {
+		t.Fatalf("unexpected photos: %+v", photos)
 	}
 }

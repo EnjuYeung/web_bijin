@@ -207,7 +207,7 @@ func handleLoginBg(w http.ResponseWriter, r *http.Request, st *store, source pho
 		http.NotFound(w, r)
 		return
 	}
-	f, err := source.Open(r.Context(), p.RelPath)
+	f, err := source.Open(r.Context(), p.sourceKey())
 	if err != nil {
 		http.NotFound(w, r)
 		return
@@ -248,7 +248,7 @@ func handleOriginal(w http.ResponseWriter, r *http.Request, st *store, source ph
 	if !ok {
 		return
 	}
-	f, err := source.Open(r.Context(), p.RelPath)
+	f, err := source.Open(r.Context(), p.sourceKey())
 	if err != nil {
 		http.NotFound(w, r)
 		return

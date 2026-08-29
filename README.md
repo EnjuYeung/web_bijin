@@ -18,7 +18,7 @@ docker compose up -d
 
 ### 使用对象存储
 
-支持 S3 兼容对象存储（MinIO、Cloudflare R2 及提供 S3 API 的服务）。前端操作和图片地址不变，只需在 `.env` 中切换图片来源：
+支持在现有本地图库基础上接入 S3 兼容对象存储（MinIO、Cloudflare R2 及提供 S3 API 的服务）。前端操作和图片地址不变，只需在 `.env` 中启用聚合图片源：
 
 ```dotenv
 STORAGE_BACKEND=s3
@@ -31,7 +31,7 @@ S3_SECRET_KEY=replace-me
 S3_USE_SSL=true
 ```
 
-`S3_PREFIX` 可留空。endpoint 已包含 `http://` 或 `https://` 时，以其中的协议为准；没有协议时由 `S3_USE_SSL` 决定。对象存储模式下 `PHOTOS_DIR` 挂载会被忽略，SQLite、会话密钥和缩略图仍保存在 `DATA_DIR`。对象存储访问失败时会保留已有索引，不会把图库误判为空。
+`S3_PREFIX` 可留空。endpoint 已包含 `http://` 或 `https://` 时，以其中的协议为准；没有协议时由 `S3_USE_SSL` 决定。`STORAGE_BACKEND=s3` 表示同时扫描本地 `PHOTOS_DIR` 和 S3 bucket/prefix，两边图片合并进同一照片与相册列表；SQLite、会话密钥和缩略图仍保存在 `DATA_DIR`。任一图片源访问失败时会保留已有索引，不会把图库误判为空。
 
 ## 浏览照片和相册
 
@@ -52,7 +52,7 @@ S3_USE_SSL=true
 | `HOST_PORT` | `5001` | 宿主机端口。容器内永远是 5001 |
 | `PHOTOS_DIR` | `./photos` | 宿主机上的照片目录 |
 | `DATA_DIR` | `./data` | 索引和缩略图 |
-| `STORAGE_BACKEND` | `local` | 图片来源：`local` 或 `s3` |
+| `STORAGE_BACKEND` | `local` | `local` 只看本地；`s3` 同时展示本地与 S3 |
 | `S3_ENDPOINT` | （对象存储必填） | S3 兼容 endpoint，可含 `http://` 或 `https://` |
 | `S3_REGION` | `us-east-1` | S3 region |
 | `S3_BUCKET` | （对象存储必填） | bucket 名称 |
@@ -87,4 +87,4 @@ docker compose logs -f
 docker compose down
 ```
 
-数据和缩略图在 `DATA_DIR`。本地模式只读挂载照片，对象存储模式只读取 bucket 中的对象，不会修改或上传原图。
+数据和缩略图在 `DATA_DIR`。本地照片保持只读挂载，S3 bucket 也只读访问，不会修改或上传任何原图。
