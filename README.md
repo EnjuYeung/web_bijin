@@ -4,7 +4,7 @@
 
 ## 启动
 
-1. 复制 `.env.example` 为 `.env`
+1. 复制配置：`cp docker-compose.example.yaml docker-compose.yml`，再执行 `cp .env.example .env`
 2. 改 `PHOTOS_DIR` 为你的照片目录（会递归扫描子文件夹）
 3. 改 `AUTH_USER` 和 `AUTH_PASS` 为你的登录账号
 4. 需要的话改 `HOST_PORT`（容器内固定是 5001，改的是电脑/Unraid 上的端口）
@@ -65,7 +65,7 @@ S3_USE_SSL=true
 | `AUTH_USER` | `juen` | 登录用户名，必须有 |
 | `AUTH_PASS` | `changeme` | 登录密码，必须有 |
 
-加了新照片可以等这一轮自动扫描，也可以：
+加了新照片，等待自动扫描后刷新网页查看；也可以重启触发扫描，再刷新网页：
 
 ```bash
 docker compose restart

@@ -2,13 +2,13 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
-	"image"
 	_ "image/gif"
 	_ "image/jpeg"
 	_ "image/png"
-	"io"
 	"log/slog"
+	"os"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -30,6 +30,7 @@ type scanState struct {
 	LastAt   time.Time `json:"lastAt"`
 	LastErr  string    `json:"lastErr,omitempty"`
 	Seen     int       `json:"seen"`
+	Failed   int       `json:"failed"`
 	Ready    int       `json:"ready"`
 }
 
@@ -79,6 +80,7 @@ func (s *scanner) run(ctx context.Context) {
 	}
 	s.state.Scanning = true
 	s.state.LastErr = ""
+	s.state.Failed = 0
 	s.mu.Unlock()
 
 	err := s.walk(ctx)
@@ -96,10 +98,14 @@ func (s *scanner) run(ctx context.Context) {
 func (s *scanner) walk(ctx context.Context) error {
 	keep := make(map[string]struct{})
 	seen := 0
+	failures := 0
+	var lastFailure error
 	err := s.source.Walk(ctx, func(object sourceObject) error {
 		keep[object.Key] = struct{}{}
 		seen++
 		if err := s.ingest(ctx, object); err != nil {
+			failures++
+			lastFailure = err
 			slog.Warn("ingest", "path", object.RelPath, "err", err)
 		}
 		return nil
@@ -118,64 +124,74 @@ func (s *scanner) walk(ctx context.Context) error {
 
 	s.mu.Lock()
 	s.state.Seen = seen
+	s.state.Failed = failures
 	s.mu.Unlock()
-	slog.Info("scan done", "files", seen, "removed", len(gone))
+	slog.Info("scan done", "files", seen, "removed", len(gone), "failed", failures)
+	if failures > 0 {
+		return fmt.Errorf("%d image(s) failed: %w", failures, lastFailure)
+	}
 	return nil
 }
 
 func (s *scanner) ingest(ctx context.Context, object sourceObject) error {
-	existing, ok, err := s.store.getByPath(object.Key)
+	if err := s.thumbs.lock(ctx); err != nil {
+		return err
+	}
+	defer s.thumbs.unlock()
+	existing, ok, err := s.store.getBySourceKey(object.Key)
 	if err != nil {
 		return err
 	}
+	if ok && existing.SourceVersion == object.Version && (existing.Broken || s.thumbs.exists(existing)) {
+		return nil
+	}
+	// Older local indexes had no source version; retain their working cache.
 	if ok && object.Backend == "local" && existing.SourceVersion == "" &&
 		existing.Size == object.Size && existing.MtimeUnix == object.Mtime.Unix() &&
 		!existing.Broken && existing.Width > 0 && existing.Height > 0 {
-		existing.SourceVersion = object.Version
-		if _, err := s.store.upsert(existing); err != nil {
+		legacy := filepath.Join(s.thumbs.dir, fmt.Sprintf("%d.jpg", existing.ID))
+		if _, err := os.Stat(legacy); err == nil {
+			existing.SourceVersion = object.Version
+			if err := os.Rename(legacy, s.thumbs.path(existing)); err != nil {
+				return err
+			}
+			_, err := s.store.upsert(existing)
 			return err
 		}
-		if !s.thumbs.exists(existing.ID) {
-			if err := s.thumbs.ensure(ctx, existing); err != nil {
-				slog.Warn("thumb", "id", existing.ID, "err", err)
-			}
+	}
+	p := photo{ID: existing.ID, SourceKey: object.Key, RelPath: object.RelPath,
+		Size: object.Size, MtimeUnix: object.Mtime.Unix(), SourceVersion: object.Version}
+	b, w, h, processErr := s.thumbs.prepare(ctx, object.Key, s.cfg.MaxPixels)
+	if processErr != nil {
+		var invalid *invalidImageError
+		if !errors.As(processErr, &invalid) {
+			return processErr
 		}
-		return nil
-	}
-	unchanged := ok && existing.SourceVersion == object.Version && !existing.Broken && existing.Width > 0
-	if unchanged {
-		if !s.thumbs.exists(existing.ID) {
-			if err := s.thumbs.ensure(ctx, existing); err != nil {
-				slog.Warn("thumb", "id", existing.ID, "err", err)
-			}
+		p.Broken = true
+		if _, err := s.store.upsert(p); err != nil {
+			return err
 		}
-		return nil
+		s.thumbs.remove(p.ID)
+		return processErr
 	}
-
-	w, h, decErr := imageSize(ctx, s.source, object.Key, s.cfg.MaxPixels)
-	p := photo{
-		SourceKey:     object.Key,
-		RelPath:       object.RelPath,
-		Size:          object.Size,
-		MtimeUnix:     object.Mtime.Unix(),
-		Width:         w,
-		Height:        h,
-		Broken:        decErr != nil || w == 0 || h == 0,
-		SourceVersion: object.Version,
+	p.Width, p.Height = w, h
+	if !ok {
+		// Reserve a stable ID, but never expose an image before the file is saved.
+		pending := p
+		pending.Broken, pending.SourceVersion = true, ""
+		id, err := s.store.upsert(pending)
+		if err != nil {
+			return err
+		}
+		p.ID = id
 	}
-	id, err := s.store.upsert(p)
-	if err != nil {
+	if err := s.thumbs.save(p, b); err != nil {
 		return err
 	}
-	p.ID = id
-	if p.Broken {
-		slog.Warn("skip broken image", "path", object.RelPath, "err", decErr)
-		s.thumbs.remove(id)
-		return nil
+	if _, err := s.store.upsert(p); err != nil {
+		return err
 	}
-	if err := s.thumbs.ensure(ctx, p); err != nil {
-		slog.Warn("thumb", "id", id, "path", object.RelPath, "err", err)
-	}
+	s.thumbs.removeOld(p, existing)
 	return nil
 }
 
@@ -193,35 +209,4 @@ func hiddenRel(rel string) bool {
 	return false
 }
 
-func imageSize(ctx context.Context, source photoSource, rel string, maxPixels int64) (int, int, error) {
-	f, err := source.Open(ctx, rel)
-	if err != nil {
-		return 0, 0, err
-	}
-	defer f.Close()
-	cfg, _, err := image.DecodeConfig(f)
-	if err != nil {
-		return 0, 0, err
-	}
-	if cfg.Width <= 0 || cfg.Height <= 0 {
-		return 0, 0, io.ErrUnexpectedEOF
-	}
-	if int64(cfg.Width)*int64(cfg.Height) > maxPixels {
-		return 0, 0, errTooManyPixels
-	}
-	w, h := cfg.Width, cfg.Height
-	orientationReader, err := source.Open(ctx, rel)
-	if err == nil {
-		if orientation, readErr := readOrientation(orientationReader); readErr == nil && orientation >= 5 && orientation <= 8 {
-			w, h = h, w
-		}
-		_ = orientationReader.Close()
-	}
-	return w, h, nil
-}
-
-var errTooManyPixels = errString("image too many pixels")
-
-type errString string
-
-func (e errString) Error() string { return string(e) }
+var errTooManyPixels = errors.New("image too many pixels")

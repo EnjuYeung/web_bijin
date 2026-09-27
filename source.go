@@ -231,15 +231,18 @@ func (s *s3PhotoSource) Open(ctx context.Context, rel string) (readSeekCloser, e
 	if err != nil {
 		return nil, err
 	}
+	ctx, cancel := context.WithTimeout(ctx, imageReadTimeout)
 	object, err := s.client.GetObject(ctx, s.bucket, key, minio.GetObjectOptions{})
 	if err != nil {
+		cancel()
 		return nil, err
 	}
 	if _, err := object.Stat(); err != nil {
 		_ = object.Close()
+		cancel()
 		return nil, err
 	}
-	return object, nil
+	return &cancelReader{readSeekCloser: object, cancel: cancel}, nil
 }
 
 func (s *s3PhotoSource) objectKey(rel string) (string, error) {
@@ -269,4 +272,35 @@ func cleanObjectPrefix(raw string) (string, error) {
 		return "", fmt.Errorf("bad prefix")
 	}
 	return prefix + "/", nil
+}
+
+type cancelReader struct {
+	readSeekCloser
+	cancel context.CancelFunc
+}
+
+func (r *cancelReader) Close() error { r.cancel(); return r.readSeekCloser.Close() }
+
+func safeRelPath(root, rel string) (string, error) {
+	if rel == "" || filepath.IsAbs(rel) {
+		return "", fmt.Errorf("bad path")
+	}
+	clean := filepath.Clean(rel)
+	if clean == "." || clean == ".." || strings.HasPrefix(clean, ".."+string(filepath.Separator)) {
+		return "", fmt.Errorf("bad path")
+	}
+	full := filepath.Join(root, clean)
+	absRoot, err := filepath.Abs(root)
+	if err != nil {
+		return "", err
+	}
+	absFull, err := filepath.Abs(full)
+	if err != nil {
+		return "", err
+	}
+	sep := string(filepath.Separator)
+	if absFull != absRoot && !strings.HasPrefix(absFull, absRoot+sep) {
+		return "", fmt.Errorf("outside root")
+	}
+	return absFull, nil
 }

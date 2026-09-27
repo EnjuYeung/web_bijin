@@ -38,7 +38,7 @@ VALUES ('old.jpg', 10, 1234, 100, 80, 0);
 		t.Fatal(err)
 	}
 	defer store.Close()
-	old, ok, err := store.getByPath("old.jpg")
+	old, ok, err := store.getBySourceKey("old.jpg")
 	if err != nil || !ok {
 		t.Fatalf("existing row missing: ok=%v err=%v", ok, err)
 	}
@@ -52,7 +52,7 @@ VALUES ('old.jpg', 10, 1234, 100, 80, 0);
 	if _, err := store.upsert(old); err != nil {
 		t.Fatal(err)
 	}
-	updated, ok, err := store.getByPath("old.jpg")
+	updated, ok, err := store.getBySourceKey("old.jpg")
 	if err != nil || !ok || updated.SourceVersion != "etag-v1" {
 		t.Fatalf("source version not persisted: %+v ok=%v err=%v", updated, ok, err)
 	}

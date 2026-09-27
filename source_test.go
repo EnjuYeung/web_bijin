@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -117,7 +118,7 @@ func TestLocalMigrationReusesExistingMetadataAndThumb(t *testing.T) {
 	if err := os.MkdirAll(thumbs.dir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(thumbs.path(id), []byte("existing-thumb"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(thumbs.dir, fmt.Sprintf("%d.jpg", id)), []byte("existing-thumb"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	scanner := newScanner(config{MaxPixels: 64_000_000}, st, thumbs, source)
@@ -132,11 +133,11 @@ func TestLocalMigrationReusesExistingMetadataAndThumb(t *testing.T) {
 	if err := scanner.ingest(context.Background(), object); err != nil {
 		t.Fatal(err)
 	}
-	got, ok, err := st.getByPath("existing.jpg")
+	got, ok, err := st.getBySourceKey("existing.jpg")
 	if err != nil || !ok || got.SourceVersion != object.Version {
 		t.Fatalf("version not backfilled: %+v ok=%v err=%v", got, ok, err)
 	}
-	thumb, err := os.ReadFile(thumbs.path(id))
+	thumb, err := os.ReadFile(thumbs.path(got))
 	if err != nil || string(thumb) != "existing-thumb" {
 		t.Fatalf("existing thumb changed: %q err=%v", thumb, err)
 	}

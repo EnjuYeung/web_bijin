@@ -1,10 +1,10 @@
 package main
 
 import (
-	"fmt"
 	"math/rand"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -31,29 +31,18 @@ func photoFormat(rel string) string {
 	}
 }
 
-func humanBytes(n int64) string {
-	const (
-		kb = 1024
-		mb = 1024 * 1024
-		gb = 1024 * 1024 * 1024
-	)
-	switch {
-	case n >= gb:
-		return fmt.Sprintf("%.2f GB", float64(n)/float64(gb))
-	case n >= mb:
-		return fmt.Sprintf("%.1f MB", float64(n)/float64(mb))
-	case n >= kb:
-		return fmt.Sprintf("%.0f KB", float64(n)/float64(kb))
-	default:
-		return fmt.Sprintf("%d B", n)
-	}
-}
+var dateLocations sync.Map
 
 func formatDateInTZ(unix int64, tz string) (date string, year int) {
-	loc, err := time.LoadLocation(tz)
-	if err != nil {
-		loc = time.Local
+	cached, ok := dateLocations.Load(tz)
+	if !ok {
+		loc, err := time.LoadLocation(tz)
+		if err != nil {
+			loc = time.Local
+		}
+		cached, _ = dateLocations.LoadOrStore(tz, loc)
 	}
+	loc := cached.(*time.Location)
 	t := time.Unix(unix, 0).In(loc)
 	return t.Format("2006-01-02"), t.Year()
 }

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"crypto/sha256"
 	"embed"
 	"encoding/json"
 	"fmt"
@@ -150,8 +151,8 @@ func makePhotoItem(p photo, tz string) photoItem {
 		Title:  photoTitle(p.RelPath),
 		Format: photoFormat(p.RelPath),
 		Size:   p.Size,
-		Thumb:  fmt.Sprintf("/thumb/%d", p.ID),
-		Src:    fmt.Sprintf("/original/%d", p.ID),
+		Thumb:  fmt.Sprintf("/thumb/%d?v=%s", p.ID, photoVersion(p)),
+		Src:    fmt.Sprintf("/original/%d?v=%s", p.ID, photoVersion(p)),
 		Mtime:  p.MtimeUnix,
 		Date:   date,
 		Year:   year,
@@ -214,7 +215,7 @@ func handleLoginBg(w http.ResponseWriter, r *http.Request, st *store, source pho
 	}
 	defer f.Close()
 	w.Header().Set("Cache-Control", "no-store")
-	http.ServeContent(w, r, filepath.Base(p.RelPath), time.Unix(p.MtimeUnix, 0), f)
+	http.ServeContent(w, r, filepath.Base(p.RelPath), time.Time{}, f)
 }
 
 func handleThumb(w http.ResponseWriter, r *http.Request, st *store, thumbs *thumbCache) {
@@ -226,9 +227,9 @@ func handleThumb(w http.ResponseWriter, r *http.Request, st *store, thumbs *thum
 		http.NotFound(w, r)
 		return
 	}
-	etag := fmt.Sprintf(`"%d-%d-%d"`, p.ID, p.Size, p.MtimeUnix)
+	etag := fmt.Sprintf(`"%d-%s"`, p.ID, photoVersion(p))
 	w.Header().Set("ETag", etag)
-	w.Header().Set("Cache-Control", "private, max-age=86400")
+	w.Header().Set("Cache-Control", "private, no-cache")
 	if r.Header.Get("If-None-Match") == etag {
 		w.WriteHeader(http.StatusNotModified)
 		return
@@ -254,10 +255,10 @@ func handleOriginal(w http.ResponseWriter, r *http.Request, st *store, source ph
 		return
 	}
 	defer f.Close()
-	etag := fmt.Sprintf(`"%d-%d-%d-orig"`, p.ID, p.Size, p.MtimeUnix)
+	etag := fmt.Sprintf(`"%d-%s-orig"`, p.ID, photoVersion(p))
 	w.Header().Set("ETag", etag)
-	w.Header().Set("Cache-Control", "private, max-age=3600")
-	http.ServeContent(w, r, filepath.Base(p.RelPath), time.Unix(p.MtimeUnix, 0), f)
+	w.Header().Set("Cache-Control", "private, no-cache")
+	http.ServeContent(w, r, filepath.Base(p.RelPath), time.Time{}, f)
 }
 
 func photoFromReq(w http.ResponseWriter, r *http.Request, st *store) (photo, bool) {
@@ -289,7 +290,7 @@ func withLog(next http.Handler) http.Handler {
 		start := time.Now()
 		lw := &statusWriter{ResponseWriter: w, code: 200}
 		next.ServeHTTP(lw, r)
-		if strings.HasPrefix(r.URL.Path, "/api/") || lw.code >= 400 {
+		if (strings.HasPrefix(r.URL.Path, "/api/") && r.URL.Path != "/api/health") || lw.code >= 400 {
 			slog.Info("http", "method", r.Method, "path", r.URL.Path, "code", lw.code, "ms", time.Since(start).Milliseconds())
 		}
 	})
@@ -303,4 +304,9 @@ type statusWriter struct {
 func (w *statusWriter) WriteHeader(code int) {
 	w.code = code
 	w.ResponseWriter.WriteHeader(code)
+}
+
+func photoVersion(p photo) string {
+	sum := sha256.Sum256([]byte(fmt.Sprintf("%s|%d|%d", p.SourceVersion, p.Size, p.MtimeUnix)))
+	return fmt.Sprintf("%x", sum[:12])
 }

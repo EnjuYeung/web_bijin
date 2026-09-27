@@ -455,47 +455,7 @@ html[data-sidebar="expanded"] .nav-scrim {
   box-shadow: 0 0 0 var(--rule-strong) var(--color-paper);
 }
 
-.icon-btn[data-state="loading"] {
-  color: var(--color-transparent);
-  cursor: wait;
-}
 
-.icon-btn[data-state="loading"]::after,
-.gate button[type="submit"][data-state="loading"]::after {
-  content: "";
-  width: var(--space-sm);
-  height: var(--space-sm);
-  border: var(--rule-strong) solid var(--color-rule);
-  border-block-start-color: var(--color-accent);
-  border-radius: 50%;
-  animation: control-spin 0.9s linear infinite;
-}
-
-.icon-btn[data-state="error"] {
-  border-color: var(--color-error);
-}
-
-.icon-btn[data-state="error"]::after {
-  content: "!";
-  color: var(--color-error);
-  font-weight: 800;
-}
-
-.icon-btn[data-state="success"] {
-  border-color: var(--color-success);
-}
-
-.icon-btn[data-state="success"]::after {
-  content: "✓";
-  color: var(--color-success);
-  font-weight: 800;
-}
-
-@keyframes control-spin {
-  to {
-    transform: rotate(360deg);
-  }
-}
 
 .theme-icon,
 .meta-icon,
@@ -995,27 +955,6 @@ main {
   cursor: wait;
 }
 
-.gate label:has(input[data-state="success"])::after {
-  content: "✓";
-  position: absolute;
-  inset: 2.1rem var(--space-xs) auto auto;
-  color: var(--color-success);
-  font-weight: 800;
-}
-
-.gate label:has(input[data-state="error"])::after {
-  content: "!";
-  position: absolute;
-  inset: 2.1rem var(--space-xs) auto auto;
-  color: var(--color-error);
-  font-weight: 800;
-}
-
-.gate input[data-state="success"] {
-  border-color: var(--color-success);
-}
-
-.gate input[data-state="error"],
 .gate:has(.gate-err:not([hidden])) input {
   border-color: var(--color-error);
 }
@@ -1080,19 +1019,6 @@ main {
 .gate button[type="submit"][aria-disabled="true"] {
   opacity: 0.5;
   cursor: not-allowed;
-}
-
-.gate button[type="submit"][data-state="loading"] {
-  color: var(--color-transparent);
-  cursor: wait;
-}
-
-.gate button[type="submit"][data-state="error"] {
-  border-color: var(--color-error);
-}
-
-.gate button[type="submit"][data-state="success"] {
-  border-color: var(--color-success);
 }
 
 noscript {
@@ -1253,12 +1179,6 @@ noscript {
   .lb-nav,
   .gate button[type="submit"] {
     transform: none !important;
-  }
-
-  .icon-btn[data-state="loading"]::after,
-  .gate button[type="submit"][data-state="loading"]::after {
-    animation-duration: 1.2s !important;
-    animation-iteration-count: infinite !important;
   }
 
 }

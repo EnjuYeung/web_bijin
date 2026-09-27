@@ -28,7 +28,9 @@ type authGate struct {
 }
 
 func newAuthGate(user, pass string, key []byte) *authGate {
-	return &authGate{user: user, pass: pass, key: key}
+	mac := hmac.New(sha256.New, key)
+	mac.Write([]byte("bijin-session-v2\x00" + user + "\x00" + pass))
+	return &authGate{user: user, pass: pass, key: mac.Sum(nil)}
 }
 
 func loadSessionKey(dataDir string) ([]byte, error) {
@@ -58,12 +60,12 @@ func (g *authGate) sign(exp int64) string {
 	msg := g.user + "|" + strconv.FormatInt(exp, 10)
 	mac := hmac.New(sha256.New, g.key)
 	mac.Write([]byte(msg))
-	return "v1." + strconv.FormatInt(exp, 10) + "." + hex.EncodeToString(mac.Sum(nil))
+	return "v2." + strconv.FormatInt(exp, 10) + "." + hex.EncodeToString(mac.Sum(nil))
 }
 
 func (g *authGate) validSession(raw string) bool {
 	parts := strings.Split(raw, ".")
-	if len(parts) != 3 || parts[0] != "v1" {
+	if len(parts) != 3 || parts[0] != "v2" {
 		return false
 	}
 	exp, err := strconv.ParseInt(parts[1], 10, 64)

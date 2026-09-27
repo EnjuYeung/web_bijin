@@ -10,15 +10,15 @@ import (
 )
 
 type config struct {
-	Listen         string
-	PhotosDir      string
-	DataDir        string
-	TZ             string
-	AuthUser       string
-	AuthPass       string
-	ScanEvery      time.Duration
-	MaxPixels      int64
-	ThumbMaxEdge   int
+	Listen    string
+	PhotosDir string
+	DataDir   string
+	TZ        string
+	AuthUser  string
+	AuthPass  string
+	ScanEvery time.Duration
+	MaxPixels int64
+
 	StorageBackend string
 	S3Endpoint     string
 	S3Region       string
@@ -35,15 +35,15 @@ func loadConfig() (config, error) {
 		return config{}, err
 	}
 	cfg := config{
-		Listen:         envOr("LISTEN", ":5001"),
-		PhotosDir:      envOr("PHOTOS_DIR", "/photos"),
-		DataDir:        envOr("DATA_DIR", "/data"),
-		TZ:             envOr("TZ", "Asia/Shanghai"),
-		AuthUser:       strings.TrimSpace(os.Getenv("AUTH_USER")),
-		AuthPass:       strings.TrimSpace(os.Getenv("AUTH_PASS")),
-		ScanEvery:      2 * time.Minute,
-		MaxPixels:      64_000_000,
-		ThumbMaxEdge:   720,
+		Listen:    envOr("LISTEN", ":5001"),
+		PhotosDir: envOr("PHOTOS_DIR", "/photos"),
+		DataDir:   envOr("DATA_DIR", "/data"),
+		TZ:        envOr("TZ", "Asia/Shanghai"),
+		AuthUser:  strings.TrimSpace(os.Getenv("AUTH_USER")),
+		AuthPass:  strings.TrimSpace(os.Getenv("AUTH_PASS")),
+		ScanEvery: 2 * time.Minute,
+		MaxPixels: 64_000_000,
+
 		StorageBackend: strings.ToLower(envOr("STORAGE_BACKEND", "local")),
 		S3Endpoint:     strings.TrimSpace(os.Getenv("S3_ENDPOINT")),
 		S3Region:       envOr("S3_REGION", "us-east-1"),

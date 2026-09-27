@@ -71,14 +71,13 @@ func TestScanRecursiveAndFilters(t *testing.T) {
 	source := &localPhotoSource{root: root}
 	th := newThumbCache(filepath.Join(data, "thumbs"), source)
 	sc := newScanner(config{
-		PhotosDir:    root,
-		DataDir:      data,
-		ScanEvery:    time.Hour,
-		MaxPixels:    64_000_000,
-		ThumbMaxEdge: 720,
+		PhotosDir: root,
+		DataDir:   data,
+		ScanEvery: time.Hour,
+		MaxPixels: 64_000_000,
 	}, st, th, source)
-	if err := sc.walk(context.Background()); err != nil {
-		t.Fatal(err)
+	if err := sc.walk(context.Background()); err == nil || sc.snapshot().Failed != 1 {
+		t.Fatalf("expected one reported corrupt image, got %v", err)
 	}
 	n, err := st.countOK()
 	if err != nil {
@@ -94,7 +93,7 @@ func TestScanRecursiveAndFilters(t *testing.T) {
 	var names []string
 	for _, p := range photos {
 		names = append(names, p.RelPath)
-		if !th.exists(p.ID) {
+		if !th.exists(p) {
 			t.Fatalf("missing thumb for %s", p.RelPath)
 		}
 	}

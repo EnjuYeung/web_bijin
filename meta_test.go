@@ -10,15 +10,3 @@ func TestPhotoTitleAndFormat(t *testing.T) {
 		t.Fatal("format")
 	}
 }
-
-func TestHumanBytes(t *testing.T) {
-	if humanBytes(800) != "800 B" {
-		t.Fatal(humanBytes(800))
-	}
-	if humanBytes(2048) != "2 KB" {
-		t.Fatal(humanBytes(2048))
-	}
-	if humanBytes(2_400_000) != "2.3 MB" {
-		t.Fatal(humanBytes(2_400_000))
-	}
-}

@@ -26,9 +26,7 @@ func sortByRank(photos []photo, seed int64) {
 }
 
 func pageAfter(photos []photo, seed int64, afterRank uint64, afterID int64, limit int) []photo {
-	if limit <= 0 || limit > 80 {
-		limit = 40
-	}
+	limit = pickLimit(limit)
 	start := 0
 	if afterID > 0 {
 		start = len(photos)

@@ -352,21 +352,17 @@
       }
       const scanning = data.status && data.status.scanning;
       if (data.total === 0 && scanning) {
-        setNote("正在整理相册。");
+        setNote("正在整理相册，完成后请刷新页面。");
       } else if (data.total === 0) {
-        setNote("还没有可显示的相册。把照片放进图库目录或子文件夹后，它们会自动出现在这里。");
+        setNote("还没有可显示的相册。把照片放进图库目录或子文件夹后，等待扫描后刷新页面即可查看。");
       } else if (scanning) {
-        setNote("正在整理新照片。");
+        setNote("正在整理新照片，完成后请刷新页面。");
       } else {
         setNote("");
       }
     } catch (err) {
       setNote("连不上相册服务，确认容器已经启动。");
     }
-  }
-
-  function preferMeta() {
-    return desktopView();
   }
 
   function setMetaOpen(open) {
@@ -386,8 +382,7 @@
       format: p.format || "—",
       size: p.size ? humanSize(p.size) : "—",
       res: p.w && p.h ? p.w + " × " + p.h : "—",
-      px: pixels(p),
-      disk: p.size ? humanSize(p.size) : "—"
+      px: pixels(p)
     };
     lbMeta.querySelectorAll("[data-k]").forEach((el) => {
       el.textContent = map[el.dataset.k] || "—";
@@ -408,7 +403,7 @@
     lbImg.alt = p.title || p.name;
     lbCap.textContent = p.title || p.name;
     fillMeta(p);
-    if (!metaUserSet) setMetaOpen(preferMeta());
+    if (!metaUserSet) setMetaOpen(desktopView());
     lb.hidden = false;
     document.body.classList.add("looking");
     syncNav(p.id);
@@ -430,6 +425,7 @@
   }
 
   function openPhoto(id, replace) {
+    wantId = "";
     if (lb.hidden) {
       savedY = window.scrollY;
       metaUserSet = false;
@@ -477,6 +473,7 @@
   function syncFromURL() {
     if (pageView === "albums") return;
     const id = photoIdFromHash();
+    wantId = "";
     if (id) {
       if (lb.hidden) savedY = window.scrollY;
       if (!showLightbox(id)) {
@@ -493,6 +490,7 @@
   async function loadMore() {
     if (pageView === "albums" || loading || finished) return;
     loading = true;
+    let succeeded = false;
     try {
       const q = new URLSearchParams({ limit: "40" });
       if (seed) q.set("seed", String(seed));
@@ -529,16 +527,17 @@
 
       const scanning = data.status && data.status.scanning;
       if (data.total === 0 && scanning) {
-        setNote("正在整理照片。");
+        setNote("正在整理照片，完成后请刷新页面。");
       } else if (data.total === 0 && pageView === "album") {
-        setNote("这个文件夹里没有可显示的照片。");
+        setNote("这个文件夹里没有可显示的照片。添加后请等待扫描并刷新页面。");
       } else if (data.total === 0) {
-        setNote("目录里还没有可显示的照片。把 jpg、png、webp、gif 放进挂载的文件夹，子文件夹里的也会出现。");
+        setNote("目录里还没有可显示的照片。把 jpg、png、webp、gif 放进挂载的文件夹，等待扫描后刷新页面，子文件夹里的也会出现。");
       } else if (scanning) {
-        setNote("正在整理新照片。");
+        setNote("正在整理新照片，完成后请刷新页面。");
       } else {
         setNote("");
       }
+      succeeded = true;
       relayout();
       if (wantId && showLightbox(wantId)) {
         const want = "#p/" + wantId;
@@ -548,6 +547,7 @@
         wantId = "";
       } else if (wantId && finished) {
         wantId = "";
+        setNote("找不到这张照片，它可能已移走。可以继续浏览其他照片。");
       } else if (!wantId) {
         syncFromURL();
       }
@@ -559,6 +559,7 @@
       setNote("连不上相册服务，确认容器已经启动。");
     } finally {
       loading = false;
+      if (succeeded && wantId && !finished) loadMore();
     }
   }
 
@@ -599,6 +600,7 @@
 
   window.addEventListener("popstate", syncFromURL);
   window.addEventListener("keydown", (e) => {
+    if (e.key === "Escape" && wantId) closePhoto();
     if (lb.hidden) return;
     if (e.key === "Escape") closePhoto();
     if (e.key === "ArrowLeft") step(-1);

@@ -4,7 +4,6 @@ import (
 	"database/sql"
 	"fmt"
 	"path/filepath"
-	"strings"
 
 	_ "modernc.org/sqlite"
 )
@@ -64,7 +63,7 @@ CREATE TABLE IF NOT EXISTS photos (
   source_version TEXT NOT NULL DEFAULT '',
   display_path TEXT NOT NULL DEFAULT ''
 );
-CREATE INDEX IF NOT EXISTS photos_mtime ON photos(mtime_unix DESC, id DESC);
+DROP INDEX IF EXISTS photos_mtime;
 `); err != nil {
 		return err
 	}
@@ -129,7 +128,7 @@ func (s *store) getByID(id int64) (photo, bool, error) {
 	return p, true, nil
 }
 
-func (s *store) getByPath(rel string) (photo, bool, error) {
+func (s *store) getBySourceKey(rel string) (photo, bool, error) {
 	var p photo
 	var broken int
 	err := s.db.QueryRow(
@@ -151,7 +150,7 @@ func (s *store) upsert(p photo) (int64, error) {
 	if key == "" {
 		key = p.RelPath
 	}
-	existing, ok, err := s.getByPath(key)
+	existing, ok, err := s.getBySourceKey(key)
 	if err != nil {
 		return 0, err
 	}
@@ -229,29 +228,3 @@ func (s *store) listOK() ([]photo, error) {
 	}
 	return out, rows.Err()
 }
-
-func safeRelPath(root, rel string) (string, error) {
-	if rel == "" || filepath.IsAbs(rel) {
-		return "", fmt.Errorf("bad path")
-	}
-	clean := filepath.Clean(rel)
-	if clean == "." || clean == ".." || strings.HasPrefix(clean, ".."+string(osPathSep)) {
-		return "", fmt.Errorf("bad path")
-	}
-	full := filepath.Join(root, clean)
-	absRoot, err := filepath.Abs(root)
-	if err != nil {
-		return "", err
-	}
-	absFull, err := filepath.Abs(full)
-	if err != nil {
-		return "", err
-	}
-	sep := string(osPathSep)
-	if absFull != absRoot && !strings.HasPrefix(absFull, absRoot+sep) {
-		return "", fmt.Errorf("outside root")
-	}
-	return absFull, nil
-}
-
-const osPathSep = filepath.Separator
