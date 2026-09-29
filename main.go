@@ -31,13 +31,15 @@ func main() {
 	}
 	defer st.Close()
 
-	source, err := newPhotoSource(cfg)
+	sources := newSourceSet(&localPhotoSource{root: cfg.PhotosDir})
+	storages, err := st.listStorages()
 	if err != nil {
-		slog.Error("photo source", "err", err)
+		slog.Error("storages", "err", err)
 		os.Exit(1)
 	}
-	thumbs := newThumbCache(cfg.ThumbDir(), source)
-	scanner := newScanner(cfg, st, thumbs, source)
+	sources.useStorages(storages)
+	thumbs := newThumbCache(cfg.ThumbDir(), sources)
+	scanner := newScanner(cfg, st, thumbs, sources)
 
 	key, err := loadSessionKey(cfg.DataDir)
 	if err != nil {
@@ -53,13 +55,13 @@ func main() {
 
 	srv := &http.Server{
 		Addr:              cfg.Listen,
-		Handler:           newRouter(st, scanner, thumbs, source, cfg.TZ, gate),
+		Handler:           newRouter(st, scanner, thumbs, sources, cfg.TZ, gate),
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 
 	errCh := make(chan error, 1)
 	go func() {
-		slog.Info("listen", "addr", cfg.Listen, "source", source.Name(), "data", cfg.DataDir)
+		slog.Info("listen", "addr", cfg.Listen, "storages", len(storages), "data", cfg.DataDir)
 		errCh <- srv.ListenAndServe()
 	}()
 

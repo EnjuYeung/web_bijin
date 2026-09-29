@@ -75,7 +75,7 @@ func TestScanRecursiveAndFilters(t *testing.T) {
 		DataDir:   data,
 		ScanEvery: time.Hour,
 		MaxPixels: 64_000_000,
-	}, st, th, source)
+	}, st, th, newSourceSet(source))
 	if err := sc.walk(context.Background()); err == nil || sc.snapshot().Failed != 1 {
 		t.Fatalf("expected one reported corrupt image, got %v", err)
 	}

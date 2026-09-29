@@ -7,6 +7,8 @@
   const albumBack = document.getElementById("album-back");
   const navPhotos = document.getElementById("nav-photos");
   const navAlbums = document.getElementById("nav-albums");
+  const navSettings = document.getElementById("nav-settings");
+  const settingsEl = document.getElementById("settings");
   const sidebarToggle = document.getElementById("sidebar-toggle");
   const navScrim = document.getElementById("nav-scrim");
   const lb = document.getElementById("lightbox");
@@ -29,7 +31,9 @@
 
   const query = new URLSearchParams(location.search);
   const albumID = query.has("album") ? query.get("album") : null;
-  const pageView = albumID !== null ? "album" : (query.get("view") === "albums" ? "albums" : "photos");
+  const view = query.get("view");
+  const pageView = albumID !== null ? "album" : (view === "albums" || view === "settings" ? view : "photos");
+  const gridView = pageView === "photos" || pageView === "album";
 
   const items = [];
   const byId = new Map();
@@ -148,12 +152,16 @@
   function configurePage() {
     const albumsActive = pageView === "albums" || pageView === "album";
     if (albumsActive) navAlbums.setAttribute("aria-current", "page");
+    else if (pageView === "settings") navSettings.setAttribute("aria-current", "page");
     else navPhotos.setAttribute("aria-current", "page");
     albumBack.hidden = pageView !== "album";
     albumGrid.hidden = pageView !== "albums";
-    grid.hidden = pageView === "albums";
+    grid.hidden = !gridView;
+    settingsEl.hidden = pageView !== "settings";
+    countEl.hidden = pageView === "settings";
     if (pageView === "albums") setHeading("相册");
     else if (pageView === "album") setHeading(albumNameFromID(albumID));
+    else if (pageView === "settings") setHeading("设置");
     else setHeading("照片");
   }
 
@@ -204,7 +212,7 @@
   }
 
   function relayout() {
-    if (pageView === "albums") return;
+    if (!gridView) return;
     const width = grid.clientWidth;
     if (width <= 0) {
       grid.style.height = "0px";
@@ -261,7 +269,7 @@
   }
 
   function paint() {
-    if (pageView === "albums") return;
+    if (!gridView) return;
     const gridTop = grid.getBoundingClientRect().top + window.scrollY;
     const viewTop = window.scrollY - window.innerHeight;
     const viewBot = window.scrollY + window.innerHeight * 2;
@@ -297,7 +305,7 @@
   }
 
   function queuePaint() {
-    if (paintQueued || pageView === "albums") return;
+    if (paintQueued || !gridView) return;
     paintQueued = true;
     requestAnimationFrame(() => {
       paintQueued = false;
@@ -471,7 +479,7 @@
   }
 
   function syncFromURL() {
-    if (pageView === "albums") return;
+    if (!gridView) return;
     const id = photoIdFromHash();
     wantId = "";
     if (id) {
@@ -488,7 +496,7 @@
   }
 
   async function loadMore() {
-    if (pageView === "albums" || loading || finished) return;
+    if (!gridView || loading || finished) return;
     loading = true;
     let succeeded = false;
     try {
@@ -621,5 +629,5 @@
     if (currentMode() === "auto") applyTheme();
   }, 60000);
   if (pageView === "albums") loadAlbums();
-  else loadMore();
+  else if (gridView) loadMore();
 })();

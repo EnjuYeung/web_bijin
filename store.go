@@ -3,6 +3,7 @@ package main
 import (
 	"database/sql"
 	"fmt"
+	"os"
 	"path/filepath"
 
 	_ "modernc.org/sqlite"
@@ -42,6 +43,13 @@ func openStore(path string) (*store, error) {
 	if err := s.migrate(); err != nil {
 		db.Close()
 		return nil, err
+	}
+	// The database holds object storage keys, so keep it owner-only like session.key.
+	for _, p := range []string{path, path + "-wal", path + "-shm"} {
+		if err := os.Chmod(p, 0o600); err != nil && !os.IsNotExist(err) {
+			db.Close()
+			return nil, err
+		}
 	}
 	return s, nil
 }
@@ -87,8 +95,11 @@ DROP INDEX IF EXISTS photos_mtime;
 			return err
 		}
 		_, err = s.db.Exec(`UPDATE photos SET display_path = rel_path WHERE display_path = ''`)
+		if err != nil {
+			return err
+		}
 	}
-	return err
+	return s.migrateStorages()
 }
 
 func (s *store) hasColumn(table, column string) (bool, error) {
@@ -175,7 +186,9 @@ func (s *store) upsert(p photo) (int64, error) {
 	return res.LastInsertId()
 }
 
-func (s *store) deleteMissing(keep map[string]struct{}) ([]photo, error) {
+// deleteMissing removes rows that were not seen in this scan, except rows of
+// sources whose listing failed. Rows of a removed storage are always removed.
+func (s *store) deleteMissing(keep map[string]struct{}, failed map[string]bool) ([]photo, error) {
 	rows, err := s.db.Query(`SELECT id, rel_path, display_path FROM photos`)
 	if err != nil {
 		return nil, err
@@ -187,7 +200,7 @@ func (s *store) deleteMissing(keep map[string]struct{}) ([]photo, error) {
 		if err := rows.Scan(&p.ID, &p.SourceKey, &p.RelPath); err != nil {
 			return nil, err
 		}
-		if _, ok := keep[p.SourceKey]; !ok {
+		if _, ok := keep[p.SourceKey]; !ok && !failed[keyOwner(p.SourceKey)] {
 			gone = append(gone, p)
 		}
 	}
@@ -206,6 +219,38 @@ func (s *store) countOK() (int, error) {
 	var n int
 	err := s.db.QueryRow(`SELECT COUNT(*) FROM photos WHERE broken=0 AND width>0 AND height>0`).Scan(&n)
 	return n, err
+}
+
+type ownerCount struct {
+	OK     int
+	Broken int
+}
+
+// countByOwner counts visible and confirmed-unreadable photos per source
+// ("local", "s3-<id>"). Rows reserved for an image still being processed have
+// no version yet and are not counted.
+func (s *store) countByOwner() (map[string]ownerCount, error) {
+	rows, err := s.db.Query(`SELECT rel_path, broken=0 AND width>0 AND height>0 FROM photos WHERE broken=0 OR source_version != ''`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := make(map[string]ownerCount)
+	for rows.Next() {
+		var key string
+		var ok bool
+		if err := rows.Scan(&key, &ok); err != nil {
+			return nil, err
+		}
+		c := out[keyOwner(key)]
+		if ok {
+			c.OK++
+		} else {
+			c.Broken++
+		}
+		out[keyOwner(key)] = c
+	}
+	return out, rows.Err()
 }
 
 func (s *store) listOK() ([]photo, error) {

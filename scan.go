@@ -27,6 +27,7 @@ var imageExt = map[string]struct{}{
 
 type scanState struct {
 	Scanning bool      `json:"scanning"`
+	Queued   bool      `json:"queued"`
 	LastAt   time.Time `json:"lastAt"`
 	LastErr  string    `json:"lastErr,omitempty"`
 	Seen     int       `json:"seen"`
@@ -34,18 +35,48 @@ type scanState struct {
 	Ready    int       `json:"ready"`
 }
 
-type scanner struct {
-	cfg    config
-	store  *store
-	thumbs *thumbCache
-	source photoSource
-
-	mu    sync.Mutex
-	state scanState
+// sourceStatus is the latest listing result of one source.
+type sourceStatus struct {
+	At   time.Time `json:"at"`
+	Seen int       `json:"seen"`
+	Err  string    `json:"err,omitempty"`
 }
 
-func newScanner(cfg config, store *store, thumbs *thumbCache, source photoSource) *scanner {
-	return &scanner{cfg: cfg, store: store, thumbs: thumbs, source: source}
+type scanner struct {
+	cfg     config
+	store   *store
+	thumbs  *thumbCache
+	sources *sourceSet
+	wake    chan struct{}
+
+	mu        sync.Mutex
+	state     scanState
+	perSource map[string]sourceStatus
+}
+
+func newScanner(cfg config, store *store, thumbs *thumbCache, sources *sourceSet) *scanner {
+	return &scanner{cfg: cfg, store: store, thumbs: thumbs, sources: sources, wake: make(chan struct{}, 1)}
+}
+
+// trigger asks the loop for a scan as soon as the current one, if any, ends.
+func (s *scanner) trigger() {
+	s.mu.Lock()
+	s.state.Queued = true
+	s.mu.Unlock()
+	select {
+	case s.wake <- struct{}{}:
+	default:
+	}
+}
+
+func (s *scanner) sourceStatuses() map[string]sourceStatus {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := make(map[string]sourceStatus, len(s.perSource))
+	for id, st := range s.perSource {
+		out[id] = st
+	}
+	return out
 }
 
 func (s *scanner) snapshot() scanState {
@@ -68,6 +99,8 @@ func (s *scanner) loop(ctx context.Context) {
 			return
 		case <-t.C:
 			s.run(ctx)
+		case <-s.wake:
+			s.run(ctx)
 		}
 	}
 }
@@ -79,6 +112,7 @@ func (s *scanner) run(ctx context.Context) {
 		return
 	}
 	s.state.Scanning = true
+	s.state.Queued = false
 	s.state.LastErr = ""
 	s.state.Failed = 0
 	s.mu.Unlock()
@@ -95,26 +129,47 @@ func (s *scanner) run(ctx context.Context) {
 	s.mu.Unlock()
 }
 
+// walk lists every source in turn. A source that cannot be listed keeps its
+// existing photos and does not stop the other sources.
 func (s *scanner) walk(ctx context.Context) error {
 	keep := make(map[string]struct{})
+	failedSources := make(map[string]bool)
+	statuses := make(map[string]sourceStatus)
+	var walkErrs []error
 	seen := 0
 	failures := 0
 	var lastFailure error
-	err := s.source.Walk(ctx, func(object sourceObject) error {
-		keep[object.Key] = struct{}{}
-		seen++
-		if err := s.ingest(ctx, object); err != nil {
-			failures++
-			lastFailure = err
-			slog.Warn("ingest", "path", object.RelPath, "err", err)
+	for _, src := range s.sources.all() {
+		n := 0
+		err := src.Src.Walk(ctx, func(object sourceObject) error {
+			object.Key = src.Prefix + object.RelPath
+			keep[object.Key] = struct{}{}
+			seen++
+			n++
+			if err := s.ingest(ctx, object); err != nil {
+				failures++
+				lastFailure = err
+				slog.Warn("ingest", "source", src.ID, "path", object.RelPath, "err", err)
+			}
+			return nil
+		})
+		if ctx.Err() != nil {
+			return ctx.Err()
 		}
-		return nil
-	})
-	if err != nil {
-		return fmt.Errorf("walk %s source: %w", s.source.Name(), err)
+		st := sourceStatus{At: time.Now(), Seen: n}
+		if err != nil {
+			failedSources[src.ID] = true
+			st.Err = describeSourceError(err)
+			walkErrs = append(walkErrs, fmt.Errorf("walk %s (%s): %w", src.ID, src.Name, err))
+			slog.Error("scan source", "source", src.ID, "name", src.Name, "err", err)
+		}
+		statuses[src.ID] = st
 	}
+	s.mu.Lock()
+	s.perSource = statuses
+	s.mu.Unlock()
 
-	gone, err := s.store.deleteMissing(keep)
+	gone, err := s.store.deleteMissing(keep, failedSources)
 	if err != nil {
 		return err
 	}
@@ -126,7 +181,10 @@ func (s *scanner) walk(ctx context.Context) error {
 	s.state.Seen = seen
 	s.state.Failed = failures
 	s.mu.Unlock()
-	slog.Info("scan done", "files", seen, "removed", len(gone), "failed", failures)
+	slog.Info("scan done", "files", seen, "removed", len(gone), "failed", failures, "sourceErrors", len(walkErrs))
+	if len(walkErrs) > 0 {
+		return errors.Join(walkErrs...)
+	}
 	if failures > 0 {
 		return fmt.Errorf("%d image(s) failed: %w", failures, lastFailure)
 	}

@@ -29,7 +29,6 @@ type fixSource struct {
 	fail   bool
 }
 
-func (s *fixSource) Name() string { return "fixture" }
 func (s *fixSource) Walk(ctx context.Context, visit func(sourceObject) error) error {
 	return visit(s.object)
 }
@@ -63,7 +62,7 @@ func fixSetup(t *testing.T) (*store, *fixSource, *thumbCache, *scanner) {
 	src := &fixSource{data: fixtureJPEG(color.RGBA{20, 20, 30, 255})}
 	src.object = sourceObject{Key: "a.jpg", RelPath: "a.jpg", Size: int64(len(src.data)), Mtime: time.Unix(1700000000, 0), Version: "v1", Backend: "s3"}
 	th := newThumbCache(t.TempDir(), src)
-	return st, src, th, newScanner(config{MaxPixels: 64_000_000}, st, th, src)
+	return st, src, th, newScanner(config{MaxPixels: 64_000_000}, st, th, newSourceSet(src))
 }
 func TestFixReadFailurePreservesPhotoAndRetries(t *testing.T) {
 	st, src, th, sc := fixSetup(t)
@@ -249,7 +248,7 @@ func TestFixS3BodyCancellationAndSingleRead(t *testing.T) {
 				_, _ = w.Write(data)
 			}))
 			defer srv.Close()
-			src, err := newS3PhotoSource(config{S3Endpoint: srv.URL, S3Bucket: "test", S3Region: "us-east-1", S3AccessKey: "test", S3SecretKey: "test"})
+			src, err := newS3PhotoSource(s3Config{Endpoint: srv.URL, Bucket: "test", Region: "us-east-1", AccessKey: "test", SecretKey: "test"})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -298,7 +297,7 @@ func TestFixPersistentVersionAndIndexMigration(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer reopened.Close()
-	sc = newScanner(config{MaxPixels: 64_000_000}, reopened, th, src)
+	sc = newScanner(config{MaxPixels: 64_000_000}, reopened, th, newSourceSet(src))
 	src.opens.Store(0)
 	sc.run(context.Background())
 	if src.opens.Load() != 0 || sc.snapshot().Ready != 1 || !th.exists(p) {
@@ -346,7 +345,7 @@ func TestFixS3DefaultDeadline(t *testing.T) {
 		<-r.Context().Done()
 	}))
 	defer srv.Close()
-	src, err := newS3PhotoSource(config{S3Endpoint: srv.URL, S3Bucket: "test", S3Region: "us-east-1", S3AccessKey: "test", S3SecretKey: "test"})
+	src, err := newS3PhotoSource(s3Config{Endpoint: srv.URL, Bucket: "test", Region: "us-east-1", AccessKey: "test", SecretKey: "test"})
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -17,12 +17,12 @@ import (
 
 type thumbCache struct {
 	dir    string
-	source photoSource
+	source imageOpener
 	edge   int
 	gate   chan struct{}
 }
 
-func newThumbCache(dir string, source photoSource) *thumbCache {
+func newThumbCache(dir string, source imageOpener) *thumbCache {
 	return &thumbCache{dir: dir, source: source, edge: 720, gate: make(chan struct{}, 1)}
 }
 

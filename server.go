@@ -17,7 +17,7 @@ import (
 //go:embed web tokens.css
 var webEmbed embed.FS
 
-func newRouter(st *store, sc *scanner, thumbs *thumbCache, source photoSource, tz string, gate *authGate) http.Handler {
+func newRouter(st *store, sc *scanner, thumbs *thumbCache, sources *sourceSet, tz string, gate *authGate) http.Handler {
 	webFS, err := fs.Sub(webEmbed, "web")
 	if err != nil {
 		panic(err)
@@ -32,7 +32,7 @@ func newRouter(st *store, sc *scanner, thumbs *thumbCache, source photoSource, t
 		})
 	}))
 	mux.Handle("GET /api/login-bg", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		handleLoginBg(w, r, st, source)
+		handleLoginBg(w, r, st, sources)
 	}))
 	mux.Handle("POST /api/login", http.HandlerFunc(gate.handleLogin))
 	mux.Handle("GET /login", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -52,6 +52,9 @@ func newRouter(st *store, sc *scanner, thumbs *thumbCache, source photoSource, t
 	mux.Handle("GET /app.js", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		http.ServeFileFS(w, r, webFS, "app.js")
 	}))
+	mux.Handle("GET /settings.js", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.ServeFileFS(w, r, webFS, "settings.js")
+	}))
 	mux.Handle("GET /api/photos", gate.protect(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		handleList(w, r, st, sc, tz)
 	})))
@@ -62,8 +65,14 @@ func newRouter(st *store, sc *scanner, thumbs *thumbCache, source photoSource, t
 		handleThumb(w, r, st, thumbs)
 	})))
 	mux.Handle("GET /original/{id}", gate.protect(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		handleOriginal(w, r, st, source)
+		handleOriginal(w, r, st, sources)
 	})))
+	settings := &settingsAPI{store: st, scanner: sc, sources: sources}
+	mux.Handle("GET /api/settings", gate.protect(http.HandlerFunc(settings.get)))
+	mux.Handle("POST /api/storages", gate.protect(http.HandlerFunc(settings.create)))
+	mux.Handle("PUT /api/storages/{id}", gate.protect(http.HandlerFunc(settings.update)))
+	mux.Handle("DELETE /api/storages/{id}", gate.protect(http.HandlerFunc(settings.remove)))
+	mux.Handle("POST /api/storages/test", gate.protect(http.HandlerFunc(settings.test)))
 	mux.Handle("GET /{$}", gate.protect(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Cache-Control", "no-store")
 		http.ServeFileFS(w, r, webFS, "index.html")
@@ -196,7 +205,7 @@ func pickLimit(limit int) int {
 	return limit
 }
 
-func handleLoginBg(w http.ResponseWriter, r *http.Request, st *store, source photoSource) {
+func handleLoginBg(w http.ResponseWriter, r *http.Request, st *store, source imageOpener) {
 	all, err := st.listOK()
 	if err != nil {
 		http.NotFound(w, r)
@@ -244,7 +253,7 @@ func handleThumb(w http.ResponseWriter, r *http.Request, st *store, thumbs *thum
 	_, _ = w.Write(b)
 }
 
-func handleOriginal(w http.ResponseWriter, r *http.Request, st *store, source photoSource) {
+func handleOriginal(w http.ResponseWriter, r *http.Request, st *store, source imageOpener) {
 	p, ok := photoFromReq(w, r, st)
 	if !ok {
 		return

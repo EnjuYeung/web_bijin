@@ -65,6 +65,14 @@
         </svg>
         <span>相册</span>
       </a>
+      <a id="nav-settings" class="nav-item" href="/?view=settings" title="设置">
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+          <path d="M3 7h10M19 7h2M3 17h2M11 17h10"></path>
+          <rect x="13" y="4.5" width="5" height="5" rx="1"></rect>
+          <rect x="5" y="14.5" width="5" height="5" rx="1"></rect>
+        </svg>
+        <span>设置</span>
+      </a>
     </nav>
     <p class="sidebar-foot"><span>本地图库</span></p>
   </aside>
@@ -100,6 +108,100 @@
       <p id="note" class="note" hidden></p>
       <div id="album-grid" class="album-grid" hidden></div>
       <div id="grid" class="grid"></div>
+      <div id="settings" class="settings" hidden>
+        <section class="set-block" aria-labelledby="set-local-title">
+          <div class="set-head">
+            <h2 id="set-local-title">本地图库</h2>
+            <span class="set-tag">在 .env 中配置</span>
+          </div>
+          <dl class="set-facts">
+            <div><dt>宿主机目录</dt><dd id="local-host">—</dd></div>
+            <div><dt>容器内目录</dt><dd id="local-container">—</dd></div>
+            <div><dt>照片</dt><dd id="local-count">—</dd></div>
+            <div><dt>最近扫描</dt><dd id="local-scan">—</dd></div>
+          </dl>
+          <div class="set-help">
+            <p>本地照片目录只能在服务器上修改，这里仅作说明：</p>
+            <ol>
+              <li>编辑项目目录里的 <code>.env</code>，把 <code>PHOTOS_DIR</code> 改成照片所在的文件夹。</li>
+              <li>在项目目录执行 <code>docker compose up -d</code>，容器会重新挂载新目录。</li>
+            </ol>
+            <p>目录以只读方式挂载，子文件夹会自动成为相册。支持 jpg、jpeg、png、webp、gif；名字以 <code>.</code> 开头的文件和文件夹会跳过。<span id="local-every"></span></p>
+          </div>
+        </section>
+
+        <section class="set-block" aria-labelledby="set-s3-title">
+          <div class="set-head">
+            <h2 id="set-s3-title">对象存储</h2>
+            <button type="button" id="s3-add" class="btn btn-primary">添加对象存储</button>
+          </div>
+          <p class="set-help">支持兼容 Amazon S3 接口的服务，例如 AWS S3、Cloudflare R2、MinIO、Backblaze B2、Wasabi、阿里云 OSS、腾讯云 COS。可以添加多个，照片会和本地图库合并展示；同名文件夹合并为同一个相册。只读取图片，不会上传、修改或删除存储里的文件。</p>
+          <p id="s3-scan" class="set-scan" role="status" aria-live="polite"></p>
+          <div id="s3-list" class="s3-list"></div>
+
+          <form id="s3-form" class="s3-form" hidden novalidate>
+            <h3 id="s3-form-title">添加对象存储</h3>
+            <div class="field-grid">
+              <label class="field">
+                <span>名称</span>
+                <input type="text" name="name" maxlength="40" autocomplete="off" placeholder="留空则使用 Bucket 名">
+              </label>
+              <label class="field">
+                <span>Endpoint（必填）</span>
+                <input type="text" name="endpoint" autocomplete="off" autocapitalize="off" spellcheck="false" inputmode="url" placeholder="https://s3.example.com">
+                <small>只填协议、域名和端口；不写协议时默认 https://</small>
+              </label>
+              <label class="field">
+                <span>Bucket（必填）</span>
+                <input type="text" name="bucket" autocomplete="off" autocapitalize="off" spellcheck="false">
+              </label>
+              <label class="field">
+                <span>前缀</span>
+                <input type="text" name="prefix" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="例如 photos/2026">
+                <small>留空读取整个 Bucket</small>
+              </label>
+              <label class="field">
+                <span>Access Key（必填）</span>
+                <input type="text" name="accessKey" autocomplete="off" autocapitalize="off" spellcheck="false">
+              </label>
+              <label class="field">
+                <span>Secret Key（必填）</span>
+                <input type="password" name="secretKey" autocomplete="new-password" autocapitalize="off" spellcheck="false">
+                <small id="s3-secret-hint">只保存在服务器上，之后不会再显示</small>
+              </label>
+            </div>
+            <details class="set-adv">
+              <summary>高级设置</summary>
+              <div class="field-grid">
+                <label class="field">
+                  <span>Region</span>
+                  <input type="text" name="region" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="留空自动识别">
+                  <small>服务商文档要求填写时再填，例如 Backblaze 的 us-west-004</small>
+                </label>
+                <label class="field">
+                  <span>寻址方式</span>
+                  <select name="addressing">
+                    <option value="auto">自动（推荐）</option>
+                    <option value="path">路径：endpoint/bucket</option>
+                    <option value="virtual">虚拟主机：bucket.endpoint</option>
+                  </select>
+                  <small>阿里云 OSS、腾讯云 COS 等选虚拟主机；自建服务一般选路径</small>
+                </label>
+              </div>
+              <label class="check">
+                <input type="checkbox" name="listV1">
+                <span>使用旧版列举接口（ListObjects V1），仅在服务不支持 V2 时勾选</span>
+              </label>
+            </details>
+            <p id="s3-msg" class="form-msg" role="status" aria-live="polite"></p>
+            <div class="form-actions">
+              <button type="submit" class="btn btn-primary" id="s3-save">保存</button>
+              <button type="button" class="btn" id="s3-test">测试连接</button>
+              <button type="button" class="btn btn-ghost" id="s3-cancel">取消</button>
+            </div>
+          </form>
+        </section>
+      </div>
     </main>
   </div>
   <div id="lightbox" class="lb" hidden>
@@ -138,5 +240,6 @@
   </div>
   <noscript>打开相册需要浏览器启用 JavaScript。</noscript>
   <script src="/app.js" defer></script>
+  <script src="/settings.js" defer></script>
 </body>
 </html>
