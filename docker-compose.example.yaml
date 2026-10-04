@@ -1,24 +1,39 @@
+# netcup + 1Panel 部署：与 RustFS 同在 1panel-network，服务端在容器内网读原图；
+# 5002 只在容器网内接收 RustFS 的上传通知，不映射到宿主机。
 services:
   bijin:
     build: .
     image: bijin:local
     container_name: bijin
     restart: unless-stopped
+    networks:
+      - 1panel-network
     ports:
-      - "${HOST_PORT:-5001}:5001"
+      # 只给本机 OpenResty 反代
+      - "127.0.0.1:${HOST_PORT:-5001}:5001"
     volumes:
       - "${PHOTOS_DIR:-./photos}:/photos:ro"
       - "${DATA_DIR:-./data}:/data"
     environment:
       TZ: ${TZ:-Asia/Shanghai}
-      SCAN_EVERY: ${SCAN_EVERY:-2m}
       AUTH_USER: ${AUTH_USER:-juen}
       AUTH_PASS: ${AUTH_PASS:-changeme}
       # 只用于在设置页显示宿主机照片目录
       PHOTOS_HOST_DIR: ${PHOTOS_DIR:-./photos}
+      THUMB_WORKERS: ${THUMB_WORKERS:-}
+      SCAN_EVERY: ${SCAN_EVERY:-}
+      EVENTS_LISTEN: ${EVENTS_LISTEN:-}
+      EVENTS_TOKEN: ${EVENTS_TOKEN:-}
+      GOMEMLIMIT: ${GOMEMLIMIT:-3GiB}
+    cpus: ${CPUS:-6}
+    mem_limit: ${MEM_LIMIT:-4g}
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://127.0.0.1:5001/api/health"]
       interval: 30s
       timeout: 5s
       retries: 3
       start_period: 15s
+
+networks:
+  1panel-network:
+    external: true

@@ -29,11 +29,13 @@ export interface AlbumPage { albums: Album[]; total: number; tz: string; status:
 export interface StorageInput {
   id: number; name: string; endpoint: string; region: string; bucket: string; prefix: string;
   accessKey: string; secretKey: string; addressing: string; listV1: boolean;
+  directOriginal: boolean; publicEndpoint: string;
 }
 export interface Storage extends Omit<StorageInput, "secretKey"> { hasSecret: boolean; photos: number; broken: number; status?: SourceStatus }
+export interface EventState { enabled: boolean; received: number; lastAt?: string; lastErr?: string }
 export interface Settings {
   local: { hostDir: string; containerDir: string; photos: number; broken: number; status?: SourceStatus };
-  storages: Storage[]; scan: ScanState; scanEvery: number;
+  storages: Storage[]; scan: ScanState; scanEvery: number; events: EventState;
 }
 
 export function humanSize(value: number) {

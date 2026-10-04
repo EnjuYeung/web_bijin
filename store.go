@@ -186,10 +186,22 @@ func (s *store) upsert(p photo) (int64, error) {
 	return res.LastInsertId()
 }
 
-// deleteMissing removes rows that were not seen in this scan, except rows of
-// sources whose listing failed. Rows of a removed storage are always removed.
-func (s *store) deleteMissing(keep map[string]struct{}, failed map[string]bool) ([]photo, error) {
-	rows, err := s.db.Query(`SELECT id, rel_path, display_path FROM photos`)
+func (s *store) maxID() (int64, error) {
+	var id int64
+	err := s.db.QueryRow(`SELECT COALESCE(MAX(id), 0) FROM photos`).Scan(&id)
+	return id, err
+}
+
+func (s *store) deleteByID(id int64) error {
+	_, err := s.db.Exec(`DELETE FROM photos WHERE id=?`, id)
+	return err
+}
+
+// deleteMissing removes rows up to id `upTo` that were not seen in this scan,
+// except rows of sources whose listing failed. Rows of a removed storage are
+// always removed; rows added after the scan started are left alone.
+func (s *store) deleteMissing(keep map[string]struct{}, failed map[string]bool, upTo int64) ([]photo, error) {
+	rows, err := s.db.Query(`SELECT id, rel_path, display_path FROM photos WHERE id <= ?`, upTo)
 	if err != nil {
 		return nil, err
 	}

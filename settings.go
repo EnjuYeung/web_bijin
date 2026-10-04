@@ -20,21 +20,24 @@ type settingsAPI struct {
 }
 
 type storageInput struct {
-	ID         int64  `json:"id"`
-	Name       string `json:"name"`
-	Endpoint   string `json:"endpoint"`
-	Region     string `json:"region"`
-	Bucket     string `json:"bucket"`
-	Prefix     string `json:"prefix"`
-	AccessKey  string `json:"accessKey"`
-	SecretKey  string `json:"secretKey"`
-	Addressing string `json:"addressing"`
-	ListV1     bool   `json:"listV1"`
+	ID             int64  `json:"id"`
+	Name           string `json:"name"`
+	Endpoint       string `json:"endpoint"`
+	Region         string `json:"region"`
+	Bucket         string `json:"bucket"`
+	Prefix         string `json:"prefix"`
+	AccessKey      string `json:"accessKey"`
+	SecretKey      string `json:"secretKey"`
+	Addressing     string `json:"addressing"`
+	ListV1         bool   `json:"listV1"`
+	DirectOriginal bool   `json:"directOriginal"`
+	PublicEndpoint string `json:"publicEndpoint"`
 }
 
 func (in storageInput) config() s3Config {
 	return s3Config{ID: in.ID, Name: in.Name, Endpoint: in.Endpoint, Region: in.Region, Bucket: in.Bucket, Prefix: in.Prefix,
-		AccessKey: in.AccessKey, SecretKey: in.SecretKey, Addressing: in.Addressing, ListV1: in.ListV1}
+		AccessKey: in.AccessKey, SecretKey: in.SecretKey, Addressing: in.Addressing, ListV1: in.ListV1,
+		DirectOriginal: in.DirectOriginal, PublicEndpoint: in.PublicEndpoint}
 }
 
 type storageView struct {
@@ -80,6 +83,7 @@ func (a *settingsAPI) get(w http.ResponseWriter, r *http.Request) {
 		"storages":  storages,
 		"scan":      a.scanner.snapshot(),
 		"scanEvery": int(cfg.ScanEvery.Seconds()),
+		"events":    a.scanner.eventSnapshot(),
 	})
 }
 

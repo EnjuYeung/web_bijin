@@ -20,13 +20,15 @@ class Handler(BaseHTTPRequestHandler):
     def log_message(self, *_args):
         pass
 
-    def send(self, status, body=b"", kind="application/xml", etag=None):
+    def send(self, status, body=b"", kind="application/xml", etag=None, cache=None):
         self.send_response(status)
         self.send_header("Content-Type", kind)
         self.send_header("Content-Length", str(len(body)))
         if etag:
             self.send_header("ETag", etag)
             self.send_header("Last-Modified", format_datetime(modified, usegmt=True))
+        if cache:
+            self.send_header("Cache-Control", cache)
         self.end_headers()
         if self.command != "HEAD":
             self.wfile.write(body)
@@ -37,11 +39,13 @@ class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
         path = urlsplit(self.path)
         bucket, _, key = unquote(path.path).lstrip("/").partition("/")
-        if "Credential=test-ak/" not in self.headers.get("Authorization", ""):
+        query = parse_qs(path.query, keep_blank_values=True)
+        # Header or presigned-URL credentials; signatures are not verified.
+        presigned = query.get("X-Amz-Credential", [""])[0].startswith("test-ak/")
+        if "Credential=test-ak/" not in self.headers.get("Authorization", "") and not presigned:
             return self.send(403, b"<Error><Code>InvalidAccessKeyId</Code><Message>Unknown key</Message></Error>")
         if bucket != "family":
             return self.send(404, b"<Error><Code>NoSuchBucket</Code><Message>Unknown bucket</Message></Error>")
-        query = parse_qs(path.query, keep_blank_values=True)
         if not key and "location" in query:
             return self.send(200, b'<LocationConstraint xmlns="http://s3.amazonaws.com/doc/2006-03-01/">us-east-1</LocationConstraint>')
         if not key:
@@ -53,7 +57,8 @@ class Handler(BaseHTTPRequestHandler):
         if key not in objects:
             return self.send(404, b"<Error><Code>NoSuchKey</Code><Message>Unknown key</Message></Error>")
         data = objects[key]
-        self.send(200, data, "image/jpeg" if key.endswith(".jpg") else "text/plain", '"' + md5(data).hexdigest() + '"')
+        kind = query.get("response-content-type", ["image/jpeg" if key.endswith(".jpg") else "text/plain"])[0]
+        self.send(200, data, kind, '"' + md5(data).hexdigest() + '"', query.get("response-cache-control", [None])[0])
 
 
 if __name__ == "__main__":

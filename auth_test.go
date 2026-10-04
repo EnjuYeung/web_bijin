@@ -37,7 +37,7 @@ func testApp(t *testing.T) (*httptest.Server, *store, string) {
 		t.Fatal(err)
 	}
 	sources := newSourceSet(&localPhotoSource{root: photos})
-	th := newThumbCache(filepath.Join(data, "thumbs"), sources)
+	th := newThumbCache(filepath.Join(data, "thumbs"), sources, 1)
 	sc := newScanner(config{PhotosDir: photos, DataDir: data, ScanEvery: time.Hour, MaxPixels: 64_000_000}, st, th, sources)
 	h := newRouter(st, sc, th, sources, "Asia/Shanghai", testGate())
 	srv := httptest.NewServer(h)

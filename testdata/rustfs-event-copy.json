@@ -1,0 +1,60 @@
+{
+  "EventName": "s3:ObjectCreated:Copy",
+  "Key": "jan/.bijin-spike/copy.jpg",
+  "Records": [
+    {
+      "eventVersion": "2.1",
+      "eventSource": "rustfs:s3",
+      "awsRegion": "",
+      "eventTime": "2026-10-04T09:18:40.824Z",
+      "eventName": "s3:ObjectCreated:Copy",
+      "userIdentity": {
+        "principalId": "<redacted>"
+      },
+      "requestParameters": {
+        "x-amz-date": "20261004T091840Z",
+        "amz-sdk-request": "attempt=1; max=3",
+        "host": "1Panel-rustfs-dVOR:9000",
+        "x-amz-user-agent": "aws-sdk-rust/1.3.16 ua/2.1 api/s3/1.137.0 os/linux lang/rust/1.92.0 m/E,N md/http#hyper-1.x",
+        "x-amz-content-sha256": "***redacted***",
+        "authorization": "***redacted***",
+        "x-amz-copy-source-if-match": "\"764efa883dda1e11db47671c4a3bbd9e\"",
+        "x-amz-copy-source": "jan/.bijin-spike/%EA%B3%B5%EB%B0%B1%20test%20%281%29%2Bplus.jpg",
+        "x-request-id": "551c9f70-537b-4d1c-b4dc-43abb0c305ee",
+        "amz-sdk-invocation-id": "4c88d561-7952-4e09-add4-613216699a4f",
+        "principalId": "<redacted>",
+        "user-agent": "aws-sdk-rust/1.3.16 os/linux lang/rust/1.92.0"
+      },
+      "responseElements": {
+        "x-amz-request-id": "551c9f70-537b-4d1c-b4dc-43abb0c305ee",
+        "x-amz-id-2": "<redacted>"
+      },
+      "s3": {
+        "s3SchemaVersion": "1.0",
+        "configurationId": "Config",
+        "bucket": {
+          "name": "jan",
+          "ownerIdentity": {
+            "principalId": "<redacted>"
+          },
+          "arn": "arn:aws:s3:::jan"
+        },
+        "object": {
+          "key": ".bijin-spike%2Fcopy.jpg",
+          "size": 3,
+          "eTag": "764efa883dda1e11db47671c4a3bbd9e",
+          "contentType": "application/octet-stream",
+          "userMetadata": {
+            "content-type": "application/octet-stream"
+          },
+          "sequencer": "18DB48FB43C362A5"
+        }
+      },
+      "source": {
+        "host": "1Panel-rustfs-dVOR:9000",
+        "port": "9000",
+        "userAgent": "aws-sdk-rust/1.3.16 os/linux lang/rust/1.92.0"
+      }
+    }
+  ]
+}

@@ -7,6 +7,7 @@ import (
 	"io"
 	"io/fs"
 	"log/slog"
+	"mime"
 	"net"
 	"net/http"
 	"net/url"
@@ -146,6 +147,60 @@ func (s *sourceSet) Open(ctx context.Context, key string) (readSeekCloser, error
 	return nil, fmt.Errorf("source %s is not configured", owner)
 }
 
+// originalLink returns a presigned browser URL for an original when the
+// photo's storage allows direct originals; ok is false otherwise.
+func (s *sourceSet) originalLink(ctx context.Context, key, version string) (link string, ok bool, err error) {
+	owner := keyOwner(key)
+	if owner == localSourceID {
+		return "", false, nil
+	}
+	s.mu.RLock()
+	var src *s3PhotoSource
+	var prefix string
+	for _, r := range s.remotes {
+		if r.ID == owner {
+			src, _ = r.Src.(*s3PhotoSource)
+			prefix = r.Prefix
+			break
+		}
+	}
+	s.mu.RUnlock()
+	if src == nil || !src.cfg.DirectOriginal {
+		return "", false, nil
+	}
+	link, err = src.Presign(ctx, strings.TrimPrefix(key, prefix), version)
+	return link, err == nil, err
+}
+
+// eventTarget is one storage key named by a storage notification.
+type eventTarget struct {
+	source string
+	src    *s3PhotoSource
+	rel    string
+	key    string // index key
+}
+
+// match finds the storages a notification for bucket/objectKey can belong to.
+// Bucket names are only unique per service, so every storage with that bucket
+// and prefix is later checked against its own service before anything changes.
+func (s *sourceSet) match(bucket, objectKey string) []eventTarget {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	var out []eventTarget
+	for _, r := range s.remotes {
+		src, ok := r.Src.(*s3PhotoSource)
+		if !ok || src.cfg.Bucket != bucket {
+			continue
+		}
+		rel, ok := src.relativeKey(objectKey)
+		if !ok || hiddenRel(rel) || !isImageName(path.Base(rel)) {
+			continue
+		}
+		out = append(out, eventTarget{source: r.ID, src: src, rel: rel, key: r.Prefix + rel})
+	}
+	return out
+}
+
 type brokenSource struct{ err error }
 
 func (b brokenSource) Walk(context.Context, func(sourceObject) error) error { return b.err }
@@ -220,8 +275,23 @@ type s3PhotoSource struct {
 	secure bool
 	prefix string
 
-	mu     sync.Mutex
-	client *minio.Client
+	mu        sync.Mutex
+	client    *minio.Client
+	region    string
+	presigner *minio.Client // public endpoint; signing needs no request
+	links     map[string]presignedLink
+}
+
+// A presigned original is valid for presignTTL and handed out again for
+// presignReuse, so reopening a photo hits the browser cache.
+const (
+	presignTTL   = 24 * time.Hour
+	presignReuse = 12 * time.Hour
+)
+
+type presignedLink struct {
+	url     string
+	expires time.Time
 }
 
 func newS3PhotoSource(c s3Config) (*s3PhotoSource, error) {
@@ -245,18 +315,11 @@ func (s *s3PhotoSource) newClient(region string) (*minio.Client, error) {
 	transport.DialContext = (&net.Dialer{Timeout: 5 * time.Second, KeepAlive: 30 * time.Second}).DialContext
 	transport.ResponseHeaderTimeout = 10 * time.Second
 	transport.TLSHandshakeTimeout = 5 * time.Second
-	lookup := minio.BucketLookupAuto
-	switch s.cfg.Addressing {
-	case addressingPath:
-		lookup = minio.BucketLookupPath
-	case addressingVirtual:
-		lookup = minio.BucketLookupDNS
-	}
 	client, err := minio.New(s.host, &minio.Options{
 		Creds:        credentials.NewStaticV4(s.cfg.AccessKey, s.cfg.SecretKey, ""),
 		Secure:       s.secure,
 		Region:       region,
-		BucketLookup: lookup,
+		BucketLookup: s.bucketLookup(),
 		Transport:    transport,
 		MaxRetries:   2,
 	})
@@ -264,6 +327,37 @@ func (s *s3PhotoSource) newClient(region string) (*minio.Client, error) {
 		return nil, fmt.Errorf("create S3 client: %w", err)
 	}
 	return client, nil
+}
+
+func (s *s3PhotoSource) bucketLookup() minio.BucketLookupType {
+	switch s.cfg.Addressing {
+	case addressingPath:
+		return minio.BucketLookupPath
+	case addressingVirtual:
+		return minio.BucketLookupDNS
+	}
+	return minio.BucketLookupAuto
+}
+
+// newPublicClient signs URLs for the address browsers use. The server may
+// reach the same service on an internal address, and a SigV4 signature is
+// bound to the host, so the two clients are kept apart.
+func (s *s3PhotoSource) newPublicClient() (*minio.Client, error) {
+	raw := s.cfg.PublicEndpoint
+	if raw == "" {
+		raw = s.cfg.Endpoint
+	}
+	endpoint, err := normalizeEndpoint(raw)
+	if err != nil {
+		return nil, err
+	}
+	u, _ := url.Parse(endpoint)
+	return minio.New(u.Host, &minio.Options{
+		Creds:        credentials.NewStaticV4(s.cfg.AccessKey, s.cfg.SecretKey, ""),
+		Secure:       u.Scheme == "https",
+		Region:       s.region,
+		BucketLookup: s.bucketLookup(),
+	})
 }
 
 // conn returns the client, detecting the bucket region first when none was
@@ -297,6 +391,7 @@ func (s *s3PhotoSource) conn(ctx context.Context) (*minio.Client, error) {
 	if s.client, err = s.newClient(region); err != nil {
 		return nil, err
 	}
+	s.region = region
 	return s.client, nil
 }
 
@@ -320,22 +415,88 @@ func (s *s3PhotoSource) Walk(ctx context.Context, visit func(sourceObject) error
 		if !ok || hiddenRel(rel) || !isImageName(path.Base(rel)) {
 			continue
 		}
-		version := strings.Trim(object.ETag, `"`)
-		if version == "" {
-			version = fmt.Sprintf("%d:%d", object.Size, object.LastModified.UnixNano())
-		}
-		if err := visit(sourceObject{
-			Key:     rel,
-			RelPath: rel,
-			Size:    object.Size,
-			Mtime:   object.LastModified,
-			Version: "s3:" + version,
-			Backend: "s3",
-		}); err != nil {
+		if err := visit(s3Object(rel, object.ETag, object.Size, object.LastModified)); err != nil {
 			return err
 		}
 	}
 	return ctx.Err()
+}
+
+// s3Object builds the index view of one object; listing and Stat must agree
+// on the version, or a notification would reprocess an unchanged photo.
+func s3Object(rel, etag string, size int64, mtime time.Time) sourceObject {
+	version := strings.Trim(etag, `"`)
+	if version == "" {
+		version = fmt.Sprintf("%d:%d", size, mtime.UnixNano())
+	}
+	return sourceObject{Key: rel, RelPath: rel, Size: size, Mtime: mtime, Version: "s3:" + version, Backend: "s3"}
+}
+
+// Stat reads the current state of one object; a notification only names it.
+func (s *s3PhotoSource) Stat(ctx context.Context, rel string) (sourceObject, error) {
+	key, err := s.objectKey(rel)
+	if err != nil {
+		return sourceObject{}, err
+	}
+	client, err := s.conn(ctx)
+	if err != nil {
+		return sourceObject{}, err
+	}
+	info, err := client.StatObject(ctx, s.cfg.Bucket, key, minio.StatObjectOptions{})
+	if err != nil {
+		return sourceObject{}, err
+	}
+	return s3Object(rel, info.ETag, info.Size, info.LastModified), nil
+}
+
+func isNotFound(err error) bool {
+	var resp minio.ErrorResponse
+	return errors.As(err, &resp) && (resp.StatusCode == http.StatusNotFound || resp.Code == "NoSuchKey")
+}
+
+// Presign returns a browser URL for the original of one object version. The
+// same URL is reused for presignReuse, and the response tells the browser to
+// keep it that long; a new version gets a new URL, so nothing stale is shown.
+func (s *s3PhotoSource) Presign(ctx context.Context, rel, version string) (string, error) {
+	key, err := s.objectKey(rel)
+	if err != nil {
+		return "", err
+	}
+	if _, err := s.conn(ctx); err != nil {
+		return "", err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	now := time.Now()
+	id := rel + "\n" + version
+	if l, ok := s.links[id]; ok && l.expires.Sub(now) > presignTTL-presignReuse {
+		return l.url, nil
+	}
+	if s.presigner == nil {
+		if s.presigner, err = s.newPublicClient(); err != nil {
+			return "", err
+		}
+	}
+	params := url.Values{"response-cache-control": {fmt.Sprintf("private, max-age=%d, immutable", int(presignReuse/time.Second))}}
+	if kind := mime.TypeByExtension(strings.ToLower(path.Ext(rel))); kind != "" {
+		params.Set("response-content-type", kind)
+	}
+	u, err := s.presigner.PresignedGetObject(ctx, s.cfg.Bucket, key, presignTTL, params)
+	if err != nil {
+		return "", err
+	}
+	if len(s.links) >= 4096 {
+		for k, l := range s.links {
+			if l.expires.Sub(now) <= presignTTL-presignReuse {
+				delete(s.links, k)
+			}
+		}
+	}
+	if s.links == nil {
+		s.links = map[string]presignedLink{}
+	}
+	s.links[id] = presignedLink{url: u.String(), expires: now.Add(presignTTL)}
+	return u.String(), nil
 }
 
 func (s *s3PhotoSource) Open(ctx context.Context, rel string) (readSeekCloser, error) {

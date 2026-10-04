@@ -24,6 +24,11 @@ type s3Config struct {
 	SecretKey  string `json:"-"`
 	Addressing string `json:"addressing"`
 	ListV1     bool   `json:"listV1"`
+	// DirectOriginal sends browsers to a short-lived presigned URL for the
+	// original instead of streaming it through this process. PublicEndpoint is
+	// the address browsers can reach; empty means the same as Endpoint.
+	DirectOriginal bool   `json:"directOriginal"`
+	PublicEndpoint string `json:"publicEndpoint"`
 }
 
 const (
@@ -53,12 +58,20 @@ func (c s3Config) normalize() (s3Config, error) {
 	c.AccessKey = strings.TrimSpace(c.AccessKey)
 	c.SecretKey = strings.TrimSpace(c.SecretKey)
 	c.Addressing = strings.TrimSpace(c.Addressing)
+	c.PublicEndpoint = strings.TrimSpace(c.PublicEndpoint)
 
 	endpoint, err := normalizeEndpoint(c.Endpoint)
 	if err != nil {
 		return c, err
 	}
 	c.Endpoint = endpoint
+	if c.PublicEndpoint != "" {
+		public, err := normalizeEndpoint(c.PublicEndpoint)
+		if err != nil {
+			return c, invalid("浏览器访问地址格式不正确，例如 https://s3.example.com")
+		}
+		c.PublicEndpoint = public
+	}
 	if c.Bucket == "" {
 		return c, invalid("请填写 Bucket")
 	}
@@ -126,16 +139,34 @@ CREATE TABLE IF NOT EXISTS storages (
   addressing TEXT NOT NULL DEFAULT 'auto',
   list_v1 INTEGER NOT NULL DEFAULT 0
 )`)
-	return err
+	if err != nil {
+		return err
+	}
+	for _, col := range []struct{ name, def string }{
+		{"direct_original", "INTEGER NOT NULL DEFAULT 0"},
+		{"public_endpoint", "TEXT NOT NULL DEFAULT ''"},
+	} {
+		has, err := s.hasColumn("storages", col.name)
+		if err != nil {
+			return err
+		}
+		if !has {
+			if _, err := s.db.Exec(`ALTER TABLE storages ADD COLUMN ` + col.name + ` ` + col.def); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
 }
 
-const storageColumns = `id, name, endpoint, region, bucket, prefix, access_key, secret_key, addressing, list_v1`
+const storageColumns = `id, name, endpoint, region, bucket, prefix, access_key, secret_key, addressing, list_v1, direct_original, public_endpoint`
 
 func scanStorage(row interface{ Scan(...any) error }) (s3Config, error) {
 	var c s3Config
-	var listV1 int
-	err := row.Scan(&c.ID, &c.Name, &c.Endpoint, &c.Region, &c.Bucket, &c.Prefix, &c.AccessKey, &c.SecretKey, &c.Addressing, &listV1)
+	var listV1, direct int
+	err := row.Scan(&c.ID, &c.Name, &c.Endpoint, &c.Region, &c.Bucket, &c.Prefix, &c.AccessKey, &c.SecretKey, &c.Addressing, &listV1, &direct, &c.PublicEndpoint)
 	c.ListV1 = listV1 != 0
+	c.DirectOriginal = direct != 0
 	return c, err
 }
 
@@ -176,20 +207,23 @@ func (s *store) saveStorage(c s3Config) (int64, error) {
 	if err != sql.ErrNoRows {
 		return 0, err
 	}
-	listV1 := 0
+	listV1, direct := 0, 0
 	if c.ListV1 {
 		listV1 = 1
 	}
+	if c.DirectOriginal {
+		direct = 1
+	}
 	if c.ID == 0 {
-		res, err := s.db.Exec(`INSERT INTO storages (name, endpoint, region, bucket, prefix, access_key, secret_key, addressing, list_v1) VALUES (?,?,?,?,?,?,?,?,?)`,
-			c.Name, c.Endpoint, c.Region, c.Bucket, c.Prefix, c.AccessKey, c.SecretKey, c.Addressing, listV1)
+		res, err := s.db.Exec(`INSERT INTO storages (name, endpoint, region, bucket, prefix, access_key, secret_key, addressing, list_v1, direct_original, public_endpoint) VALUES (?,?,?,?,?,?,?,?,?,?,?)`,
+			c.Name, c.Endpoint, c.Region, c.Bucket, c.Prefix, c.AccessKey, c.SecretKey, c.Addressing, listV1, direct, c.PublicEndpoint)
 		if err != nil {
 			return 0, err
 		}
 		return res.LastInsertId()
 	}
-	res, err := s.db.Exec(`UPDATE storages SET name=?, endpoint=?, region=?, bucket=?, prefix=?, access_key=?, secret_key=?, addressing=?, list_v1=? WHERE id=?`,
-		c.Name, c.Endpoint, c.Region, c.Bucket, c.Prefix, c.AccessKey, c.SecretKey, c.Addressing, listV1, c.ID)
+	res, err := s.db.Exec(`UPDATE storages SET name=?, endpoint=?, region=?, bucket=?, prefix=?, access_key=?, secret_key=?, addressing=?, list_v1=?, direct_original=?, public_endpoint=? WHERE id=?`,
+		c.Name, c.Endpoint, c.Region, c.Bucket, c.Prefix, c.AccessKey, c.SecretKey, c.Addressing, listV1, direct, c.PublicEndpoint, c.ID)
 	if err != nil {
 		return 0, err
 	}

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"crypto/sha256"
 	"embed"
 	"encoding/json"
@@ -268,7 +269,9 @@ func handleThumb(w http.ResponseWriter, r *http.Request, st *store, thumbs *thum
 	}
 	etag := fmt.Sprintf(`"%d-%s"`, p.ID, photoVersion(p))
 	w.Header().Set("ETag", etag)
-	w.Header().Set("Cache-Control", "private, no-cache")
+	// Thumbnail URLs carry the source version, so a changed photo gets a new
+	// URL and the browser never has to revalidate an old one.
+	w.Header().Set("Cache-Control", "private, max-age=31536000, immutable")
 	if r.Header.Get("If-None-Match") == etag {
 		w.WriteHeader(http.StatusNotModified)
 		return
@@ -283,10 +286,28 @@ func handleThumb(w http.ResponseWriter, r *http.Request, st *store, thumbs *thum
 	_, _ = w.Write(b)
 }
 
+// originalLinker is implemented by sources that can send the browser straight
+// to object storage for an original.
+type originalLinker interface {
+	originalLink(ctx context.Context, key, version string) (link string, ok bool, err error)
+}
+
 func handleOriginal(w http.ResponseWriter, r *http.Request, st *store, source imageOpener) {
 	p, ok := photoFromReq(w, r, st)
 	if !ok {
 		return
+	}
+	if linker, ok := source.(originalLinker); ok {
+		link, direct, err := linker.originalLink(r.Context(), p.sourceKey(), photoVersion(p))
+		if err != nil {
+			slog.Warn("presign original, streaming instead", "id", p.ID, "err", err)
+		} else if direct {
+			// The link stays valid well beyond an hour, so reopening a photo
+			// skips this request as well.
+			w.Header().Set("Cache-Control", "private, max-age=3600")
+			http.Redirect(w, r, link, http.StatusFound)
+			return
+		}
 	}
 	f, err := source.Open(r.Context(), p.sourceKey())
 	if err != nil {

@@ -126,6 +126,7 @@ test("02 photos, virtual scrolling, lightbox and folder albums", async ({ page }
 
 test("03 settings form validation, test, save, edit and delete", async ({ page }) => {
   await page.goto("/?view=settings");
+  await expect(page.locator("#events-note")).toContainText("自动扫描");
   await expect(page.locator("#local-count")).toContainText("58 张照片");
   await expect(page.locator("#local-count")).toContainText("1 个文件无法显示");
   await page.locator("#s3-add").click();
@@ -157,11 +158,30 @@ test("03 settings form validation, test, save, edit and delete", async ({ page }
   await expect(page.locator("#s3-addressing")).toBeVisible();
   await expect(page.locator("#s3-addressing")).toHaveValue("path");
   await page.locator("#s3-name").fill("家庭照片备份");
+  await expect(page.locator("#s3-publicEndpoint")).toHaveCount(0);
+  await page.getByRole("checkbox", { name: "大图由浏览器直接从存储读取" }).click();
+  await page.locator("#s3-publicEndpoint").fill("http://127.0.0.1:18093");
   await page.locator("#s3-test").click();
   await expect(page.locator("#s3-msg")).toContainText("找到 2 张图片");
   await page.locator("#s3-save").click();
   await expect(page.locator(".storage-row")).toContainText("家庭照片备份");
+  await expect(page.locator(".storage-location")).toContainText("大图直连 127.0.0.1:18093");
+  const saved = await (await page.request.get("/api/settings")).json();
+  expect(saved.storages[0].directOriginal).toBe(true);
+  expect(saved.storages[0].publicEndpoint).toBe("http://127.0.0.1:18093");
   await waitForScan(page);
+  await page.locator("#nav-albums").click();
+  await expect(page.getByRole("link", { name: "子目录，2 张照片" })).toBeVisible();
+  // The cloud original is fetched by the browser from storage, not via bijin.
+  await page.getByRole("link", { name: "子目录，2 张照片" }).click();
+  const direct = page.waitForResponse(response => response.url().startsWith("http://127.0.0.1:18093/family/") && response.url().includes("X-Amz-Signature="));
+  await page.getByRole("button", { name: "云端 日落.jpg" }).click();
+  const original = await direct;
+  expect(original.status()).toBe(200);
+  expect(original.headers()["cache-control"]).toBe("private, max-age=43200, immutable");
+  await expect.poll(() => page.locator("#lb-img").evaluate(image => (image as HTMLImageElement).naturalWidth)).toBeGreaterThan(0);
+  await page.locator("#lb-img").click();
+  await expect(page.getByRole("dialog")).toHaveCount(0);
   await page.locator("#nav-albums").click();
   await expect(page.getByRole("link", { name: "子目录，2 张照片" })).toBeVisible();
   await page.locator("#nav-photos").click();

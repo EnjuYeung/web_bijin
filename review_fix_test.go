@@ -61,7 +61,7 @@ func fixSetup(t *testing.T) (*store, *fixSource, *thumbCache, *scanner) {
 	t.Cleanup(func() { st.Close() })
 	src := &fixSource{data: fixtureJPEG(color.RGBA{20, 20, 30, 255})}
 	src.object = sourceObject{Key: "a.jpg", RelPath: "a.jpg", Size: int64(len(src.data)), Mtime: time.Unix(1700000000, 0), Version: "v1", Backend: "s3"}
-	th := newThumbCache(t.TempDir(), src)
+	th := newThumbCache(t.TempDir(), src, 1)
 	return st, src, th, newScanner(config{MaxPixels: 64_000_000}, st, th, newSourceSet(src))
 }
 func TestFixReadFailurePreservesPhotoAndRetries(t *testing.T) {
@@ -215,7 +215,13 @@ func TestFixCacheTracksSourceVersion(t *testing.T) {
 		src.object.Version += "-updated"
 		sc.run(context.Background())
 		got := request(original, old.Header().Get("ETag"))
-		if got.Code != 200 || got.Header().Get("ETag") == old.Header().Get("ETag") || got.Header().Get("Cache-Control") != "private, no-cache" {
+		// Thumbnail URLs carry the version and may be cached for good; a
+		// streamed original keeps its URL and must be revalidated.
+		cache := "private, max-age=31536000, immutable"
+		if original {
+			cache = "private, no-cache"
+		}
+		if got.Code != 200 || got.Header().Get("ETag") == old.Header().Get("ETag") || got.Header().Get("Cache-Control") != cache {
 			t.Fatal("stale cached response")
 		}
 	}
@@ -252,7 +258,7 @@ func TestFixS3BodyCancellationAndSingleRead(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			th := newThumbCache(t.TempDir(), src)
+			th := newThumbCache(t.TempDir(), src, 1)
 			ctx := context.Background()
 			var cancel context.CancelFunc
 			if stall {
@@ -349,7 +355,7 @@ func TestFixS3DefaultDeadline(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	th := newThumbCache(t.TempDir(), src)
+	th := newThumbCache(t.TempDir(), src, 1)
 	start := time.Now()
 	err = th.ensure(context.Background(), photo{ID: 1, RelPath: "a.jpg"})
 	if err == nil || time.Since(start) > imageReadTimeout+3*time.Second {

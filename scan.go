@@ -52,6 +52,7 @@ type scanner struct {
 	mu        sync.Mutex
 	state     scanState
 	perSource map[string]sourceStatus
+	events    eventState
 }
 
 func newScanner(cfg config, store *store, thumbs *thumbCache, sources *sourceSet) *scanner {
@@ -129,16 +130,28 @@ func (s *scanner) run(ctx context.Context) {
 	s.mu.Unlock()
 }
 
-// walk lists every source in turn. A source that cannot be listed keeps its
-// existing photos and does not stop the other sources.
+// walk lists every source in turn while new or changed images are processed
+// on up to as many goroutines as there are generation slots. A source that
+// cannot be listed keeps its existing photos and does not stop the others.
 func (s *scanner) walk(ctx context.Context) error {
+	// Photos added by storage events while this scan runs are newer than the
+	// listing and must survive the cleanup below.
+	before, err := s.store.maxID()
+	if err != nil {
+		return err
+	}
 	keep := make(map[string]struct{})
 	failedSources := make(map[string]bool)
 	statuses := make(map[string]sourceStatus)
 	var walkErrs []error
 	seen := 0
-	failures := 0
-	var lastFailure error
+	var (
+		wg          sync.WaitGroup
+		failMu      sync.Mutex
+		failures    int
+		lastFailure error
+	)
+	busy := make(chan struct{}, cap(s.thumbs.gate))
 	for _, src := range s.sources.all() {
 		n := 0
 		err := src.Src.Walk(ctx, func(object sourceObject) error {
@@ -146,14 +159,26 @@ func (s *scanner) walk(ctx context.Context) error {
 			keep[object.Key] = struct{}{}
 			seen++
 			n++
-			if err := s.ingest(ctx, object); err != nil {
-				failures++
-				lastFailure = err
-				slog.Warn("ingest", "source", src.ID, "path", object.RelPath, "err", err)
+			select {
+			case busy <- struct{}{}:
+			case <-ctx.Done():
+				return ctx.Err()
 			}
+			wg.Add(1)
+			go func() {
+				defer func() { <-busy; wg.Done() }()
+				if err := s.ingest(ctx, object); err != nil {
+					failMu.Lock()
+					failures++
+					lastFailure = err
+					failMu.Unlock()
+					slog.Warn("ingest", "source", src.ID, "path", object.RelPath, "err", err)
+				}
+			}()
 			return nil
 		})
 		if ctx.Err() != nil {
+			wg.Wait()
 			return ctx.Err()
 		}
 		st := sourceStatus{At: time.Now(), Seen: n}
@@ -165,11 +190,15 @@ func (s *scanner) walk(ctx context.Context) error {
 		}
 		statuses[src.ID] = st
 	}
+	wg.Wait()
+	if ctx.Err() != nil {
+		return ctx.Err()
+	}
 	s.mu.Lock()
 	s.perSource = statuses
 	s.mu.Unlock()
 
-	gone, err := s.store.deleteMissing(keep, failedSources)
+	gone, err := s.store.deleteMissing(keep, failedSources, before)
 	if err != nil {
 		return err
 	}
@@ -191,11 +220,11 @@ func (s *scanner) walk(ctx context.Context) error {
 	return nil
 }
 
+// ingest indexes one listed or notified object. The per-key lock makes the
+// version check and the commit atomic for that photo; the generation slot is
+// only taken when the image really has to be read.
 func (s *scanner) ingest(ctx context.Context, object sourceObject) error {
-	if err := s.thumbs.lock(ctx); err != nil {
-		return err
-	}
-	defer s.thumbs.unlock()
+	defer s.thumbs.lockKey(object.Key)()
 	existing, ok, err := s.store.getBySourceKey(object.Key)
 	if err != nil {
 		return err
@@ -217,6 +246,10 @@ func (s *scanner) ingest(ctx context.Context, object sourceObject) error {
 			return err
 		}
 	}
+	if err := s.thumbs.lock(ctx); err != nil {
+		return err
+	}
+	defer s.thumbs.unlock()
 	p := photo{ID: existing.ID, SourceKey: object.Key, RelPath: object.RelPath,
 		Size: object.Size, MtimeUnix: object.Mtime.Unix(), SourceVersion: object.Version}
 	b, w, h, processErr := s.thumbs.prepare(ctx, object.Key, s.cfg.MaxPixels)

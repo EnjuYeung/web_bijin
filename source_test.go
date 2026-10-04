@@ -75,7 +75,7 @@ func TestScanFailureKeepsExistingIndex(t *testing.T) {
 		t.Fatal(err)
 	}
 	source := unavailableSource{}
-	thumbs := newThumbCache(filepath.Join(data, "thumbs"), source)
+	thumbs := newThumbCache(filepath.Join(data, "thumbs"), source, 1)
 	scanner := newScanner(config{MaxPixels: 64_000_000}, st, thumbs, newSourceSet(source))
 	if err := scanner.walk(context.Background()); err == nil {
 		t.Fatal("expected scan failure")
@@ -107,7 +107,7 @@ func TestLocalMigrationReusesExistingMetadataAndThumb(t *testing.T) {
 		t.Fatal(err)
 	}
 	source := migrationLocalSource{}
-	thumbs := newThumbCache(filepath.Join(data, "thumbs"), source)
+	thumbs := newThumbCache(filepath.Join(data, "thumbs"), source, 1)
 	if err := os.MkdirAll(thumbs.dir, 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -212,7 +212,7 @@ func multiSetup(t *testing.T) (*store, *sourceSet, *scanner, *memSource, *memSou
 	r2 := newMemSource(map[string][]byte{"旅行/a.jpg": fixtureJPEG(color.RGBA{10, 90, 30, 255}), "r2.jpg": fixtureJPEG(color.RGBA{3, 2, 1, 255})})
 	set := newSourceSet(local)
 	set.setRemotes([]namedSource{remote(1, r1), remote(2, r2)})
-	th := newThumbCache(filepath.Join(t.TempDir(), "thumbs"), set)
+	th := newThumbCache(filepath.Join(t.TempDir(), "thumbs"), set, 1)
 	return st, set, newScanner(config{MaxPixels: 64_000_000}, st, th, set), local, r1, r2
 }
 

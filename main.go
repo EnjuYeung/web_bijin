@@ -38,7 +38,7 @@ func main() {
 		os.Exit(1)
 	}
 	sources.useStorages(storages)
-	thumbs := newThumbCache(cfg.ThumbDir(), sources)
+	thumbs := newThumbCache(cfg.ThumbDir(), sources, cfg.ThumbWorkers)
 	scanner := newScanner(cfg, st, thumbs, sources)
 
 	key, err := loadSessionKey(cfg.DataDir)
@@ -51,19 +51,26 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
-	go scanner.loop(ctx)
-
-	srv := &http.Server{
+	servers := []*http.Server{{
 		Addr:              cfg.Listen,
 		Handler:           newRouter(st, scanner, thumbs, sources, cfg.TZ, gate),
 		ReadHeaderTimeout: 10 * time.Second,
+	}}
+	if cfg.EventsListen != "" {
+		hub := newEventHub(ctx, cfg.EventsToken, scanner)
+		servers = append(servers, &http.Server{Addr: cfg.EventsListen, Handler: hub.handler(), ReadHeaderTimeout: 10 * time.Second})
 	}
 
-	errCh := make(chan error, 1)
-	go func() {
-		slog.Info("listen", "addr", cfg.Listen, "storages", len(storages), "data", cfg.DataDir)
-		errCh <- srv.ListenAndServe()
-	}()
+	go scanner.loop(ctx)
+
+	errCh := make(chan error, len(servers))
+	for _, srv := range servers {
+		go func() {
+			errCh <- srv.ListenAndServe()
+		}()
+	}
+	slog.Info("listen", "addr", cfg.Listen, "events", cfg.EventsListen, "workers", cfg.ThumbWorkers,
+		"scanEvery", cfg.ScanEvery.String(), "storages", len(storages), "data", cfg.DataDir)
 
 	select {
 	case <-ctx.Done():
@@ -76,7 +83,9 @@ func main() {
 
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
 	defer cancel()
-	if err := srv.Shutdown(shutdownCtx); err != nil {
-		slog.Error("shutdown", "err", err)
+	for _, srv := range servers {
+		if err := srv.Shutdown(shutdownCtx); err != nil {
+			slog.Error("shutdown", "err", err)
+		}
 	}
 }

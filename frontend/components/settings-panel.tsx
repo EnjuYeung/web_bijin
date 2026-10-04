@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
 import { Check, CircleAlert, Cloud, FolderHeart, Pencil, Plus, RefreshCw, Trash2 } from "lucide-react";
-import { api, formatTime, type Settings, type SourceStatus, type Storage, type StorageInput } from "@/lib/api";
+import { api, formatTime, type EventState, type Settings, type SourceStatus, type Storage, type StorageInput } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardAction, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
@@ -16,12 +16,20 @@ import { Spinner } from "@/components/ui/spinner";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Separator } from "@/components/ui/separator";
 
-const blank: StorageInput = { id: 0, name: "", endpoint: "", region: "", bucket: "", prefix: "", accessKey: "", secretKey: "", addressing: "auto", listV1: false };
-type TextKey = Exclude<keyof StorageInput, "id" | "listV1">;
+const blank: StorageInput = { id: 0, name: "", endpoint: "", region: "", bucket: "", prefix: "", accessKey: "", secretKey: "", addressing: "auto", listV1: false, directOriginal: false, publicEndpoint: "" };
+type TextKey = Exclude<keyof StorageInput, "id" | "listV1" | "directOriginal">;
 const labels: Partial<Record<TextKey, string>> = { endpoint: "Endpoint", bucket: "Bucket", accessKey: "Access Key", secretKey: "Secret Key" };
 
 function Count({ photos, broken = 0 }: { photos: number; broken?: number }) {
   return <>{photos.toLocaleString("zh-CN")} 张照片{broken > 0 && <span className="source-broken"> · {broken} 个文件无法显示</span>}</>;
+}
+function scanInterval(seconds: number) {
+  return seconds % 60 === 0 ? seconds / 60 + " 分钟" : seconds + " 秒";
+}
+function EventsNote({ events, scanEvery }: { events?: EventState; scanEvery: number }) {
+  if (!events?.enabled) return <p className="scan-note" id="events-note">新照片在每 {scanInterval(scanEvery)}一次的自动扫描中加入。</p>;
+  const last = events.lastAt && new Date(events.lastAt).getFullYear() > 2000 ? `，最近一次 ${formatTime(events.lastAt)}` : "，还没有收到";
+  return <p className="scan-note" id="events-note">上传通知已开启{last}；另每 {scanInterval(scanEvery)}核对一次。{events.lastErr && <span className="source-broken">最近一次处理失败：{events.lastErr}</span>}</p>;
 }
 function SourceState({ status }: { status?: SourceStatus }) {
   return <div className="source-state">
@@ -39,9 +47,9 @@ function StorageField({ name, label, value, onChange, helper, error, required, p
     <FieldLabel htmlFor={id}>{label}{required && <span className="required-mark" aria-label="必填">*</span>}</FieldLabel>
     <Input id={id} name={name} type={password ? "password" : "text"} value={value} onChange={event => onChange(name, event.target.value)}
       autoComplete={password ? "new-password" : "off"} autoCapitalize="off" spellCheck={false} disabled={disabled} maxLength={name === "name" ? 40 : undefined}
-      inputMode={name === "endpoint" ? "url" : undefined} aria-required={required} aria-invalid={!!error}
+      inputMode={name === "endpoint" || name === "publicEndpoint" ? "url" : undefined} aria-required={required} aria-invalid={!!error}
       aria-describedby={[helper ? id + "-hint" : "", error ? id + "-error" : ""].filter(Boolean).join(" ") || undefined}
-      placeholder={name === "endpoint" ? "https://s3.example.com" : name === "prefix" ? "例如 photos/2026" : name === "name" ? "例如 家庭照片" : undefined} />
+      placeholder={name === "endpoint" || name === "publicEndpoint" ? "https://s3.example.com" : name === "prefix" ? "例如 photos/2026" : name === "name" ? "例如 家庭照片" : undefined} />
     {helper && <FieldDescription id={id + "-hint"}>{helper}</FieldDescription>}
     {error && <FieldError id={id + "-error"}>{error}</FieldError>}
   </Field>;
@@ -153,11 +161,12 @@ export default function SettingsPanel() {
       <Card className="source-card">
         <CardHeader><CardTitle><h2><Cloud aria-hidden="true" />对象存储</h2></CardTitle><CardDescription>云端照片与本地一起展示，同名文件夹合并为相册。</CardDescription><CardAction>{editing === undefined && <Button ref={addButton} id="s3-add" onClick={event => openEditor(null, event.currentTarget)} disabled={!!pending}><Plus data-icon="inline-start" aria-hidden="true" />添加对象存储</Button>}</CardAction></CardHeader>
         <CardContent>
+          <EventsNote events={settings.events} scanEvery={settings.scanEvery} />
           {(settings.scan.scanning || settings.scan.queued) && <p className="scan-note" role="status"><Spinner aria-hidden="true" />正在整理新照片，完成后状态会自动更新。</p>}
           <div id="s3-list" className="storage-list">
             {!settings.storages.length && <Empty><EmptyHeader><EmptyMedia variant="icon"><Cloud aria-hidden="true" /></EmptyMedia><EmptyTitle>还没有云端来源</EmptyTitle><EmptyDescription>添加一个对象存储，把云端的照片一起收进相册。</EmptyDescription></EmptyHeader></Empty>}
             {settings.storages.map(storage => <article className="storage-row" key={storage.id}>
-              <div className="storage-main"><h3>{storage.name}</h3><p className="storage-location">{storage.bucket}{storage.prefix ? "/" + storage.prefix : ""} · {new URL(storage.endpoint).host}</p><p className="storage-count"><Count photos={storage.photos} broken={storage.broken} /></p><SourceState status={storage.status} /></div>
+              <div className="storage-main"><h3>{storage.name}</h3><p className="storage-location">{storage.bucket}{storage.prefix ? "/" + storage.prefix : ""} · {new URL(storage.endpoint).host}{storage.directOriginal && " · 大图直连 " + new URL(storage.publicEndpoint || storage.endpoint).host}</p><p className="storage-count"><Count photos={storage.photos} broken={storage.broken} /></p><SourceState status={storage.status} /></div>
               <div className="storage-actions"><Button variant="outline" aria-label={"编辑 " + storage.name} disabled={!!pending} onClick={event => openEditor(storage, event.currentTarget)}><Pencil data-icon="inline-start" aria-hidden="true" />编辑</Button><Button variant="destructive" aria-label={"删除 " + storage.name} disabled={!!pending} onClick={() => remove(storage)}><Trash2 data-icon="inline-start" aria-hidden="true" />删除</Button></div>
             </article>)}
           </div>
@@ -171,6 +180,12 @@ export default function SettingsPanel() {
               <StorageField name="accessKey" label="Access Key" value={values.accessKey} onChange={change} required error={errors.accessKey} disabled={!!pending} />
               <StorageField name="secretKey" label="Secret Key" value={values.secretKey} onChange={change} password required={!editing} error={errors.secretKey} helper={editing ? "已保存，留空表示不修改" : "只保存在服务器，保存后不会返回"} disabled={!!pending} />
             </FieldGroup>
+            <FieldSet className="advanced-fields"><FieldLegend className="sr-only">大图直连</FieldLegend>
+              <Field orientation="horizontal" data-disabled={!!pending}><Checkbox id="s3-directOriginal" name="directOriginal" checked={values.directOriginal} disabled={!!pending} onCheckedChange={checked => setValues(previous => ({ ...previous, directOriginal: checked }))} /><FieldLabel htmlFor="s3-directOriginal">大图由浏览器直接从存储读取，不经过本服务转发</FieldLabel></Field>
+              {values.directOriginal && <FieldGroup className="storage-fields">
+                <StorageField name="publicEndpoint" label="浏览器访问地址" value={values.publicEndpoint} onChange={change} helper="浏览器能打开的存储地址，留空则与 Endpoint 相同；Endpoint 填的是服务器内网地址时必须填写" disabled={!!pending} />
+              </FieldGroup>}
+            </FieldSet>
             <details className="source-guide" open={advanced} onToggle={event => setAdvanced(event.currentTarget.open)}>
               <summary>高级设置</summary><FieldSet className="advanced-fields"><FieldLegend className="sr-only">对象存储高级设置</FieldLegend><FieldGroup className="storage-fields">
                 <StorageField name="region" label="Region" value={values.region} onChange={change} helper="留空自动识别，服务商要求时再填写" disabled={!!pending} />

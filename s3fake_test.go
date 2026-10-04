@@ -24,6 +24,7 @@ type fakeS3 struct {
 	mu       sync.Mutex
 	objects  map[string][]byte
 	down     bool
+	delay    time.Duration // added to every object GET
 	requests []string
 	auths    []string
 }
@@ -102,7 +103,9 @@ func (f *fakeS3) serve(w http.ResponseWriter, r *http.Request) {
 		fakeError(w, http.StatusServiceUnavailable, "ServiceUnavailable")
 		return
 	}
-	if !strings.Contains(r.Header.Get("Authorization"), "Credential="+f.accessKey+"/") {
+	// Header or presigned query credentials; signatures are not verified.
+	if !strings.Contains(r.Header.Get("Authorization"), "Credential="+f.accessKey+"/") &&
+		!strings.HasPrefix(r.URL.Query().Get("X-Amz-Credential"), f.accessKey+"/") {
 		fakeError(w, http.StatusForbidden, "InvalidAccessKeyId")
 		return
 	}
@@ -143,10 +146,14 @@ func (f *fakeS3) serve(w http.ResponseWriter, r *http.Request) {
 	default:
 		f.mu.Lock()
 		data, ok := f.objects[key]
+		delay := f.delay
 		f.mu.Unlock()
 		if !ok {
 			fakeError(w, http.StatusNotFound, "NoSuchKey")
 			return
+		}
+		if r.Method == http.MethodGet {
+			time.Sleep(delay)
 		}
 		w.Header().Set("ETag", fmt.Sprintf(`"%x"`, len(data)*31+len(key)))
 		w.Header().Set("Last-Modified", lastModified.Format(http.TimeFormat))

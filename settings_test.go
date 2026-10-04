@@ -146,7 +146,7 @@ func newSettingsHarness(t *testing.T) *settingsHarness {
 	}
 	t.Cleanup(func() { st.Close() })
 	sources := newSourceSet(&localPhotoSource{root: photos})
-	th := newThumbCache(filepath.Join(data, "thumbs"), sources)
+	th := newThumbCache(filepath.Join(data, "thumbs"), sources, 1)
 	sc := newScanner(config{PhotosDir: "/photos", PhotosHostDir: "/mnt/user/photos", DataDir: data, ScanEvery: time.Hour, MaxPixels: 64_000_000}, st, th, sources)
 	srv := httptest.NewServer(newRouter(st, sc, th, sources, "Asia/Shanghai", testGate()))
 	t.Cleanup(srv.Close)
