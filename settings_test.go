@@ -195,10 +195,13 @@ func TestSettingsAPIRequiresLogin(t *testing.T) {
 		}
 	}
 	res, err := http.Get(h.srv.URL + "/settings.js")
-	if err != nil || res.StatusCode != 200 {
-		t.Fatalf("settings.js: %v %d", err, res.StatusCode)
+	if err != nil {
+		t.Fatal(err)
 	}
-	res.Body.Close()
+	defer res.Body.Close()
+	if res.StatusCode != http.StatusNotFound {
+		t.Fatalf("retired settings.js should not be served: %d", res.StatusCode)
+	}
 }
 
 func TestSettingsAPIStorageLifecycle(t *testing.T) {

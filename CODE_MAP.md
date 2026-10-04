@@ -9,7 +9,7 @@
 3. `main.go`、`config.go`：了解程序如何启动。
 4. `source.go`、`scan.go`、`store.go`、`thumb.go`：了解照片如何进入图库。
 5. `server.go`、`auth.go`：了解页面、接口和登录。
-6. `web/index.html`、`web/app.js`、`web/app.css`：了解浏览器界面。
+6. `frontend/components/album-app.tsx`、`frontend/components/photo-gallery.tsx`、`frontend/app/globals.css`：了解浏览器界面。
 
 ## Go 后端
 
@@ -34,12 +34,19 @@
 
 | 文件 | 作用 |
 |---|---|
-| `web/index.html` | 相册主页面结构，包括侧栏、照片区、相册区、设置页和大图浮层。 |
-| `web/login.html` | 登录页面及登录请求逻辑。 |
-| `web/app.js` | 前端主要逻辑，包括接口请求、瀑布流、虚拟滚动、相册与设置页切换、大图浏览、主题和侧栏状态。 |
-| `web/settings.js` | 设置页：显示本地图库说明和各来源状态，添加、编辑、测试、删除对象存储，扫描进行中短时刷新状态。 |
-| `web/app.css` | 全部页面布局与组件样式，消费根目录设计令牌，并实现响应式和交互动效。 |
-| `tokens.css` | 主图库与登录页共用的颜色、字体、间距、动效、圆角和侧栏尺寸令牌；由 Go 二进制内嵌并通过 `/tokens.css` 提供。 |
+| `frontend/app/layout.tsx` | Next.js 页面外壳、元数据和首屏主题/侧栏偏好脚本，不请求用户数据。 |
+| `frontend/app/page.tsx`、`frontend/app/login/page.tsx` | 首页与登录页静态导出入口。 |
+| `frontend/components/album-app.tsx` | 标题、导航、网站标题折叠交互、按需加载设置页与视图选择。 |
+| `frontend/components/photo-gallery.tsx` | 游标分页、虚拟瀑布流、hash 大图、键盘/触摸切换、焦点和滚动恢复。 |
+| `frontend/components/albums.tsx` | 文件夹相册封面、数量、空态与重试。 |
+| `frontend/components/settings-panel.tsx` | 来源卡片、校验表单、添加/编辑/测试/删除对象存储；扫描中短时刷新。 |
+| `frontend/components/login.tsx` | 登录表单、错误提示与安全返回地址。 |
+| `frontend/components/ui/` | 官方 shadcn/ui Base UI 组件；统一语义颜色、按钮状态、表单与对话框。 |
+| `frontend/lib/api.ts`、`frontend/lib/preferences.ts` | 现有 Go API 的类型与请求、格式化、主题与侧栏偏好。 |
+| `frontend/app/globals.css` | 令牌到 Tailwind / shadcn 的映射、各页面布局、响应式与减少动态规则。 |
+| `tokens.css` | 主图库与登录页共享的颜色、字体、间距、动效、圆角和侧栏尺寸；在构建时合并进静态 CSS。 |
+| `frontend/next.config.ts`、`frontend/scripts/export.mjs` | Next.js 静态导出、生成 JavaScript / CSS 的 gzip 副本，并复制到 Go 内嵌目录 `web/`。 |
+| `frontend/package.json`、`frontend/package-lock.json`、`frontend/components.json` | 前端依赖、可复现安装与 shadcn 配置。 |
 
 ## 测试
 
@@ -47,6 +54,9 @@
 |---|---|
 | `album_test.go` | 测试文件夹相册的分组、命名、封面和过滤。 |
 | `auth_test.go` | 测试登录、Cookie、访问保护和相关 HTTP 行为。 |
+| `assets_test.go` | 验证导出资源的门禁边界，以及 gzip 解压内容、MIME、缓存与拒绝压缩时的回退。 |
+| `frontend/tests/album.spec.ts`、`frontend/playwright.config.ts` | Playwright 实际浏览器回归：登录、照片/相册、大图、设置表单、主题/品牌交互与响应式。 |
+| `frontend/tests/s3_fixture.py` | 仅监听本机的 S3 浏览器测试服务，使用生成的测试图片，不连接真实桶。 |
 | `scan_test.go` | 测试照片扫描、格式识别和异常文件处理。 |
 | `order_test.go` | 测试随机排序和游标分页。 |
 | `meta_test.go` | 测试照片信息格式和登录背景图选择。 |
@@ -62,7 +72,7 @@
 
 | 文件 | 作用 |
 |---|---|
-| `Dockerfile` | 使用多阶段构建生成精简的 Go 应用镜像。 |
+| `Dockerfile` | Node 静态导出 → Go 内嵌编译 → 精简 Alpine 单进程运行镜像。 |
 | `docker-compose.example.yaml` | Docker Compose 部署示例，定义端口、目录挂载、环境变量和健康检查。 |
 | `.env.example` | 环境变量示例。 |
 | `go.mod`、`go.sum` | Go 版本和第三方依赖清单。 |
@@ -87,3 +97,7 @@
 - `photos/`：本地测试或实际照片来源；添加对象存储后仍与对象存储一起扫描。
 - `data/`：SQLite（照片索引与对象存储配置）、会话密钥和缩略图缓存。
 - `output/`：浏览器截图等测试产物。
+- `web/`：Next.js 静态导出产物（仅 `.gitkeep` 提交）；Go 构建前必须生成。
+- `frontend/node_modules/`、`.next/`、`out/`：安装依赖与构建缓存。
+
+更新时间：2026-09-30 12:42:35 CST。

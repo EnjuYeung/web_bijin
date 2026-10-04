@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io/fs"
 	"log/slog"
+	"mime"
 	"net/http"
 	"path/filepath"
 	"strconv"
@@ -14,7 +15,7 @@ import (
 	"time"
 )
 
-//go:embed web tokens.css
+//go:embed all:web
 var webEmbed embed.FS
 
 func newRouter(st *store, sc *scanner, thumbs *thumbCache, sources *sourceSet, tz string, gate *authGate) http.Handler {
@@ -43,17 +44,26 @@ func newRouter(st *store, sc *scanner, thumbs *thumbCache, sources *sourceSet, t
 		w.Header().Set("Cache-Control", "no-store")
 		http.ServeFileFS(w, r, webFS, "login.html")
 	}))
-	mux.Handle("GET /app.css", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		http.ServeFileFS(w, r, webFS, "app.css")
+	mux.Handle("GET /_next/static/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		name := strings.TrimPrefix(r.URL.Path, "/")
+		info, err := fs.Stat(webFS, name)
+		if err != nil || !info.Mode().IsRegular() {
+			http.NotFound(w, r)
+			return
+		}
+		w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
+		w.Header().Set("Vary", "Accept-Encoding")
+		if acceptsGzip(r.Header.Get("Accept-Encoding")) {
+			if compressed, err := fs.Stat(webFS, name+".gz"); err == nil && compressed.Mode().IsRegular() {
+				w.Header().Set("Content-Encoding", "gzip")
+				w.Header().Set("Content-Type", mime.TypeByExtension(filepath.Ext(name)))
+				name += ".gz"
+			}
+		}
+		http.ServeFileFS(w, r, webFS, name)
 	}))
-	mux.Handle("GET /tokens.css", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		http.ServeFileFS(w, r, webEmbed, "tokens.css")
-	}))
-	mux.Handle("GET /app.js", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		http.ServeFileFS(w, r, webFS, "app.js")
-	}))
-	mux.Handle("GET /settings.js", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		http.ServeFileFS(w, r, webFS, "settings.js")
+	mux.Handle("GET /favicon.svg", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.ServeFileFS(w, r, webFS, "favicon.svg")
 	}))
 	mux.Handle("GET /api/photos", gate.protect(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		handleList(w, r, st, sc, tz)
@@ -78,6 +88,26 @@ func newRouter(st *store, sc *scanner, thumbs *thumbCache, sources *sourceSet, t
 		http.ServeFileFS(w, r, webFS, "index.html")
 	})))
 	return withLog(mux)
+}
+
+func acceptsGzip(header string) bool {
+	for _, encoding := range strings.Split(header, ",") {
+		parts := strings.Split(encoding, ";")
+		if !strings.EqualFold(strings.TrimSpace(parts[0]), "gzip") {
+			continue
+		}
+		for _, parameter := range parts[1:] {
+			key, value, ok := strings.Cut(strings.TrimSpace(parameter), "=")
+			if ok && strings.EqualFold(key, "q") {
+				quality, err := strconv.ParseFloat(strings.TrimSpace(value), 64)
+				if err != nil || quality <= 0 || quality > 1 {
+					return false
+				}
+			}
+		}
+		return true
+	}
+	return false
 }
 
 func handleList(w http.ResponseWriter, r *http.Request, st *store, sc *scanner, tz string) {

@@ -6,7 +6,9 @@
 
 - 语言：Go。一个静态二进制同时提供页面、接口、原图和缩略图。
 - 数据：SQLite 文件，和缩略图一起放在数据目录。不另起数据库容器。
-- 前端：服务端内嵌的单页 HTML / CSS / JS；主样式消费根目录 `tokens.css` 的共享设计令牌，无前端框架、无构建步骤。
+- 前端：Next.js App Router + React + Tailwind CSS + shadcn/ui（Base UI）。构建时静态导出 HTML / CSS / JS，再由 Go 内嵌提供；运行时不启动 Node 服务。根目录 `tokens.css` 继续作为共享设计令牌，保留「月雾樱紫」风格。
+- 构建：Docker 的 Node 构建阶段执行 `npm ci` 和静态导出，Go 构建阶段内嵌导出的 `web/`。前端源码与锁文件放在 `frontend/`，生成资源不提交 Git。
+- 静态资源：构建时同时生成 JavaScript / CSS 的 gzip 文件；Go 按浏览器的 `Accept-Encoding` 提供，保留原文件作为回退，并设置 `Vary` 与一年不可变缓存。压缩计算只发生在构建阶段。
 - 运行：一个 Docker Compose 文件、一个容器、一个进程。容器内固定监听 `5001`。宿主机端口由 Compose 环境变量 `HOST_PORT` 决定。
 - 图片来源：始终读取容器内 `/photos`（只读挂载用户目录，由 `.env` 的 `PHOTOS_DIR` 决定）；另可在网页「设置」中添加任意个兼容 Amazon S3 接口的对象存储，配置保存在 SQLite。所有来源聚合到同一索引和图片接口，浏览器只拿到照片 id，不接触存储凭据。
 
@@ -72,7 +74,7 @@ Compose 另提供 `HOST_PORT`、`PHOTOS_DIR`（宿主机路径）、`DATA_DIR`�
 | 路径 | 作用 |
 |---|---|
 | `GET /login` | 登录页（未登录可进） |
-| `GET /app.css`、`GET /tokens.css`、`GET /app.js`、`GET /settings.js` | 内嵌静态资源（未登录可取，不含任何配置数据） |
+| `GET /_next/static/...`、`GET /favicon.svg` | 内嵌的构建资源（未登录可取，不含任何配置数据；不公开目录或导出的页面数据） |
 | `POST /api/login` | 校验账号并写 Cookie |
 | `GET /api/login-bg` | 登录页随机背景图（桌面横图 / 手机竖图） |
 | `GET /` | 相册页面（需登录） |
@@ -105,6 +107,14 @@ Compose 另提供 `HOST_PORT`、`PHOTOS_DIR`（宿主机路径）、`DATA_DIR`�
 - 登录 Cookie 签名派生绑定当前用户名、密码和 `session.key`；修改凭据或密钥后旧 Cookie 失效。本次签名格式升级会要求已有用户重新登录。
 
 不引入队列、后台 worker 进程或独立缩略图服务。
+
+## 前端组件与交互（2026-09-30 11:10:26）
+
+- `frontend/app/` 提供首页和登录页，浏览器通过现有 Go API 加载登录后的数据；原有查询参数与照片 hash 地址保持兼容。
+- 照片继续采用游标分页和虚拟瀑布流；设置页按需加载，扫描结束后停止轮询。没有相册数据的常驻前端定时请求。
+- shadcn 的 Button、Card、Field、Input、Badge、Dialog 等组件统一交互、语义和焦点状态；所有主要操作支持键盘，主要触摸目标至少 44 px。
+- 侧栏通过网站标题展开/收起，删除独立折叠按钮；手机展开时覆盖内容。白色主按钮文字使用更深的樱粉底色，主题、侧栏偏好仍保存在浏览器。
+- 首页与图片接口继续由 Go 登录门禁保护；仅公开登录页所需的静态构建资源。静态导出的首页 HTML 和 RSC 数据不单独公开。
 
 ## 非目标
 

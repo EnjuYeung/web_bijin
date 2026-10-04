@@ -34,7 +34,7 @@ docker compose up -d
 - 左侧导航的「照片」是全部照片瀑布流；「相册」按图片直接所在文件夹展示封面、文件夹名和照片数量。
 - 点击相册封面后，只浏览该文件夹里的照片。瀑布流、大图、前后翻页和返回位置与全部照片一致。
 - 根目录内的图片归在「根目录」相册；嵌套文件夹按图片直接所在的那一层分别成册。
-- 侧栏在电脑上默认展开、手机上默认收起。点顶部按钮可切换，选择会记在当前浏览器里。
+- 侧栏在电脑上默认展开、手机上默认收起。点击侧栏网站标题 `Juen's`（收起后为 `J`）切换，选择会记在当前浏览器里；也支持键盘 Enter / 空格。
 - 右上角图形按钮可在白天、自动、黑夜之间切换。自动按 `TZ` 的当前时间判断（6:00–18:00 白天）。
 - 照片顺序每次打开会打乱，同一轮滚动里保持稳定。电脑上悬停照片时，卡片位置不动，图片轻微放大并显示元数据；相册封面使用同样的轻微放大动效。
 - 点开大图后，右上角的信息图标可展开完整信息；手机上默认收起。
@@ -77,3 +77,35 @@ docker compose down
 ```
 
 数据、缩略图和对象存储配置在 `DATA_DIR`（数据库只有 root 可读）。本地照片保持只读挂载，对象存储也只读访问，不会修改、上传或删除任何原图。
+
+## 构建与开发
+
+前端使用 Next.js、Tailwind CSS 与 shadcn/ui，并保留「月雾樱紫」配色。Docker 构建时自动安装锁定版本的前端依赖、导出静态页面并编译 Go；最终容器只有 Go 应用进程，无需在 Unraid 安装 Node。修改源码后执行：
+
+```bash
+docker compose up -d --build
+```
+
+本地开发需要 Node.js 24+ 与 Go 1.23+：
+
+```bash
+cd frontend
+npm ci
+npm run build
+cd ..
+AUTH_USER=dev AUTH_PASS=dev-password go run .
+```
+
+浏览器通过 Go 服务访问页面和 API。修改前端后重新执行 `npm run build` 并重启 Go；生成的 `web/` 不提交 Git。主题颜色、字体与尺寸继续维护在根目录 `tokens.css`。
+
+浏览器回归测试使用独立的本地照片、SQLite 和 S3 测试服务：
+
+```bash
+go run genphotos.go
+go build -o output/bijin-ui-test .
+cd frontend
+npx playwright install chromium
+npm run test:ui
+```
+
+先完成前端构建再运行 Go 测试：`go test ./...`、`go vet ./...`。测试账号仅用于回归测试，测试服务监听 `127.0.0.1:18092` / `18093`，不会连接实际对象存储。测试截图和报告在 `output/`。

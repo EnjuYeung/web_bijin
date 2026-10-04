@@ -6,3 +6,11 @@
 *.exe
 *.test
 docker-compose.yml
+/frontend/node_modules/
+/frontend/.next/
+/frontend/out/
+/frontend/test-results/
+/frontend/playwright-report/
+/frontend/*.tsbuildinfo
+/web/*
+!/web/.gitkeep
