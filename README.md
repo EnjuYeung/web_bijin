@@ -1,20 +1,21 @@
 # 美人
 
-家里 Unraid 上用的本地图片瀑布流相册。打开先登录，再看图。点一张图看大图，再点大图回到刚才的位置。
+部署在 netcup 上的图片瀑布流相册，照片放在同机的 RustFS 对象存储里，网址 `https://csb.jgbman.cc`。打开先登录，再看图。点一张图看大图，再点大图回到刚才的位置。
 
 ## 启动
 
+在 netcup 的 `/opt/1panel/apps/web_bijin` 里：
+
 1. 复制配置：`cp docker-compose.example.yaml docker-compose.yml`，再执行 `cp .env.example .env`
-2. 改 `PHOTOS_DIR` 为你的照片目录（会递归扫描子文件夹）
-3. 改 `AUTH_USER` 和 `AUTH_PASS` 为你的登录账号
-4. 需要的话改 `HOST_PORT`（容器内固定是 5001，改的是电脑/Unraid 上的端口）
-5. 在本目录执行：
+2. 改 `AUTH_USER` 和 `AUTH_PASS` 为你的登录账号；照片全在对象存储时，`PHOTOS_DIR` 指向一个空目录即可
+3. 开启上传通知时填 `EVENTS_LISTEN=:5002` 和 `EVENTS_TOKEN`（与 RustFS 端相同，见下文）
+4. 在本目录执行：
 
 ```bash
-docker compose up -d
+docker compose up -d --build
 ```
 
-浏览器打开 `http://服务器IP:HOST_PORT`，先登录。没登录进不了首页，也看不到照片。
+容器加入 1Panel 的 `1panel-network`，只把 5001 映射到本机 `127.0.0.1`，由 OpenResty 以 `https://csb.jgbman.cc` 反代（站点配置在 `/opt/1panel/apps/openresty/openresty/conf/http.d/csb.conf`）。没登录进不了首页，也看不到照片。
 
 ### 使用对象存储
 
@@ -26,6 +27,18 @@ docker compose up -d
 - 存储里的照片和本地照片合并展示，同名文件夹合并为同一个相册；前缀本身不算文件夹。
 - Secret Key 只保存在服务器的数据库里，网页之后不会再显示；编辑时留空表示不修改。
 - 某个存储暂时连不上时，它已有的照片会保留，设置页显示原因，其他存储照常更新。删除存储只会把它的照片移出图库，不会删除存储里的原图。
+- 「大图由浏览器直接从存储读取」：勾选后，看大图时浏览器拿到一个 24 小时有效的签名地址，直接从存储下载原图，不经过本服务。「浏览器访问地址」填浏览器能打开的存储地址；Endpoint 填的是服务器内网地址时必须填写。建议给相册单独建一个只读用户，签名地址里能看到它的 Access Key（看不到 Secret）。
+
+netcup 上的现行设置：Endpoint `http://1Panel-rustfs-dVOR:9000`（容器内网）、Bucket `jan`、只读用户 `bijin-ro`、寻址方式「路径」、大图直连开启、浏览器访问地址 `https://s3.jgbman.cc`。
+
+### 上传通知（RustFS）
+
+开启后，往桶里上传或删除照片，通常 0–5 秒就进出图库，不用等定时扫描。RustFS 端需要（已在 netcup 配好）：
+
+1. RustFS 的 compose 环境变量：`RUSTFS_NOTIFY_ENABLE=true`、`RUSTFS_NOTIFY_WEBHOOK_ENABLE_BIJIN=on`、`RUSTFS_NOTIFY_WEBHOOK_ENDPOINT_BIJIN=http://bijin:5002/s3-events`、`RUSTFS_NOTIFY_WEBHOOK_AUTH_TOKEN_BIJIN=<与 EVENTS_TOKEN 相同>`、`RUSTFS_NOTIFY_WEBHOOK_QUEUE_DIR_BIJIN=/notify/bijin`（挂载 `./notify:/notify`），以及放行容器内网的 `RUSTFS_OUTBOUND_ALLOW_ORIGINS=http://bijin:5002`，然后重启 RustFS。
+2. 给桶绑定事件：`rc bucket event add <别名>/jan arn:rustfs:sqs:us-east-1:bijin:webhook --event "s3:ObjectCreated:*" --event "s3:ObjectRemoved:*"`。
+
+设置页的对象存储卡片会显示「上传通知已开启」和最近收到的时间。通知漏掉时，每 30 分钟的自动核对会补上。
 
 从旧版本升级：旧版写在 `.env` 里的 `STORAGE_BACKEND`、`S3_*` 不再生效，可以删掉；升级后在设置页重新添加这个存储即可。
 
@@ -46,15 +59,19 @@ docker compose up -d
 
 | 变量 | 默认 | 含义 |
 |---|---|---|
-| `HOST_PORT` | `5001` | 宿主机端口。容器内永远是 5001 |
+| `HOST_PORT` | `5001` | 宿主机端口，只绑定 `127.0.0.1`。容器内永远是 5001 |
 | `PHOTOS_DIR` | `./photos` | 宿主机上的照片目录 |
 | `DATA_DIR` | `./data` | 索引、缩略图和对象存储配置 |
 | `TZ` | `Asia/Shanghai` | 日志时间和日期显示 |
-| `SCAN_EVERY` | `2m` | 自动再扫间隔，最短 10 秒 |
 | `AUTH_USER` | `juen` | 登录用户名，必须有 |
 | `AUTH_PASS` | `changeme` | 登录密码，必须有 |
+| `THUMB_WORKERS` | CPU 数的约三分之二 | 同时生成缩略图的张数；netcup 用 4 |
+| `EVENTS_LISTEN` | 空 | 上传通知端口，例如 `:5002`；留空则关闭 |
+| `EVENTS_TOKEN` | 空 | 上传通知令牌，至少 16 位，与 RustFS 端相同 |
+| `SCAN_EVERY` | `2m`，开通知后 `30m` | 自动再扫间隔，最短 10 秒 |
+| `CPUS` / `MEM_LIMIT` / `GOMEMLIMIT` | `6` / `4g` / `3GiB` | 容器资源上限 |
 
-加了新照片，等待自动扫描后刷新网页查看；也可以重启触发扫描，再刷新网页：
+开启上传通知后，新照片几秒内入库，刷新网页查看。没开通知时，等待自动扫描后刷新；也可以重启触发扫描，再刷新网页：
 
 ```bash
 docker compose restart
@@ -80,13 +97,13 @@ docker compose down
 
 ## 构建与开发
 
-前端使用 Next.js、Tailwind CSS 与 shadcn/ui，并保留「月雾樱紫」配色。Docker 构建时自动安装锁定版本的前端依赖、导出静态页面并编译 Go；最终容器只有 Go 应用进程，无需在 Unraid 安装 Node。修改源码后执行：
+前端使用 Next.js、Tailwind CSS 与 shadcn/ui，并保留「月雾樱紫」配色。Docker 构建时自动安装锁定版本的前端依赖、导出静态页面并编译 Go；最终容器只有 Go 应用进程，服务器上不需要安装 Node 或 Go。修改源码后执行：
 
 ```bash
 docker compose up -d --build
 ```
 
-本地开发需要 Node.js 24+ 与 Go 1.23+：
+本地开发需要 Node.js 24+ 与 Go 1.25+：
 
 ```bash
 cd frontend
