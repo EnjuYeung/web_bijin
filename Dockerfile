@@ -14,7 +14,8 @@ COPY go.mod go.sum ./
 RUN go mod download
 COPY . .
 COPY --from=frontend /src/web ./web
-RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /out/bijin .
+# nodynamic: the WebP encoder always uses its built-in pure-Go libwebp.
+RUN CGO_ENABLED=0 GOOS=linux go build -tags nodynamic -trimpath -ldflags="-s -w" -o /out/bijin .
 
 FROM alpine:3.22
 RUN apk add --no-cache tzdata wget

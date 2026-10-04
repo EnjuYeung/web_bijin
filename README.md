@@ -2,6 +2,8 @@
 
 部署在 netcup 上的图片瀑布流相册，照片放在同机的 RustFS 对象存储里，网址 `https://csb.jgbman.cc`。打开先登录，再看图。点一张图看大图，再点大图回到刚才的位置。
 
+同一个服务还给其他网站提供公开的随机壁纸接口 `https://csb.jgbman.cc/v1/backgrounds/random`（原 nas-background 的功能，见下文「随机壁纸接口」）。
+
 ## 启动
 
 在 netcup 的 `/opt/1panel/apps/web_bijin` 里：
@@ -52,6 +54,27 @@ netcup 上的现行设置：Endpoint `http://1Panel-rustfs-dVOR:9000`（容器�
 - 照片顺序每次打开会打乱，同一轮滚动里保持稳定。电脑上悬停照片时，卡片位置不动，图片轻微放大并显示元数据；相册封面使用同样的轻微放大动效。
 - 点开大图后，右上角的信息图标可展开完整信息；手机上默认收起。
 - 左侧「设置」显示本地照片目录、照片数量和最近扫描结果，并管理对象存储。本地照片目录只能在 `.env` 里改，设置页只做说明。
+- 登录页的背景每次随机换一张壁纸（下文的壁纸成品，电脑横图、手机竖图），不再把原图发给没登录的人。
+
+## 随机壁纸接口
+
+其他网站可以直接引用，不需要登录，每次打开随机换一张：
+
+| 用途 | 地址 |
+|---|---|
+| 横屏 | `https://csb.jgbman.cc/v1/backgrounds/random?orientation=landscape` |
+| 竖屏 | `https://csb.jgbman.cc/v1/backgrounds/random?orientation=portrait` |
+| 不限 | `https://csb.jgbman.cc/v1/backgrounds/random` |
+
+在网页样式里写 `background-image: url(地址)`，或者 `<img src="地址">` 即可。设置页的「随机壁纸」卡片显示已生成数量，并能一键复制这些地址。
+
+- 壁纸从相册照片生成：横图最长 3840×2160，竖图最长 1440×2560，宽高比在 0.9–1.1 之间的方图两种都有；不放大原图，WebP 质量 80。GIF 不做壁纸。
+- 照片进入相册后自动生成壁纸，通常比缩略图晚几秒；删除或替换照片后，旧壁纸几秒内不再出现，旧地址返回 404。
+- 可选参数：`orientation`（landscape / portrait / square）、`profile`（desktop-3840 / mobile-1440）、`minWidth`、`minHeight`、`format=json`（返回图片信息而不是跳转）。没有符合条件的壁纸时返回 204；其他参数会被忽略。
+- 接口只跳转到壁纸成品 `/media/sha256/…webp`（一年不可变缓存，允许任何网站引用），原图和相册其余部分仍然要登录。
+- 壁纸文件放在 `DATA_DIR/wallpapers`，2,101 张约 400 MB。
+
+以前用 nas-background 的网站，把 `https://bg.junziguozi.fun:17528/v1/backgrounds/random…` 换成上面的地址即可，参数不用改。
 
 ## 环境变量
 
@@ -93,7 +116,7 @@ docker compose logs -f
 docker compose down
 ```
 
-数据、缩略图和对象存储配置在 `DATA_DIR`（数据库只有 root 可读）。本地照片保持只读挂载，对象存储也只读访问，不会修改、上传或删除任何原图。
+数据、缩略图、壁纸和对象存储配置在 `DATA_DIR`（数据库只有 root 可读）。本地照片保持只读挂载，对象存储也只读访问，不会修改、上传或删除任何原图。
 
 ## 构建与开发
 
@@ -110,7 +133,7 @@ cd frontend
 npm ci
 npm run build
 cd ..
-AUTH_USER=dev AUTH_PASS=dev-password go run .
+AUTH_USER=dev AUTH_PASS=dev-password go run -tags nodynamic .
 ```
 
 浏览器通过 Go 服务访问页面和 API。修改前端后重新执行 `npm run build` 并重启 Go；生成的 `web/` 不提交 Git。主题颜色、字体与尺寸继续维护在根目录 `tokens.css`。
@@ -119,10 +142,10 @@ AUTH_USER=dev AUTH_PASS=dev-password go run .
 
 ```bash
 go run genphotos.go
-go build -o output/bijin-ui-test .
+go build -tags nodynamic -o output/bijin-ui-test .
 cd frontend
 npx playwright install chromium
 npm run test:ui
 ```
 
-先完成前端构建再运行 Go 测试：`go test ./...`、`go vet ./...`。测试账号仅用于回归测试，测试服务监听 `127.0.0.1:18092` / `18093`，不会连接实际对象存储。测试截图和报告在 `output/`。
+先完成前端构建再运行 Go 测试：`go test -tags nodynamic ./...`、`go vet -tags nodynamic ./...`。`nodynamic` 让 WebP 编码固定使用内置的纯 Go 实现，与 Docker 构建一致。`go run genphotos.go` 会往 `photos/` 写测试图片，不要在生产目录（`photos/` 是线上本地照片目录）里执行，先把代码复制到别的目录再测。测试账号仅用于回归测试，测试服务监听 `127.0.0.1:18092` / `18093`，不会连接实际对象存储。测试截图和报告在 `output/`。

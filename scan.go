@@ -230,7 +230,21 @@ func (s *scanner) ingest(ctx context.Context, object sourceObject) error {
 		return err
 	}
 	if ok && existing.SourceVersion == object.Version && (existing.Broken || s.thumbs.exists(existing)) {
-		return nil
+		ready, err := s.wallpapersReady(existing)
+		if err != nil || ready {
+			return err
+		}
+		// The photo is current and only its wallpapers are missing, as for
+		// photos indexed before wallpapers existed.
+		if err := s.thumbs.lock(ctx); err != nil {
+			return err
+		}
+		defer s.thumbs.unlock()
+		d, err := s.thumbs.prepare(ctx, object.Key, s.cfg.MaxPixels)
+		if err != nil {
+			return err
+		}
+		return s.saveWallpapers(ctx, existing, d.img)
 	}
 	// Older local indexes had no source version; retain their working cache.
 	if ok && object.Backend == "local" && existing.SourceVersion == "" &&
@@ -252,7 +266,7 @@ func (s *scanner) ingest(ctx context.Context, object sourceObject) error {
 	defer s.thumbs.unlock()
 	p := photo{ID: existing.ID, SourceKey: object.Key, RelPath: object.RelPath,
 		Size: object.Size, MtimeUnix: object.Mtime.Unix(), SourceVersion: object.Version}
-	b, w, h, processErr := s.thumbs.prepare(ctx, object.Key, s.cfg.MaxPixels)
+	d, processErr := s.thumbs.prepare(ctx, object.Key, s.cfg.MaxPixels)
 	if processErr != nil {
 		var invalid *invalidImageError
 		if !errors.As(processErr, &invalid) {
@@ -262,10 +276,13 @@ func (s *scanner) ingest(ctx context.Context, object sourceObject) error {
 		if _, err := s.store.upsert(p); err != nil {
 			return err
 		}
+		if err := s.store.deleteWallpapers(p.ID); err != nil {
+			return err
+		}
 		s.thumbs.remove(p.ID)
 		return processErr
 	}
-	p.Width, p.Height = w, h
+	p.Width, p.Height = d.w, d.h
 	if !ok {
 		// Reserve a stable ID, but never expose an image before the file is saved.
 		pending := p
@@ -276,14 +293,16 @@ func (s *scanner) ingest(ctx context.Context, object sourceObject) error {
 		}
 		p.ID = id
 	}
-	if err := s.thumbs.save(p, b); err != nil {
+	if err := s.thumbs.save(p, d.thumb); err != nil {
 		return err
 	}
 	if _, err := s.store.upsert(p); err != nil {
 		return err
 	}
 	s.thumbs.removeOld(p, existing)
-	return nil
+	// The album shows the photo from here on; encoding its wallpapers takes
+	// a few seconds more.
+	return s.saveWallpapers(ctx, p, d.img)
 }
 
 func isImageName(name string) bool {

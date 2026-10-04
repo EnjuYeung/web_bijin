@@ -99,7 +99,10 @@ DROP INDEX IF EXISTS photos_mtime;
 			return err
 		}
 	}
-	return s.migrateStorages()
+	if err := s.migrateStorages(); err != nil {
+		return err
+	}
+	return s.migrateWallpapers()
 }
 
 func (s *store) hasColumn(table, column string) (bool, error) {
@@ -193,8 +196,10 @@ func (s *store) maxID() (int64, error) {
 }
 
 func (s *store) deleteByID(id int64) error {
-	_, err := s.db.Exec(`DELETE FROM photos WHERE id=?`, id)
-	return err
+	if _, err := s.db.Exec(`DELETE FROM photos WHERE id=?`, id); err != nil {
+		return err
+	}
+	return s.deleteWallpapers(id)
 }
 
 // deleteMissing removes rows up to id `upTo` that were not seen in this scan,
@@ -220,7 +225,7 @@ func (s *store) deleteMissing(keep map[string]struct{}, failed map[string]bool, 
 		return nil, err
 	}
 	for _, p := range gone {
-		if _, err := s.db.Exec(`DELETE FROM photos WHERE id=?`, p.ID); err != nil {
+		if err := s.deleteByID(p.ID); err != nil {
 			return nil, err
 		}
 	}

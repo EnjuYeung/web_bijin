@@ -34,8 +34,18 @@ func newRouter(st *store, sc *scanner, thumbs *thumbCache, sources *sourceSet, t
 		})
 	}))
 	mux.Handle("GET /api/login-bg", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		handleLoginBg(w, r, st, sources)
+		handleLoginBg(w, r, st)
 	}))
+	// Random wallpapers for other websites: public, and only screen-sized
+	// copies, never originals.
+	mux.Handle("GET /v1/backgrounds/random", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		handleRandomWallpaper(w, r, st)
+	}))
+	mux.Handle("GET /media/sha256/{prefix}/{name}", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		handleWallpaperMedia(w, r, st, thumbs.wallDir)
+	}))
+	mux.Handle("OPTIONS /v1/backgrounds/random", http.HandlerFunc(handleWallpaperPreflight))
+	mux.Handle("OPTIONS /media/sha256/{prefix}/{name}", http.HandlerFunc(handleWallpaperPreflight))
 	mux.Handle("POST /api/login", http.HandlerFunc(gate.handleLogin))
 	mux.Handle("GET /login", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if gate.signedIn(r) {
@@ -236,26 +246,24 @@ func pickLimit(limit int) int {
 	return limit
 }
 
-func handleLoginBg(w http.ResponseWriter, r *http.Request, st *store, source imageOpener) {
-	all, err := st.listOK()
-	if err != nil {
+// handleLoginBg sends the login page to a random wallpaper of the screen's
+// shape, or of any shape when there is none; originals stay behind login.
+func handleLoginBg(w http.ResponseWriter, r *http.Request, st *store) {
+	profile := "desktop-3840"
+	if r.URL.Query().Get("orient") == "port" {
+		profile = "mobile-1440"
+	}
+	rows, err := st.wallpaperCandidates(wallFilter{profile: profile})
+	if err == nil && len(rows) == 0 {
+		rows, err = st.wallpaperCandidates(wallFilter{})
+	}
+	v, ok := pickWallpaper(rows)
+	if err != nil || !ok {
 		http.NotFound(w, r)
 		return
 	}
-	portrait := r.URL.Query().Get("orient") == "port"
-	p, ok := pickBackground(all, portrait)
-	if !ok {
-		http.NotFound(w, r)
-		return
-	}
-	f, err := source.Open(r.Context(), p.sourceKey())
-	if err != nil {
-		http.NotFound(w, r)
-		return
-	}
-	defer f.Close()
 	w.Header().Set("Cache-Control", "no-store")
-	http.ServeContent(w, r, filepath.Base(p.RelPath), time.Time{}, f)
+	http.Redirect(w, r, v.mediaPath(), http.StatusFound)
 }
 
 func handleThumb(w http.ResponseWriter, r *http.Request, st *store, thumbs *thumbCache) {
@@ -350,7 +358,7 @@ func withLog(next http.Handler) http.Handler {
 		start := time.Now()
 		lw := &statusWriter{ResponseWriter: w, code: 200}
 		next.ServeHTTP(lw, r)
-		if (strings.HasPrefix(r.URL.Path, "/api/") && r.URL.Path != "/api/health") || lw.code >= 400 {
+		if (strings.HasPrefix(r.URL.Path, "/api/") && r.URL.Path != "/api/health") || strings.HasPrefix(r.URL.Path, "/v1/") || lw.code >= 400 {
 			slog.Info("http", "method", r.Method, "path", r.URL.Path, "code", lw.code, "ms", time.Since(start).Milliseconds())
 		}
 	})

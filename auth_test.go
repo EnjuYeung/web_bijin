@@ -3,7 +3,6 @@ package main
 import (
 	"bytes"
 	"encoding/json"
-	"image"
 	"image/color"
 	"io"
 	"net/http"
@@ -37,7 +36,7 @@ func testApp(t *testing.T) (*httptest.Server, *store, string) {
 		t.Fatal(err)
 	}
 	sources := newSourceSet(&localPhotoSource{root: photos})
-	th := newThumbCache(filepath.Join(data, "thumbs"), sources, 1)
+	th := newThumbCache(filepath.Join(data, "thumbs"), filepath.Join(data, "wallpapers"), sources, 1)
 	sc := newScanner(config{PhotosDir: photos, DataDir: data, ScanEvery: time.Hour, MaxPixels: 64_000_000}, st, th, sources)
 	h := newRouter(st, sc, th, sources, "Asia/Shanghai", testGate())
 	srv := httptest.NewServer(h)
@@ -209,34 +208,16 @@ func TestHealthAndLoginBgPublic(t *testing.T) {
 	if res.StatusCode != http.StatusOK {
 		t.Fatalf("health %d", res.StatusCode)
 	}
-	bg, err := http.Get(srv.URL + "/api/login-bg?orient=land")
+	// Nothing was scanned, so there is no wallpaper yet: the background is
+	// missing rather than sent to the login page. TestLoginBackgroundUsesWallpapers
+	// covers the rest.
+	bg, err := noRedirect.Get(srv.URL + "/api/login-bg?orient=land")
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer bg.Body.Close()
-	if bg.StatusCode != http.StatusOK {
-		t.Fatalf("login-bg %d", bg.StatusCode)
-	}
-	raw, _ := io.ReadAll(bg.Body)
-	cfg, _, err := image.DecodeConfig(bytes.NewReader(raw))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if cfg.Width <= cfg.Height {
-		t.Fatalf("land bg should be wide, got %dx%d", cfg.Width, cfg.Height)
-	}
-	port, err := http.Get(srv.URL + "/api/login-bg?orient=port")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer port.Body.Close()
-	raw, _ = io.ReadAll(port.Body)
-	cfg, _, err = image.DecodeConfig(bytes.NewReader(raw))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if cfg.Height <= cfg.Width {
-		t.Fatalf("port bg should be tall, got %dx%d", cfg.Width, cfg.Height)
+	if bg.StatusCode != http.StatusNotFound {
+		t.Fatalf("login-bg without wallpapers %d", bg.StatusCode)
 	}
 }
 
@@ -390,24 +371,5 @@ func TestLoadConfigRequiresAuth(t *testing.T) {
 	}
 	if cfg.AuthUser != "juen" || cfg.AuthPass != "secret" {
 		t.Fatalf("%+v", cfg)
-	}
-}
-
-func TestLoginBgPrefersOrient(t *testing.T) {
-	photos := []photo{
-		{ID: 1, Width: 400, Height: 200},
-		{ID: 2, Width: 200, Height: 400},
-		{ID: 3, Width: 100, Height: 100},
-	}
-	land, rest := splitByOrient(photos, false)
-	if len(land) != 1 || land[0].ID != 1 {
-		t.Fatalf("land %v", land)
-	}
-	port, rest2 := splitByOrient(photos, true)
-	if len(port) != 1 || port[0].ID != 2 {
-		t.Fatalf("port %v", port)
-	}
-	if len(rest) != 2 || len(rest2) != 2 {
-		t.Fatalf("fallback pools %d %d", len(rest), len(rest2))
 	}
 }

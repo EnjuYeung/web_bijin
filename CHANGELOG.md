@@ -1,5 +1,16 @@
 # 变更记录
 
+## 2026-10-05 01:16:22 CST（并入随机壁纸接口，nas-background 下线准备）
+
+- 新增公开的随机壁纸接口 `https://csb.jgbman.cc/v1/backgrounds/random`（原 nas-background 的功能）：可按 `orientation`、`profile`、`minWidth`、`minHeight` 筛选，默认 302 到壁纸，`format=json` 返回信息，没有候选返回 204；壁纸地址 `/media/sha256/…webp` 一年不可变缓存，任何网站都能引用。规格、方图规则与取整和原来一致，调用方只需换域名。
+- 每张照片（GIF 除外）在缩略图之后用同一次读取生成 WebP 壁纸（纯 Go 编码，仍是单个静态程序）；新图在相册出现的时间不变，壁纸晚几秒；删除或替换照片后旧壁纸立即 404。已有 2,101 张由升级后的首轮扫描在 netcup 后台补生成。
+- 登录页背景改为随机壁纸（302 到 WebP），不再向未登录访客转发原图。
+- 设置页新增「随机壁纸」卡片：已生成数量、横竖方分布、占用空间和三条一键复制的接口地址。
+- 不再提供 nas-background 的 `/v1/catalog`、`/status`、`/metrics`、`/healthz`、`/readyz`、发布 / 回滚流程和管理后台。
+- 构建与测试固定 `-tags nodynamic`。AGENTS.md 项目说明加入随机壁纸接口，经用户批准；按用户要求直接提交 `master`。nas-background 在 Unraid 上未提交的代码已先提交推送到它的仓库存档。
+- 已上线 netcup：首轮扫描 41 分钟补齐 2,101 张照片的 2,121 个壁纸（399 MB，0 失败），横 / 竖 / 方数量与 nas-background 完全一致。
+- 实际通过：Go 全量测试 78 项（新增 9 项壁纸测试）、竞态检测、Playwright 7 项（新增壁纸卡片、无 Cookie 跨站引用与登录背景）、netcup 上线后经公网逐项验收；详情见 `TEST_REPORT.md`。
+
 ## 2026-10-04 21:01:57 CST（反代交还 1Panel 管理，改动直接提交 master）
 
 - 删除迁移验收时临时手写的 OpenResty 站点 `csb.jgbman.cc`（`conf/http.d/csb.conf`），反代改由用户在 1Panel 网站中配置，代理到 `http://127.0.0.1:5001`。

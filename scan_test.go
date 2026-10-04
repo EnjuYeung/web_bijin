@@ -69,7 +69,7 @@ func TestScanRecursiveAndFilters(t *testing.T) {
 	}
 	defer st.Close()
 	source := &localPhotoSource{root: root}
-	th := newThumbCache(filepath.Join(data, "thumbs"), source, 1)
+	th := newThumbCache(filepath.Join(data, "thumbs"), filepath.Join(data, "wallpapers"), source, 1)
 	sc := newScanner(config{
 		PhotosDir: root,
 		DataDir:   data,

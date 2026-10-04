@@ -33,9 +33,10 @@ export interface StorageInput {
 }
 export interface Storage extends Omit<StorageInput, "secretKey"> { hasSecret: boolean; photos: number; broken: number; status?: SourceStatus }
 export interface EventState { enabled: boolean; received: number; lastAt?: string; lastErr?: string }
+export interface WallpaperStats { photos: number; ready: number; landscape: number; portrait: number; square: number; bytes: number }
 export interface Settings {
   local: { hostDir: string; containerDir: string; photos: number; broken: number; status?: SourceStatus };
-  storages: Storage[]; scan: ScanState; scanEvery: number; events: EventState;
+  storages: Storage[]; scan: ScanState; scanEvery: number; events: EventState; wallpapers: WallpaperStats;
 }
 
 export function humanSize(value: number) {

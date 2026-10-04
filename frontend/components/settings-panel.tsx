@@ -1,8 +1,8 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
-import { Check, CircleAlert, Cloud, FolderHeart, Pencil, Plus, RefreshCw, Trash2 } from "lucide-react";
-import { api, formatTime, type EventState, type Settings, type SourceStatus, type Storage, type StorageInput } from "@/lib/api";
+import { Check, CircleAlert, Cloud, Copy, FolderHeart, Pencil, Plus, RefreshCw, Shuffle, Trash2 } from "lucide-react";
+import { api, formatTime, humanSize, type EventState, type Settings, type SourceStatus, type Storage, type StorageInput, type WallpaperStats } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardAction, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
@@ -53,6 +53,47 @@ function StorageField({ name, label, value, onChange, helper, error, required, p
     {helper && <FieldDescription id={id + "-hint"}>{helper}</FieldDescription>}
     {error && <FieldError id={id + "-error"}>{error}</FieldError>}
   </Field>;
+}
+
+const wallLinks = [
+  { id: "landscape", label: "横屏", query: "?orientation=landscape" },
+  { id: "portrait", label: "竖屏", query: "?orientation=portrait" },
+  { id: "any", label: "不限", query: "" },
+];
+function WallpaperCard({ stats, busy }: { stats: WallpaperStats; busy: boolean }) {
+  const [origin, setOrigin] = useState("");
+  const [copied, setCopied] = useState<{ id: string; ok: boolean } | null>(null);
+  useEffect(() => setOrigin(location.origin), []);
+  async function copy(id: string, url: string) {
+    try { await navigator.clipboard.writeText(url); setCopied({ id, ok: true }); }
+    catch { setCopied({ id, ok: false }); }
+  }
+  return <Card className="source-card" id="wall-card">
+    <CardHeader><CardTitle><h2><Shuffle aria-hidden="true" />随机壁纸</h2></CardTitle><CardDescription>其他网站可以直接引用，不用登录；每次打开随机换一张。</CardDescription><CardAction><Badge variant="outline">公开</Badge></CardAction></CardHeader>
+    <CardContent>
+      {busy && stats.ready < stats.photos && <p className="scan-note" role="status"><Spinner aria-hidden="true" />正在生成壁纸，完成后状态会自动更新。</p>}
+      <dl className="source-facts">
+        <div><dt>已生成</dt><dd id="wall-ready">{stats.ready.toLocaleString("zh-CN")} / {stats.photos.toLocaleString("zh-CN")} 张<span className="wall-split">横 {stats.landscape} · 竖 {stats.portrait} · 方 {stats.square}</span></dd></div>
+        <div><dt>占用空间</dt><dd id="wall-size">{humanSize(stats.bytes)}</dd></div>
+        <div><dt>接口地址</dt><dd><ul className="wall-links">
+          {wallLinks.map(link => {
+            const url = origin + "/v1/backgrounds/random" + link.query;
+            const done = copied?.id === link.id && copied.ok;
+            return <li key={link.id}>
+              <span className="wall-link-label">{link.label}</span>
+              <code id={"wall-url-" + link.id}>{url}</code>
+              <Button variant="outline" aria-label={"复制" + link.label + "地址"} onClick={() => copy(link.id, url)}>{done ? <Check data-icon="inline-start" aria-hidden="true" /> : <Copy data-icon="inline-start" aria-hidden="true" />}{done ? "已复制" : "复制"}</Button>
+            </li>;
+          })}
+        </ul>{copied && !copied.ok && <p className="source-broken" role="status">复制失败，请手动选中地址复制。</p>}</dd></div>
+      </dl>
+    </CardContent>
+    <CardFooter><details className="source-guide"><summary>怎么用？</summary><div className="source-guide-body">
+      <p>在网页样式里写 <code>background-image: url(地址)</code>，或者 <code>&lt;img src=&quot;地址&quot;&gt;</code>；每次打开都会随机跳到一张壁纸。</p>
+      <p>横图最长 3840×2160，竖图最长 1440×2560，接近正方形的两种都有，不会放大原图。加上参数 <code>format=json</code> 会返回图片信息。</p>
+      <p>照片进入相册后自动生成壁纸，删除后几秒内不再出现；GIF 不做壁纸。原图不会公开。</p>
+    </div></details></CardFooter>
+  </Card>;
 }
 
 export default function SettingsPanel() {
@@ -198,6 +239,7 @@ export default function SettingsPanel() {
         </CardContent>
         <CardFooter><details className="source-guide"><summary>支持哪些存储服务？</summary><div className="source-guide-body"><p>支持 Amazon S3 兼容服务，包括 Cloudflare R2、AWS S3、MinIO、Backblaze B2、Wasabi、阿里云 OSS 和腾讯云 COS。可以添加多个来源。</p><p>只读取图片，不会上传、修改或删除存储里的原文件。</p></div></details></CardFooter>
       </Card>
+      <WallpaperCard stats={settings.wallpapers} busy={settings.scan.scanning || settings.scan.queued} />
     </>}
   </div>;
 }

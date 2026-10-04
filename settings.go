@@ -59,6 +59,11 @@ func (a *settingsAPI) get(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "读取照片数量失败"})
 		return
 	}
+	walls, err := a.store.wallpaperStats()
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "读取壁纸数量失败"})
+		return
+	}
 	statuses := a.scanner.sourceStatuses()
 	status := func(id string) *sourceStatus {
 		if st, ok := statuses[id]; ok {
@@ -80,10 +85,11 @@ func (a *settingsAPI) get(w http.ResponseWriter, r *http.Request) {
 			"broken":       counts[localSourceID].Broken,
 			"status":       status(localSourceID),
 		},
-		"storages":  storages,
-		"scan":      a.scanner.snapshot(),
-		"scanEvery": int(cfg.ScanEvery.Seconds()),
-		"events":    a.scanner.eventSnapshot(),
+		"storages":   storages,
+		"scan":       a.scanner.snapshot(),
+		"scanEvery":  int(cfg.ScanEvery.Seconds()),
+		"events":     a.scanner.eventSnapshot(),
+		"wallpapers": walls,
 	})
 }
 

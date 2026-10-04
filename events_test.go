@@ -35,7 +35,7 @@ func s3Harness(t *testing.T, workers int, edit func(*s3Config)) (*fakeS3, *store
 	}
 	set := newSourceSet(newMemSource(map[string][]byte{}))
 	set.useStorages([]s3Config{cfg})
-	th := newThumbCache(filepath.Join(t.TempDir(), "thumbs"), set, workers)
+	th := newThumbCache(filepath.Join(t.TempDir(), "thumbs"), filepath.Join(t.TempDir(), "wallpapers"), set, workers)
 	return f, st, th, newScanner(config{MaxPixels: 64_000_000}, st, th, set)
 }
 
@@ -271,7 +271,7 @@ func TestScanUsesConfiguredWorkers(t *testing.T) {
 			for i := 0; i < 9; i++ {
 				src.files = append(src.files, fmt.Sprintf("%d.jpg", i))
 			}
-			th := newThumbCache(t.TempDir(), src, workers)
+			th := newThumbCache(t.TempDir(), t.TempDir(), src, workers)
 			sc := newScanner(config{MaxPixels: 64_000_000}, st, th, newSourceSet(src))
 			sc.run(context.Background())
 			if n, _ := st.countOK(); n != 9 || src.peak.Load() != int32(workers) || sc.snapshot().LastErr != "" {

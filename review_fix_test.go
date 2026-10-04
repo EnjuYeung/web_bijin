@@ -61,7 +61,7 @@ func fixSetup(t *testing.T) (*store, *fixSource, *thumbCache, *scanner) {
 	t.Cleanup(func() { st.Close() })
 	src := &fixSource{data: fixtureJPEG(color.RGBA{20, 20, 30, 255})}
 	src.object = sourceObject{Key: "a.jpg", RelPath: "a.jpg", Size: int64(len(src.data)), Mtime: time.Unix(1700000000, 0), Version: "v1", Backend: "s3"}
-	th := newThumbCache(t.TempDir(), src, 1)
+	th := newThumbCache(t.TempDir(), t.TempDir(), src, 1)
 	return st, src, th, newScanner(config{MaxPixels: 64_000_000}, st, th, newSourceSet(src))
 }
 func TestFixReadFailurePreservesPhotoAndRetries(t *testing.T) {
@@ -258,7 +258,7 @@ func TestFixS3BodyCancellationAndSingleRead(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			th := newThumbCache(t.TempDir(), src, 1)
+			th := newThumbCache(t.TempDir(), t.TempDir(), src, 1)
 			ctx := context.Background()
 			var cancel context.CancelFunc
 			if stall {
@@ -355,7 +355,7 @@ func TestFixS3DefaultDeadline(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	th := newThumbCache(t.TempDir(), src, 1)
+	th := newThumbCache(t.TempDir(), t.TempDir(), src, 1)
 	start := time.Now()
 	err = th.ensure(context.Background(), photo{ID: 1, RelPath: "a.jpg"})
 	if err == nil || time.Since(start) > imageReadTimeout+3*time.Second {

@@ -7,11 +7,12 @@ async function signIn(page: Page) {
   expect(response.status()).toBe(200);
 }
 async function waitForScan(page: Page) {
+  // A scan now also encodes every photo's wallpapers, which takes longer.
   await expect.poll(async () => {
     const response = await page.request.get("/api/health");
     const data = await response.json();
     return !data.status.scanning && !data.status.queued;
-  }).toBe(true);
+  }, { timeout: 60_000 }).toBe(true);
 }
 async function noOverflow(page: Page) {
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
@@ -299,4 +300,49 @@ test("06 mobile photo bookmarks, browser back and touch swipe", async ({ page })
   await expect(page.getByRole("dialog")).toBeVisible();
   await page.locator("#lb-close").click();
   await expect(page.getByRole("dialog")).toHaveCount(0);
+});
+
+test("07 random wallpapers: settings card, public API and login background", async ({ page, browser }) => {
+  const origin = "http://127.0.0.1:18092";
+  await page.context().grantPermissions(["clipboard-read", "clipboard-write"], { origin });
+  await page.goto("/?view=settings");
+  await expect(page.locator("#wall-ready")).toContainText("57 / 57 张");
+  await expect(page.locator("#wall-url-landscape")).toHaveText(origin + "/v1/backgrounds/random?orientation=landscape");
+  await expect(page.locator("#wall-url-portrait")).toHaveText(origin + "/v1/backgrounds/random?orientation=portrait");
+  await expect(page.locator("#wall-url-any")).toHaveText(origin + "/v1/backgrounds/random");
+  await page.getByRole("button", { name: "复制竖屏地址" }).click();
+  await expect(page.getByRole("button", { name: "复制竖屏地址" })).toContainText("已复制");
+  expect(await page.evaluate(() => navigator.clipboard.readText())).toBe(origin + "/v1/backgrounds/random?orientation=portrait");
+  await noOverflow(page);
+  await page.screenshot({ path: screenshots + "/after-wallpaper-card.png", fullPage: true });
+  await page.setViewportSize({ width: 375, height: 812 });
+  await noOverflow(page);
+  const copyButton = await page.getByRole("button", { name: "复制横屏地址" }).boundingBox(); expect(copyButton!.height).toBeGreaterThanOrEqual(44);
+  await page.screenshot({ path: screenshots + "/after-wallpaper-card-mobile.png", fullPage: true });
+
+  // Another website embeds a background: no cookie, different origin.
+  const visitor = await browser.newContext();
+  const other = await visitor.newPage();
+  await other.setContent(`<img id="bg" src="${origin}/v1/backgrounds/random?orientation=landscape">`);
+  await expect.poll(() => other.locator("#bg").evaluate(image => (image as HTMLImageElement).naturalWidth)).toBeGreaterThan(0);
+  const redirect = await visitor.request.get(origin + "/v1/backgrounds/random?orientation=portrait", { maxRedirects: 0 });
+  expect(redirect.status()).toBe(302);
+  const location = redirect.headers()["location"];
+  expect(location).toMatch(/^\/media\/sha256\/[0-9a-f]{2}\/[0-9a-f]{64}\.webp$/);
+  const media = await visitor.request.get(origin + location);
+  expect(media.status()).toBe(200);
+  expect(media.headers()["content-type"]).toBe("image/webp");
+  expect(media.headers()["access-control-allow-origin"]).toBe("*");
+  const json = await (await visitor.request.get(origin + "/v1/backgrounds/random?orientation=landscape&format=json")).json();
+  expect(json.variant.profile).toBe("desktop-3840");
+  expect(json.url).toBe(json.variant.path);
+  for (const path of ["/api/photos", "/api/settings", "/original/1"]) expect((await visitor.request.get(origin + path)).status()).toBe(401);
+
+  // The login page background is a wallpaper, not an original.
+  const background = other.waitForResponse(response => response.url().startsWith(origin + "/media/sha256/"));
+  await other.goto(origin + "/login");
+  const loaded = await background;
+  expect(loaded.status()).toBe(200);
+  expect(loaded.headers()["content-type"]).toBe("image/webp");
+  await visitor.close();
 });

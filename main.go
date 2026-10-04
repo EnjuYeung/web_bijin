@@ -38,7 +38,7 @@ func main() {
 		os.Exit(1)
 	}
 	sources.useStorages(storages)
-	thumbs := newThumbCache(cfg.ThumbDir(), sources, cfg.ThumbWorkers)
+	thumbs := newThumbCache(cfg.ThumbDir(), cfg.WallDir(), sources, cfg.ThumbWorkers)
 	scanner := newScanner(cfg, st, thumbs, sources)
 
 	key, err := loadSessionKey(cfg.DataDir)

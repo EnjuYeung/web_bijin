@@ -103,6 +103,10 @@ func (c config) ThumbDir() string {
 	return filepath.Join(c.DataDir, "thumbs")
 }
 
+func (c config) WallDir() string {
+	return filepath.Join(c.DataDir, "wallpapers")
+}
+
 func envOr(key, fallback string) string {
 	if v := strings.TrimSpace(os.Getenv(key)); v != "" {
 		return v
