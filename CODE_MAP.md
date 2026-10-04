@@ -1,13 +1,13 @@
 # 代码文件导览
 
-这份文档用于帮助第一次接触项目的人快速了解各文件的职责。项目是一个单进程 Go 应用：启动后扫描照片目录、维护 SQLite 索引和缩略图，并同时提供登录、接口和前端页面。
+这份文档用于帮助第一次接触项目的人快速了解各文件的职责。项目是一个单进程 Go 应用：启动后扫描照片目录和对象存储、维护 SQLite 索引和缩略图，接收对象存储的上传通知，并同时提供登录、接口和前端页面。
 
 ## 建议阅读顺序
 
 1. `README.md`：了解项目用途和使用方法。
 2. `ARCHITECTURE.md`：了解技术栈、数据流和主要设计。
 3. `main.go`、`config.go`：了解程序如何启动。
-4. `source.go`、`scan.go`、`store.go`、`thumb.go`：了解照片如何进入图库。
+4. `source.go`、`scan.go`、`events.go`、`store.go`、`thumb.go`：了解照片如何进入图库。
 5. `server.go`、`auth.go`：了解页面、接口和登录。
 6. `frontend/components/album-app.tsx`、`frontend/components/photo-gallery.tsx`、`frontend/app/globals.css`：了解浏览器界面。
 
@@ -15,16 +15,17 @@
 
 | 文件 | 作用 |
 |---|---|
-| `main.go` | 程序入口。初始化配置、SQLite、扫描器、缩略图、登录和 HTTP 服务，并处理安全退出。 |
-| `config.go` | 读取环境变量，整理监听端口、照片目录、数据目录、时区和扫描间隔等配置。 |
-| `storage.go` | 对象存储配置：字段校验与默认值（Endpoint、Bucket、前缀、Region、寻址方式），以及 SQLite `storages` 表的增删改查。 |
-| `settings.go` | 设置页接口：读取本地说明与各来源状态、添加/修改/删除对象存储、测试连接；Secret Key 只写不读。 |
-| `server.go` | 注册 HTTP 路由，提供照片、相册、缩略图、原图、登录背景和健康检查接口，并内嵌前端文件。 |
+| `main.go` | 程序入口。初始化配置、SQLite、扫描器、缩略图、登录、页面服务（:5001）和可选的上传通知服务（:5002），并处理安全退出。 |
+| `config.go` | 读取环境变量，整理监听端口、照片目录、数据目录、时区、扫描间隔、缩略图并发数和上传通知（端口与令牌）等配置。 |
+| `storage.go` | 对象存储配置：字段校验与默认值（Endpoint、Bucket、前缀、Region、寻址方式、大图直连与浏览器访问地址），以及 SQLite `storages` 表的增删改查与补列迁移。 |
+| `settings.go` | 设置页接口：读取本地说明、各来源状态与上传通知状态、添加/修改/删除对象存储、测试连接；Secret Key 只写不读。 |
+| `server.go` | 注册 HTTP 路由，提供照片、相册、缩略图（不可变缓存）、原图（转发或 302 到预签名地址）、登录背景和健康检查接口，并内嵌前端文件。 |
 | `auth.go` | 校验用户名和密码，生成签名 Cookie，保护需要登录的页面和接口。 |
 | `store.go` | 管理 SQLite 照片索引，包括建表、查询、更新、按来源计数和删除；数据库权限收紧为 0600。 |
-| `source.go` | 图片源集合：本地目录与多个 S3 兼容存储的列举和读取、按索引键分派、Region 自动识别、连接测试和中文错误提示。 |
-| `scan.go` | 定时或按需逐个扫描图片源，识别新增、变化、删除和损坏的图片；单个来源失败只保留它自己的索引。 |
-| `thumb.go` | 串行读取并完整验证图片，应用 EXIF 方向，原子保存按来源版本区分的 JPEG 缩略图。 |
+| `source.go` | 图片源集合：本地目录与多个 S3 兼容存储的列举、读取和 Stat，按索引键分派，通知按桶与前缀匹配存储，大图预签名（按版本复用），Region 自动识别、连接测试和中文错误提示。 |
+| `scan.go` | 定时或按需逐个扫描图片源，边列举边并发处理新增、变化、删除和损坏的图片；单个来源失败只保留它自己的索引，扫描期间新加的照片不被清理。 |
+| `events.go` | 上传通知：校验令牌后立即应答，后台按 key 向存储 Stat 当前状态再入库或删除，同 key 合并、临时失败重试，并记录通知状态。 |
+| `thumb.go` | 在有限的并发名额内读取并完整验证图片（每张照片一把锁），应用 EXIF 方向，原子保存按来源版本区分的 JPEG 缩略图。 |
 | `meta.go` | 处理照片标题、格式、日期、文件大小和登录背景图选择等通用信息。 |
 | `order.go` | 实现带种子的随机排序和游标分页，保证同一次浏览中的顺序稳定。 |
 | `album.go` | 按照片所在文件夹聚合相册，生成相册名称、数量、封面并过滤相册照片。 |
@@ -39,7 +40,7 @@
 | `frontend/components/album-app.tsx` | 标题、导航、网站标题折叠交互、按需加载设置页与视图选择。 |
 | `frontend/components/photo-gallery.tsx` | 游标分页、虚拟瀑布流、hash 大图、键盘/触摸切换、焦点和滚动恢复。 |
 | `frontend/components/albums.tsx` | 文件夹相册封面、数量、空态与重试。 |
-| `frontend/components/settings-panel.tsx` | 来源卡片、校验表单、添加/编辑/测试/删除对象存储；扫描中短时刷新。 |
+| `frontend/components/settings-panel.tsx` | 来源卡片、校验表单、添加/编辑/测试/删除对象存储、大图直连与浏览器访问地址、上传通知状态；扫描中短时刷新。 |
 | `frontend/components/login.tsx` | 登录表单、错误提示与安全返回地址。 |
 | `frontend/components/ui/` | 官方 shadcn/ui Base UI 组件；统一语义颜色、按钮状态、表单与对话框。 |
 | `frontend/lib/api.ts`、`frontend/lib/preferences.ts` | 现有 Go API 的类型与请求、格式化、主题与侧栏偏好。 |
@@ -55,15 +56,18 @@
 | `album_test.go` | 测试文件夹相册的分组、命名、封面和过滤。 |
 | `auth_test.go` | 测试登录、Cookie、访问保护和相关 HTTP 行为。 |
 | `assets_test.go` | 验证导出资源的门禁边界，以及 gzip 解压内容、MIME、缓存与拒绝压缩时的回退。 |
-| `frontend/tests/album.spec.ts`、`frontend/playwright.config.ts` | Playwright 实际浏览器回归：登录、照片/相册、大图、设置表单、主题/品牌交互与响应式。 |
-| `frontend/tests/s3_fixture.py` | 仅监听本机的 S3 浏览器测试服务，使用生成的测试图片，不连接真实桶。 |
+| `frontend/tests/album.spec.ts`、`frontend/playwright.config.ts` | Playwright 实际浏览器回归：登录、照片/相册、大图、设置表单（含大图直连：浏览器跟随 302 直接向存储取原图）、主题/品牌交互与响应式。 |
+| `frontend/tests/s3_fixture.py` | 仅监听本机的 S3 浏览器测试服务，使用生成的测试图片，接受预签名地址并按 `response-*` 参数返回响应头，不连接真实桶。 |
 | `scan_test.go` | 测试照片扫描、格式识别和异常文件处理。 |
 | `order_test.go` | 测试随机排序和游标分页。 |
 | `meta_test.go` | 测试照片信息格式和登录背景图选择。 |
 | `path_test.go` | 测试路径安全，防止访问照片目录之外的文件。 |
 | `source_test.go` | 测试来源键分派、多来源同名路径、单来源失败隔离、删除来源清理、V1/V2 列举、Region 识别、连接测试和错误提示。 |
 | `settings_test.go` | 测试对象存储字段校验、SQLite 增删改查与 id 不复用、设置接口的登录保护、JSON 限制、Secret 不外泄和完整生命周期。 |
-| `s3fake_test.go` | 测试用的最小 S3 服务：V1/V2 列举、Region 查询、HEAD/GET 和密钥检查。 |
+| `s3fake_test.go` | 测试用的最小 S3 服务：V1/V2 列举、Region 查询、HEAD/GET、请求头或预签名参数的密钥检查和可调读取延迟。 |
+| `events_test.go` | 上传通知：新建/覆盖/删除、真实 RustFS 报文解码、令牌与忽略规则、重试、同 key 合并；同一张图多路触发只读一次、扫描并发数、扫描期间新增照片不被清理。 |
+| `direct_test.go` | 大图直连：302 与预签名参数、同版本复用与新版本换地址、未登录拒绝、默认地址可下载、关闭直连时转发；存储字段与旧表迁移；设置接口；并发与通知配置。 |
+| `testdata/rustfs-event-*.json` | 从 RustFS 1.0 实际抓到的上传、删除、复制通知（身份信息已脱敏）。 |
 | `review_fix_test.go` | 审查问题回归：失败恢复、坏图、缓存、并发、会话、S3 超时、EXIF、持久化和索引迁移。 |
 | `TESTING.md` | 项目的测试原则和验收顺序。 |
 | `TEST_REPORT.md` | 最新一次实际测试的环境、方法、结果和结论。 |
@@ -73,7 +77,7 @@
 | 文件 | 作用 |
 |---|---|
 | `Dockerfile` | Node 静态导出 → Go 内嵌编译 → 精简 Alpine 单进程运行镜像。 |
-| `docker-compose.example.yaml` | Docker Compose 部署示例，定义端口、目录挂载、环境变量和健康检查。 |
+| `docker-compose.example.yaml` | Docker Compose 部署示例（netcup + 1Panel）：`1panel-network`、只绑定本机的端口、目录挂载、环境变量、资源上限和健康检查。 |
 | `.env.example` | 环境变量示例。 |
 | `go.mod`、`go.sum` | Go 版本和第三方依赖清单。 |
 | `.dockerignore` | 控制 Docker 构建时不进入上下文的文件。 |
@@ -100,4 +104,4 @@
 - `web/`：Next.js 静态导出产物（仅 `.gitkeep` 提交）；Go 构建前必须生成。
 - `frontend/node_modules/`、`.next/`、`out/`：安装依赖与构建缓存。
 
-更新时间：2026-09-30 12:42:35 CST。
+更新时间：2026-10-04 18:29:00 CST。
