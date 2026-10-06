@@ -26,6 +26,7 @@ func newRouter(st *store, sc *scanner, thumbs *thumbCache, sources *sourceSet, t
 	}
 
 	mux := http.NewServeMux()
+	newUploadAPI(st, sc, sources).routes(mux, gate)
 	mux.Handle("GET /api/health", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]any{
 			"ok":     true,

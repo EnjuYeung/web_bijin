@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/xml"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"sort"
@@ -21,16 +22,17 @@ type fakeS3 struct {
 	accessKey string
 	location  string // empty: GetBucketLocation returns NotImplemented
 
-	mu       sync.Mutex
-	objects  map[string][]byte
-	down     bool
-	delay    time.Duration // added to every object GET
-	requests []string
-	auths    []string
+	mu        sync.Mutex
+	objects   map[string][]byte
+	uploadIDs map[string]string
+	down      bool
+	delay     time.Duration // added to every object GET
+	requests  []string
+	auths     []string
 }
 
 func newFakeS3(t *testing.T, bucket string) *fakeS3 {
-	f := &fakeS3{t: t, bucket: bucket, accessKey: "test-ak", location: "us-east-1", objects: map[string][]byte{}}
+	f := &fakeS3{t: t, bucket: bucket, accessKey: "test-ak", location: "us-east-1", objects: map[string][]byte{}, uploadIDs: map[string]string{}}
 	f.srv = httptest.NewServer(http.HandlerFunc(f.serve))
 	t.Cleanup(f.srv.Close)
 	return f
@@ -117,6 +119,22 @@ func (f *fakeS3) serve(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	lastModified := time.Unix(1700000000, 0).UTC()
 	switch {
+	case key != "" && r.Method == http.MethodPut:
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			fakeError(w, 400, "IncompleteBody")
+			return
+		}
+		f.mu.Lock()
+		if _, exists := f.objects[key]; exists && r.Header.Get("If-None-Match") == "*" {
+			f.mu.Unlock()
+			fakeError(w, 412, "PreconditionFailed")
+			return
+		}
+		f.objects[key] = body
+		f.uploadIDs[key] = r.Header.Get("X-Amz-Meta-Bijin-Upload")
+		f.mu.Unlock()
+		w.WriteHeader(http.StatusOK)
 	case key == "" && q.Has("location"):
 		if f.location == "" {
 			fakeError(w, http.StatusNotImplemented, "NotImplemented")
@@ -147,6 +165,7 @@ func (f *fakeS3) serve(w http.ResponseWriter, r *http.Request) {
 		f.mu.Lock()
 		data, ok := f.objects[key]
 		delay := f.delay
+		uploadID := f.uploadIDs[key]
 		f.mu.Unlock()
 		if !ok {
 			fakeError(w, http.StatusNotFound, "NoSuchKey")
@@ -158,6 +177,9 @@ func (f *fakeS3) serve(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("ETag", fmt.Sprintf(`"%x"`, len(data)*31+len(key)))
 		w.Header().Set("Last-Modified", lastModified.Format(http.TimeFormat))
 		w.Header().Set("Content-Type", "image/jpeg")
+		if uploadID != "" {
+			w.Header().Set("X-Amz-Meta-Bijin-Upload", uploadID)
+		}
 		http.ServeContent(w, r, key, lastModified, strings.NewReader(string(data)))
 	}
 }

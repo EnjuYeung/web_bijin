@@ -2,66 +2,45 @@
 
 ## 测试环境说明
 
-- 时间：2026-10-05 CST；本次验收为并入随机壁纸接口（原 nas-background 的 `/v1/backgrounds/random`）与登录页背景改用壁纸。
-- 生产：netcup VPS（AMD EPYC 9645，8 vCPU，15 GB，Debian 13），1Panel；容器 `bijin`（镜像 `bijin:local` 44.5 MB，Go 1.27 以 `-tags nodynamic` 构建，Alpine 3.22），限 6 核、4 GB，`THUMB_WORKERS=4`；RustFS 1.0.0，冷数据分层到 xHosts（英国）；网站 `csb.jgbman.cc` 由 1Panel 的 OpenResty 反代。
-- 数据：桶 `jan` 共 2,101 张 JPEG（22.5 GiB，中位 9.8 MiB），其中 1,985 张已转存英国。
-- 对照：nas-background（Unraid，Sharp 0.35.4）当前发布的壁纸：2,101 张，横 1,066 / 竖 1,015 / 方 20，WebP 合计 419,028,910 字节。
-- 构建与测试环境：netcup 上的容器 `golang:1.27-alpine`（竞态检测另装 gcc / musl-dev）、`node:24-alpine`、`mcr.microsoft.com/playwright:v1.63.0-noble`；全部在独立副本 `/root/bijin-test` 中进行，不碰生产目录的 `photos/`（线上本地照片目录）和 `data/`。
-- 公网验收：从用户的 Mac 经 `https://csb.jgbman.cc` 发起，不带 Cookie。
-- 只读用户密钥只在服务器容器里从 root 可读文件读取，未写进源码、报告或日志。
+- 时间：2026-10-06 14:11:10 CST；本次功能为侧栏独立 GUI 上传，可选本地/S3，文件夹只取直属图片，接入既有索引、缩略图与壁纸流程。
+- 开发、构建、测试、部署全部在 netcup 完成；源码 /opt/1panel/apps/web_bijin，临时环境在独立工作目录。
+- 生产：Debian 13 / 1Panel / OpenResty，https://csb.jgbman.cc；原 bijin 单进程/单容器（6 核、4 GiB、THUMB_WORKERS=4），镜像 bijin:local（44,705,038 字节）；RustFS 1.0.0、jan 桶、现有 bijin-ro Key。
+- 隔离测试：Go 1.27 Alpine（nodynamic；竞态另装 gcc/musl-dev）、Node 24 Alpine、Playwright 1.63.0 Noble；独立照片/SQLite/S3 fixture。真实存储测试在专有随机前缀，生产验收用真实网站和原登录账号，凭据仅从服务器私有文件读取。
+- 上线前基线：2,662 张照片、2,682 个壁纸、1 个存储、本地图片 0 张。记录原表内容哈希、缓存名称/大小/纳秒修改时间及会话密钥；环境变量按原 Compose、原 Dockerfile、相同 Alpine 默认值逐项核对，忽略数组顺序。
 
 ## 测试方法说明
 
-1. 写代码前先实测（阶段 0）：从 RustFS 内网读取 24 张真实原图（横 10、竖 10、方 4），用 Go 生成壁纸，与 nas-background 正在提供的 Sharp 成品比较尺寸、体积和 PSNR；1 路与 4 路分别测速度和峰值内存（限 6 核、4 GB）。
-2. 自动化：`gofmt -l`、`go vet -tags nodynamic ./...`、`go test -tags nodynamic -count=1 ./...`、`-race -short`、壁纸 / 通知 / 扫描 / 并发相关用例 `-race -count=5`；`npm run typecheck`、`npm run build`；Playwright 7 项。
-3. 部署：保留回退镜像 `bijin:pre-wallpaper`；停容器后备份 `bijin.db` 与 `session.key` 到 `/root/bijin-backup-20261005-pre-wallpaper`，再启动新镜像；升级后的首轮扫描补生成现有照片的壁纸。
-4. 公网验收：脚本逐项请求随机接口、壁纸文件、Range、304、JSON、登录背景、登录门禁、已删除接口、错误参数和跨域预检；补生成结束后用 SQLite 只读统计并与 nas-background 对照。
+1. 先搭建 netcup 隔离环境，实际运行 Go 上传正常/异常/边界/并发测试、Go 全量回归、gofmt、vet。
+2. Chromium 中实际选择图片/文件夹、拖入多文件夹，观察进度并比对原图字节和图库产物；验证中断重试、同名跳过、手机布局和两种主题。
+3. 沿用当前 RustFS 账号，通过浏览器执行实际 HTTPS PUT，检查索引/缩略图/壁纸及坏图状态。
+4. 部署最终镜像到原 bijin，真实网站上传 8 张图（4 本地、4 S3、其中 1 GIF），检查产物、内容哈希和日志。
+5. 验收通过后删除自有测试数据，重启原服务触发既有核对；复核原索引/缓存/配置并通过浏览器实际读取原图库、原图和公开壁纸。
+6. 清理临时 CORS、容器、镜像、旧备份和临时目录；保留正式源码回归测试和本次验收文档。
 
 ## 测试结果说明
 
-| 编号 | 功能、操作与预期 | 验证方式与实际证据 | 状态 |
+| 编号 | 功能、操作与预期 | 实际验证和证据 | 状态 |
 | --- | --- | --- | --- |
-| P01 | 壁纸尺寸与取整和 Sharp 一致 | 24/24 一致，例：9000×6209→3131×2160，4640×8256→1439×2560，2731×4275→1440×2254，7000×7000→2160×2160 与 1440×1440，750×750 不放大 | 通过 |
-| P02 | 画质与体积 | 体积 −7%～+6%（多数 −1%～−3%）；与 Sharp 成品的 PSNR 33.6–46.8 dB，21/24 张 ≥ 40 dB；样本均为 sRGB 或未标注色彩空间 | 通过 |
-| P03 | 速度与内存 | 1 路 0.28 张/秒、峰值约 0.7 GB；4 路 0.82 张/秒、峰值约 2.0 GB（含解码与缩略图）；桌面壁纸编码 3.0–3.8 秒，手机 1.2–2.0 秒；英国分层读取 22 MB/s | 通过 |
-| T01 | 静态检查与 Go 回归 | gofmt 无输出；vet 无错误；`go test` 78 项 ok（50.1s）；`-race -short` ok（41.1s）；壁纸 / 通知 / 扫描 / 并发用例 `-race -count=5` ok（161.9s），无数据竞争 | 通过 |
-| T02 | 壁纸生命周期（`TestWallpaperLifecycle`） | 横 / 竖 / 方图生成对应规格与尺寸，GIF 和坏图不生成；文件可解码为 WebP、尺寸与 SHA-256 与记录一致；不登录请求 random 得到 302、`no-store`、`*`；壁纸 200、`image/webp`、内容哈希等于地址、一年不可变缓存、ETag、CORP，HEAD、Range 206、304 正常；JSON 字段正确；筛选、204、8 种非法参数 400、未知参数忽略；300 次不带条件的随机三张照片各 60–140 次（方图不翻倍）；不变的照片再扫描不读原图；替换后照片 id 不变、新地址可用、旧地址 404、旧文件删除；删除后 random 204、地址 404、文件与记录都清掉 | 通过 |
-| T03 | 补生成（`TestWallpaperBackfillForIndexedPhotos`） | 清空壁纸后再扫描：只读 2 张该有壁纸的原图（GIF 不读），照片记录与缩略图文件（内容、修改时间）不变；再扫描不再读 | 通过 |
-| T04 | 壁纸失败不影响相册（`TestWallpaperFailureKeepsPhotoAndRetries`） | 壁纸目录不可写时照片照常入库、缩略图存在，扫描报告 1 个失败；恢复后下次扫描补上，失败数归零 | 通过 |
-| T05 | 上传通知（`TestWallpaperFollowsStorageEvents`） | 假 S3 上传并发通知后壁纸可随机到；删除通知后 random 204、地址 404、文件清空 | 通过 |
-| T06 | 登录页背景（`TestLoginBackgroundUsesWallpapers`、`TestHealthAndLoginBgPublic`） | 横屏 / 竖屏分别 302 到对应规格的壁纸、`no-store`，最终 200 `image/webp`；没有竖图时退回横图；没有壁纸时 404，不跳登录页 | 通过 |
-| T07 | 只公开两个路径（`TestOnlyRandomAndMediaArePublic`） | `/v1/catalog`、`/status`、`/metrics`、`/healthz`、`/readyz` 和 5 种不合法的壁纸地址均 404；POST 405；预检 204；不登录访问照片、相册、设置、缩略图、原图均 401 | 通过 |
-| T08 | 设置统计与旧库迁移 | 设置接口返回 photos 3、ready 3、横竖方各 1、字节数等于各壁纸之和；旧版数据库打开后自动有壁纸表、原照片保留 | 通过 |
-| T09 | 浏览器回归（Playwright） | 原有 6 项全部通过；新增 07：卡片显示「57 / 57 张」和三条地址，复制后剪贴板内容正确，手机宽度不溢出、按钮高 ≥ 44 px；无 Cookie 的其他页面用 `<img>` 引用随机地址能显示；302 指向 `/media/sha256/…webp`，200、`image/webp`、`*`；JSON 规格正确；照片 / 设置 / 原图仍 401；登录页背景请求得到 200 的 WebP。结果 7 passed（25.0s） | 通过 |
-| T10 | 构建 | `npm ci`、类型检查、静态导出成功；Docker 多阶段构建成功，镜像 44.5 MB（原 40.2 MB） | 通过 |
-| D01 | 上线 | 回退镜像与数据库备份就绪；新容器启动后健康检查 healthy，监听日志正常 | 通过 |
-| D02 | 补生成现有照片 | 升级后首轮扫描 00:28:39–01:09:39（41 分钟）：2,101 张、0 删除、0 失败，日志无 WARN / ERROR；生成 2,121 个壁纸（方图 20 张各两种），399 MB，无残留临时文件；数据库无过期行、无缺壁纸的照片；4 路并发 CPU 约 200–590%，`docker stats` 采样最高 2.02 GiB，cgroup 峰值（含文件缓存）2.77 GiB，均在 4 GB 上限内 | 通过 |
-| D03 | 与 nas-background 对照 | 横 / 竖 / 方 1,066 / 1,015 / 20 张，`desktop-3840` / `mobile-1440` 1,086 / 1,035 个，与对方完全一致；按「路径 + 规格」逐个比对 2,121 对全部对上，其中 14 个（0.66%）一边差 1 像素（两边取整方式不同），其余尺寸相同；体积合计 413,860,868 字节，比对方少 1.2%（逐个平均 0.988 倍） | 通过 |
-| A01 | 随机接口（公网，不带 Cookie） | landscape / portrait / 不带参数 / 带未知参数均 302 到 `/media/sha256/…webp`，`cache-control: no-store`，`access-control-allow-origin: *`；square 在补生成进行中返回 204，补完后 302，目标 200 `image/webp`；补完后 200 次不带条件的抽取：横 113、竖 86、方 1，190 张不同照片 | 通过 |
-| A02 | 壁纸文件 | HTTP/2 200，`image/webp`，`public, max-age=31536000, immutable`，ETag 为内容哈希，`cross-origin-resource-policy: cross-origin`；下载内容 SHA-256 与地址一致；Range 206（`bytes 0-99/255208`）；If-None-Match 304 | 通过 |
-| A03 | JSON | `format=json` 返回 background（照片 6336×9504、portrait、主色）、variant（mobile-1440 1440×2160）和 url | 通过 |
-| A04 | 登录页背景 | `orient=land` / `port` 均 302 到壁纸、`no-store`，目标 200 `image/webp`（118 KB / 106 KB） | 通过 |
-| A05 | 登录门禁 | 不登录访问 `/api/photos`、`/api/albums`、`/api/settings`、`/thumb/1`、`/original/1` 均 401；`/` 跳转 `/login` | 通过 |
-| A06 | 不再提供的接口 | `/v1/catalog`、`/status`、`/metrics`、`/healthz`、`/readyz` 均 404 | 通过 |
-| A07 | 参数 | `orientation=diagonal`、`minWidth=0`、`format=xml` 返回 400；`minWidth=99999` 返回 204 | 通过 |
-| A08 | 跨域预检 | 以 `Origin: https://kmq.zedy.cc` 发 OPTIONS，204，允许 GET / HEAD / OPTIONS、Range / If-None-Match，`*` | 通过 |
-
-测试期间修复：
-
-- `gofmt` 调整了两处空行与对齐。
-- Playwright 等待扫描结束的上限由默认 10 秒放宽到 60 秒：扫描现在还要编码壁纸，测试用的 58 张图需要更久，这是等待时间而不是断言的变化。
-- 删除了 `TestLoginBgPrefersOrient`（测的是已删除的「按方向挑原图」函数），由 `TestLoginBackgroundUsesWallpapers` 覆盖新的登录背景；`TestHealthAndLoginBgPublic` 改为断言「没有壁纸时 404 且不跳登录页」。
+| U01 | 本地单张/多张上传后可在相册查看 | 浏览器上传中文/空格/大小写后缀图片与 GIF，逐张原图字节一致、缩略图为 JPEG | 通过 |
+| U02 | 文件夹只取直属图片，多文件夹保留名字 | 文件夹 input 的真实夹具只提交直属图片，子目录图片未写入；多文件夹拖入以 DirectoryEntry 夹具校验，子目录 reader 一旦调用即报错，实际未调用，分相册正确 | 通过 |
+| U03 | S3 使用原 Key/桶并直接传输 | 真实 RustFS 浏览器测试 1 passed（4.6s）；生产捕获 4 次 s3.jgbman.cc HTTPS PUT，签名账号 bijin-ro、桶 jan，中文/空格原图字节一致 | 通过 |
+| U04 | 不覆盖已有文件 | Go 本地同名并发只提交一份；S3 If-None-Match；浏览器重复上传显示跳过，旧文件字节保持不变 | 通过 |
+| U05 | 自动索引/缩略图/壁纸 | 复用 scanner.ingest；生产 8 张索引/缩略图、7 个壁纸，逐个核对壁纸文件与公开下载内容的 SHA-256；GIF 没有壁纸行 | 通过 |
+| U06 | 非法输入、坏图、中断与重试 | Go 实际覆盖鉴权/来源/JSON/路径穿越/层数/符号链接/大小/格式和不完整正文；通知先缓存坏图不再误报完成；浏览器中断后重试成功 | 通过 |
+| U07 | Go 回归和并发正确 | gofmt 无输出、vet 成功；go test -tags nodynamic -count=1 ./...：ok（51.944s）；8 个 TestUpload 用例 -race -count=3：ok（4.078s），无数据竞争 | 通过 |
+| U08 | 浏览器回归及最终镜像 | 既有 7 项加上传 6 项：13 passed（51.6s）；进度条颜色修正后的最终生产二进制再测上传：6 passed（21.5s） | 通过 |
+| U09 | 统一风格、手机可用 | 320/375/414/768/1440 px、day/night 均无横向溢出，主要控件高至少 44 px，减少动态/焦点正常；截图实际查看，进度条使用樱粉主题色 | 通过 |
+| D01 | 构建和部署 | Next.js 类型检查/静态导出、Go 多阶段构建成功；原 Compose 容器 healthy，/photos 可写，资源限额保持不变，首次扫描 0 失败 | 通过 |
+| D02 | 真实生产网站 GUI | 1 passed（10.0s）；8 张图片、7 个壁纸产物正确，单/多图、文件夹/多文件夹、同名跳过、手机主题均验证；0 JavaScript 错误、0 WARN/ERROR | 通过 |
+| D03 | 原数据和配置完整 | 原照片/壁纸/存储行哈希一致；2,662 个缩略图、2,682 个壁纸的名称/大小/纳秒修改时间一致；session.key、.env、登录值及全部容器环境变量不变 | 通过 |
+| D04 | 测试数据全部删除 | 删除真实 RustFS 隔离/生产共 7 个测试对象及本地测试目录；恢复 2,662 张照片/2,682 个壁纸，缓存文件集合恢复基线，测试专用壁纸地址 404 | 通过 |
+| D05 | 仅保留生产 CORS 来源 | 生产预检 200 且允许；127.0.0.1:18094 和无关域名均 403，临时来源已移除 | 通过 |
+| D06 | 清理后仍正常使用 | 只读浏览器复验 1 passed（3.8s）：原图库 2,662 张、原图可读、公开壁纸为 WebP、上传页队列为空；扫描 0 失败、healthy | 通过 |
+| D07 | 历史备份、测试容器和镜像清理 | pre-wallpaper/本次 pre-upload 历史备份、旧凭据快照、测试容器及测试/回退镜像已删除，保留正在运行的 bijin:local | 通过 |
+| D08 | 临时工作目录清理 | 临时源码副本、照片/数据库、密钥文件、测试产物和缓存已删除；源码内的正式回归测试保留，最终 UI 预览与验收报告保留供查看 | 通过 |
 
 ## 测试结论说明
 
-随机壁纸已并入 bijin 并在 netcup 上线：`https://csb.jgbman.cc/v1/backgrounds/random` 不登录即可使用，2,101 张照片全部有壁纸，数量与规格和 nas-background 一致；登录页背景改为壁纸；相册其余部分仍要登录。新照片的缩略图时间不变，壁纸紧随其后生成。
+功能通过并已部署生产。登录后打开 /?view=upload，可以选择 .env 本地目录或现有 RustFS，保存后自动接入相册与壁纸流程。原 Key/Secret/桶未变，只在原策略增加 jan/* 的 PutObject，没有切换宽泛 readwrite，也没有新增桶、账号或应用服务。
 
-回退：`docker tag bijin:pre-wallpaper bijin:local`，再执行 `docker compose up -d`；数据库多出的壁纸表不影响旧版本。升级前的 `bijin.db` 与 `session.key` 备份在 `/root/bijin-backup-20261005-pre-wallpaper`。
-
-限制与未测项：
-
-- 没有往生产桶里上传或删除测试照片（不改动用户的桶）。上传通知触发壁纸由自动化测试覆盖（假 S3 加真实的通知处理代码）；生产上验证的是首轮扫描为 2,101 张真实照片生成壁纸。下次往桶里传照片时，设置页的「随机壁纸」数量应随之加一。
-- 调用壁纸的几个网站还指向 nas-background（`bg.junziguozi.fun:17528`），尚未切换；nas-background 仍在 Unraid 运行，切换后观察一段时间再停。
-- 公开接口没有应用内限流，需要时在 1Panel 网站里开流量限制。
-- 画质只和 Sharp 成品对比了 sRGB 或未标注色彩空间的照片；Adobe RGB / P3 照片与缩略图一样不做色彩管理。
-- 手机只用 Chromium 尺寸模拟；公网验收由脚本完成，没有人工登录浏览器（需要用户本人输入密码）。
+支持 JPG/JPEG/PNG/WebP/GIF；每张最多 50,000,000 字节、一批最多 10,000 张。文件夹只取直属图片，跳过子目录和同名目标；任务进度在内存，服务重启后已保存图片由原扫描恢复。HEIC/RAW 不支持；Safari/Firefox 未单独进行兼容性验收，目录选择在不支持原生目录句柄时使用 folder input 回退。

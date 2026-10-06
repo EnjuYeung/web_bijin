@@ -197,7 +197,7 @@ export default function SettingsPanel() {
           <div><dt>容器内目录</dt><dd id="local-container">{settings.local.containerDir || "/photos"}</dd></div>
           <div><dt>最近扫描</dt><dd id="local-scan"><SourceState status={settings.local.status} /></dd></div>
         </dl></CardContent>
-        <CardFooter><details className="source-guide"><summary>修改本地照片目录</summary><div className="source-guide-body"><p>在服务器项目目录的 <code>.env</code> 中修改 <code>PHOTOS_DIR</code>，再执行 <code>docker compose up -d</code>。</p><p>支持 jpg、jpeg、png、webp、gif；以点开头的文件和文件夹会跳过。目录只读挂载，原照片不会被修改。</p><p>每 {settings.scanEvery % 60 === 0 ? settings.scanEvery / 60 + " 分钟" : settings.scanEvery + " 秒"}自动扫描一次。</p></div></details></CardFooter>
+        <CardFooter><details className="source-guide"><summary>修改本地照片目录</summary><div className="source-guide-body"><p>在服务器项目目录的 <code>.env</code> 中修改 <code>PHOTOS_DIR</code>，再执行 <code>docker compose up -d</code>。</p><p>支持 jpg、jpeg、png、webp、gif；以点开头的文件和文件夹会跳过。上传页可将图片保存到这个目录，已有同名文件会跳过。</p><p>每 {settings.scanEvery % 60 === 0 ? settings.scanEvery / 60 + " 分钟" : settings.scanEvery + " 秒"}自动扫描一次。</p></div></details></CardFooter>
       </Card>
       <Card className="source-card">
         <CardHeader><CardTitle><h2><Cloud aria-hidden="true" />对象存储</h2></CardTitle><CardDescription>云端照片与本地一起展示，同名文件夹合并为相册。</CardDescription><CardAction>{editing === undefined && <Button ref={addButton} id="s3-add" onClick={event => openEditor(null, event.currentTarget)} disabled={!!pending}><Plus data-icon="inline-start" aria-hidden="true" />添加对象存储</Button>}</CardAction></CardHeader>
@@ -212,7 +212,7 @@ export default function SettingsPanel() {
             </article>)}
           </div>
           {editing !== undefined && <form id="s3-form" className="storage-editor" ref={editor} onSubmit={save} noValidate aria-busy={!!pending} onKeyDown={event => { if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); if (!pending) closeEditor(); } }}>
-            <h3 id="s3-form-title">{editing ? `编辑「${editing.name}」` : "添加对象存储"}</h3><p className="editor-intro">带 * 的项目为必填。凭据仅用于只读访问。</p>
+            <h3 id="s3-form-title">{editing ? `编辑「${editing.name}」` : "添加对象存储"}</h3><p className="editor-intro">带 * 的项目为必填。凭据用于读取图片，也用于你主动发起的 S3 上传。</p>
             <FieldGroup className="storage-fields">
               <StorageField name="name" label="名称" value={values.name} onChange={change} helper="留空使用 Bucket 名称" disabled={!!pending} />
               <StorageField name="endpoint" label="Endpoint" value={values.endpoint} onChange={change} required error={errors.endpoint} helper="只填协议、域名和端口；默认使用 HTTPS" disabled={!!pending} />
@@ -237,7 +237,7 @@ export default function SettingsPanel() {
             <Separator /><div className="form-actions"><Button id="s3-save" type="submit" disabled={!!pending}>{pending === "save" && <Spinner data-icon="inline-start" aria-label="正在保存" />}{pending === "save" ? "保存中…" : "保存"}</Button><Button id="s3-test" type="button" variant="outline" disabled={!!pending} onClick={test}>{pending === "test" && <Spinner data-icon="inline-start" aria-label="正在连接" />}{pending === "test" ? "连接中…" : "测试连接"}</Button><Button id="s3-cancel" type="button" variant="ghost" disabled={!!pending} onClick={closeEditor}>取消</Button></div>
           </form>}
         </CardContent>
-        <CardFooter><details className="source-guide"><summary>支持哪些存储服务？</summary><div className="source-guide-body"><p>支持 Amazon S3 兼容服务，包括 Cloudflare R2、AWS S3、MinIO、Backblaze B2、Wasabi、阿里云 OSS 和腾讯云 COS。可以添加多个来源。</p><p>只读取图片，不会上传、修改或删除存储里的原文件。</p></div></details></CardFooter>
+        <CardFooter><details className="source-guide"><summary>支持哪些存储服务？</summary><div className="source-guide-body"><p>支持 Amazon S3 兼容服务，包括 Cloudflare R2、AWS S3、MinIO、Backblaze B2、Wasabi、阿里云 OSS 和腾讯云 COS。可以添加多个来源。</p><p>上传页复用这里的 Key 和桶配置上传图片；已有同名文件会跳过。</p></div></details></CardFooter>
       </Card>
       <WallpaperCard stats={settings.wallpapers} busy={settings.scan.scanning || settings.scan.queued} />
     </>}

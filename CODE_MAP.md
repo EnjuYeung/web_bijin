@@ -1,6 +1,6 @@
 # 代码文件导览
 
-这份文档用于帮助第一次接触项目的人快速了解各文件的职责。项目是一个单进程 Go 应用：启动后扫描照片目录和对象存储、维护 SQLite 索引、缩略图和随机壁纸，接收对象存储的上传通知，并同时提供登录、接口、公开的随机壁纸接口和前端页面。
+这份文档用于帮助第一次接触项目的人快速了解各文件的职责。项目是一个单进程 Go 应用：启动后扫描照片目录和对象存储、维护 SQLite 索引、缩略图和随机壁纸，支持网页向本地或现有 S3 上传图片、接收对象存储的上传通知，并同时提供登录、接口、公开的随机壁纸接口和前端页面。
 
 ## 建议阅读顺序
 
@@ -8,7 +8,7 @@
 2. `ARCHITECTURE.md`：了解技术栈、数据流和主要设计。
 3. `main.go`、`config.go`：了解程序如何启动。
 4. `source.go`、`scan.go`、`events.go`、`store.go`、`thumb.go`、`wallpaper.go`：了解照片如何进入图库并生成壁纸。
-5. `server.go`、`auth.go`：了解页面、接口和登录。
+5. `server.go`、`auth.go`、`upload.go`：了解页面、接口和登录。
 6. `frontend/components/album-app.tsx`、`frontend/components/photo-gallery.tsx`、`frontend/app/globals.css`：了解浏览器界面。
 
 ## Go 后端
@@ -20,6 +20,7 @@
 | `storage.go` | 对象存储配置：字段校验与默认值（Endpoint、Bucket、前缀、Region、寻址方式、大图直连与浏览器访问地址），以及 SQLite `storages` 表的增删改查与补列迁移。 |
 | `settings.go` | 设置页接口：读取本地说明、各来源状态、上传通知状态与壁纸统计、添加/修改/删除对象存储、测试连接；Secret Key 只写不读。 |
 | `server.go` | 注册 HTTP 路由，提供照片、相册、缩略图（不可变缓存）、原图（转发或 302 到预签名地址）、登录背景（302 到一张壁纸）、公开随机壁纸和健康检查接口，并内嵌前端文件。 |
+| `upload.go` | GUI 上传：同源与路径校验、现有目标、本地原子提交、S3 条件预签名与保存验证、进程内任务状态，以及复用扫描器的索引/缩略图/壁纸处理。 |
 | `auth.go` | 校验用户名和密码，生成签名 Cookie，保护需要登录的页面和接口。 |
 | `store.go` | 管理 SQLite 照片索引，包括建表、查询、更新、按来源计数和删除；数据库权限收紧为 0600。 |
 | `source.go` | 图片源集合：本地目录与多个 S3 兼容存储的列举、读取和 Stat，按索引键分派，通知按桶与前缀匹配存储，大图预签名（按版本复用），Region 自动识别、连接测试和中文错误提示。 |
@@ -38,10 +39,12 @@
 |---|---|
 | `frontend/app/layout.tsx` | Next.js 页面外壳、元数据和首屏主题/侧栏偏好脚本，不请求用户数据。 |
 | `frontend/app/page.tsx`、`frontend/app/login/page.tsx` | 首页与登录页静态导出入口。 |
-| `frontend/components/album-app.tsx` | 标题、导航、网站标题折叠交互、按需加载设置页与视图选择。 |
+| `frontend/components/album-app.tsx` | 标题、导航、网站标题折叠交互、按需加载设置页、上传页与视图选择。 |
 | `frontend/components/photo-gallery.tsx` | 游标分页、虚拟瀑布流、hash 大图、键盘/触摸切换、焦点和滚动恢复。 |
 | `frontend/components/albums.tsx` | 文件夹相册封面、数量、空态与重试。 |
 | `frontend/components/settings-panel.tsx` | 来源卡片、校验表单、添加/编辑/测试/删除对象存储、大图直连与浏览器访问地址、上传通知状态、随机壁纸卡片（数量与可复制的接口地址）；扫描中短时刷新。 |
+| `frontend/components/upload-panel.tsx` | 独立上传页：目标选择、文件/文件夹添加、拖放、多任务进度、处理状态、停止与重试；文件夹只取直属图片。 |
+| `frontend/lib/upload.ts` | 文件选择与非递归目录处理、格式/大小筛选、XHR 传输进度、取消和等待处理。 |
 | `frontend/components/login.tsx` | 登录表单、错误提示与安全返回地址。 |
 | `frontend/components/ui/` | 官方 shadcn/ui Base UI 组件；统一语义颜色、按钮状态、表单与对话框。 |
 | `frontend/lib/api.ts`、`frontend/lib/preferences.ts` | 现有 Go API 的类型与请求、格式化、主题与侧栏偏好。 |
@@ -58,7 +61,9 @@
 | `auth_test.go` | 测试登录、Cookie、访问保护和相关 HTTP 行为。 |
 | `assets_test.go` | 验证导出资源的门禁边界，以及 gzip 解压内容、MIME、缓存与拒绝压缩时的回退。 |
 | `frontend/tests/album.spec.ts`、`frontend/playwright.config.ts` | Playwright 实际浏览器回归：登录、照片/相册、大图、设置表单（含大图直连：浏览器跟随 302 直接向存储取原图）、主题/品牌交互与响应式、随机壁纸卡片与复制、别的网站无 Cookie 引用壁纸、登录页背景为壁纸。 |
-| `frontend/tests/s3_fixture.py` | 仅监听本机的 S3 浏览器测试服务，使用生成的测试图片，接受预签名地址并按 `response-*` 参数返回响应头，不连接真实桶。 |
+| `frontend/tests/s3_fixture.py` | 仅监听本机的 S3 浏览器测试服务，使用生成的测试图片，接受预签名读写、条件写入与任务元数据，并按 `response-*` 参数返回响应头，不连接真实桶。 |
+| `upload_test.go` | 上传核心验收：保存/索引/缩略图/壁纸、身份与来源检查、非法路径/图片、传输中断、并发同名不覆盖、符号链接、S3 现有凭据与坏图误报回归。 |
+| `frontend/tests/upload.spec.ts` | 单/多图、本地/S3、文件夹直属图片、多文件夹拖入不读取子目录、失败重试、同名跳过，以及两种主题与 320–1440 px 布局。 |
 | `scan_test.go` | 测试照片扫描、格式识别和异常文件处理。 |
 | `order_test.go` | 测试随机排序和游标分页。 |
 | `meta_test.go` | 测试照片标题和格式。 |
@@ -106,4 +111,4 @@
 - `web/`：Next.js 静态导出产物（仅 `.gitkeep` 提交）；Go 构建前必须生成。
 - `frontend/node_modules/`、`.next/`、`out/`：安装依赖与构建缓存。
 
-更新时间：2026-10-05 00:40:00 CST。
+更新时间：2026-10-06 14:07:51 CST。

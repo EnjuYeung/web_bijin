@@ -12,7 +12,7 @@ services:
       # 只给本机 OpenResty 反代
       - "127.0.0.1:${HOST_PORT:-5001}:5001"
     volumes:
-      - "${PHOTOS_DIR:-./photos}:/photos:ro"
+      - "${PHOTOS_DIR:-./photos}:/photos:rw"
       - "${DATA_DIR:-./data}:/data"
     environment:
       TZ: ${TZ:-Asia/Shanghai}
