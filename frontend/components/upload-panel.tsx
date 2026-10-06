@@ -8,9 +8,9 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Field, FieldDescription, FieldLabel } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
-import { NativeSelect, NativeSelectOption } from "@/components/ui/native-select";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Spinner } from "@/components/ui/spinner";
+import { OptionSelect } from "@/components/option-select";
 
 type Phase = "pending" | "uploading" | "processing" | "done" | "skipped" | "error" | "cancelled";
 interface Row { id: string; file: File; path: string; phase: Phase; percent: number; message?: string; task?: UploadTask }
@@ -193,7 +193,7 @@ export default function UploadPanel() {
       <CardContent className="upload-content">
         {!settings ? <p role="status"><Spinner aria-label="正在读取上传目标" />正在读取保存位置…</p> : <>
           <div className="upload-targets">
-            <Field><FieldLabel htmlFor="upload-target">保存位置</FieldLabel><NativeSelect id="upload-target" value={target} disabled={busy || reading || rows.some(row => !!row.task)} onChange={event => setTarget(event.target.value)}>{settings.targets.map(item => <NativeSelectOption key={item.id} value={item.id}>{item.kind === "local" ? "本地 · " : "S3 · "}{item.name}</NativeSelectOption>)}</NativeSelect><FieldDescription>{target === "local" ? "保存到 .env 配置的本地照片目录。" : "使用现有对象存储配置及 Key 上传。"}</FieldDescription></Field>
+            <Field><FieldLabel htmlFor="upload-target">保存位置</FieldLabel><OptionSelect id="upload-target" label="保存位置" value={target} choices={settings.targets.map(item => ({ value: item.id, label: (item.kind === "local" ? "本地 · " : "S3 · ") + item.name }))} disabled={busy || reading || rows.some(row => !!row.task)} onChange={setTarget} /><FieldDescription>{target === "local" ? "保存到 .env 配置的本地照片目录。" : "使用现有对象存储配置及 Key 上传。"}</FieldDescription></Field>
             <Field><FieldLabel htmlFor="upload-directory">目标子目录（可选）</FieldLabel><Input id="upload-directory" placeholder="例如 2026/旅行" value={directory} disabled={busy || reading || rows.some(row => !!row.task)} onChange={event => setDirectory(event.target.value)} /><FieldDescription>留空保存到所选存储根目录。文件夹上传保留文件夹名。</FieldDescription></Field>
           </div>
           <input id="upload-file-input" ref={fileInput} type="file" accept={accept} multiple hidden aria-label="选择图片" onChange={event => { add(photoSelection(Array.from(event.target.files || []))); event.target.value = ""; }} />

@@ -14,7 +14,10 @@ async function openLocal(page: Page, directory: string) {
   await page.goto("/?view=upload");
   await expect(page.locator("#page-title")).toHaveText("上传");
   await expect(page.locator("#nav-upload")).toHaveAttribute("aria-current", "page");
-  await page.locator("#upload-target").selectOption("local");
+  expect(await page.locator("#upload-target").evaluate(element => element.tagName)).toBe("BUTTON");
+  await page.locator("#upload-target").click();
+  await page.getByRole("option", { name: "本地 · 本地照片目录", exact: true }).click();
+  await expect(page.locator("#upload-target")).toHaveText("本地 · 本地照片目录");
   await page.locator("#upload-directory").fill(directory);
 }
 async function verifyPhoto(page: Page, directory: string, name: string, original: Buffer) {
@@ -130,7 +133,10 @@ test("upload 05 S3 direct PUT uses current storage and processes the object", as
   expect(response.status()).toBe(201);
   const saved = (await response.json()).storage;
   await page.goto("/?view=upload");
-  await page.locator("#upload-target").selectOption("s3-" + saved.id);
+  await page.locator("#upload-target").click();
+  await expect(page.locator(".person-popup")).toBeVisible();
+  await page.getByRole("option", { name: "S3 · " + saved.name, exact: true }).click();
+  await expect(page.locator("#upload-target")).toHaveText("S3 · " + saved.name);
   await page.locator("#upload-file-input").setInputFiles({ name: "对象存储.jpg", mimeType: "image/jpeg", buffer });
   await page.locator("#upload-start").click();
   await expect(page.locator("#upload-list li")).toHaveAttribute("data-phase", "done", { timeout: 45_000 });

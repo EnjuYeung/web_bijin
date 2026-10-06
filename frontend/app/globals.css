@@ -65,7 +65,7 @@ a { color: inherit; }
 img { display: block; }
 ::selection { background: var(--color-accent-soft); color: var(--color-ink); }
 :focus-visible { outline: 2px solid var(--color-focus); outline-offset: 3px; }
-[data-slot="button"]:focus-visible, [data-slot="input"]:focus-visible, [data-slot="checkbox"]:focus-visible, [data-slot="native-select"]:focus-visible { outline: none; }
+[data-slot="button"]:focus-visible, [data-slot="input"]:focus-visible, [data-slot="checkbox"]:focus-visible { outline: none; }
 .skip-link { position: fixed; top: -6rem; left: 1rem; z-index: 60; padding: .75rem 1rem; border-radius: var(--radius-sm); background: var(--color-paper-2); border: 1px solid var(--color-focus); }
 .skip-link:focus { top: 1rem; }
 noscript { display: block; padding: 1rem; }
@@ -374,6 +374,8 @@ html[data-sidebar="collapsed"] .nav-item { justify-content: center; padding: 0; 
 .option-trigger:hover { border-color: var(--color-rule-2); }
 .option-trigger:focus-visible { outline: none; border-color: var(--ring); box-shadow: 0 0 0 3px color-mix(in oklch, var(--ring) 50%, transparent); }
 .option-trigger[data-popup-open] { border-color: var(--ring); }
+.option-trigger[data-disabled] { opacity: .5; cursor: not-allowed; }
+.storage-fields .option-trigger, .upload-targets .option-trigger { width: 100%; }
 .option-icon { display: grid; place-items: center; color: var(--color-muted); }
 .option-icon svg { width: 1rem; height: 1rem; }
 .option-popup { min-width: max(var(--anchor-width), 9rem); }

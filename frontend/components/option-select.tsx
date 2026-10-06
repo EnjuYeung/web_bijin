@@ -7,10 +7,10 @@ export interface Choice<T extends string> { value: T; label: string }
 
 // OptionSelect is a single choice drawn in the app's own style: a native
 // select opens the operating system's menu, which ignores the page theme.
-export function OptionSelect<T extends string>({ id, label, value, choices, onChange }: {
-  id: string; label: string; value: T; choices: Choice<T>[]; onChange: (value: T) => void;
+export function OptionSelect<T extends string>({ id, label, value, choices, disabled = false, onChange }: {
+  id: string; label: string; value: T; choices: Choice<T>[]; disabled?: boolean; onChange: (value: T) => void;
 }) {
-  return <Select.Root items={choices} value={value} onValueChange={next => { if (next !== null) onChange(next as T); }}>
+  return <Select.Root items={choices} value={value} disabled={disabled} onValueChange={next => { if (next !== null) onChange(next as T); }}>
     <Select.Trigger id={id} className="option-trigger" aria-label={label}>
       <Select.Value className="option-value" />
       <Select.Icon className="option-icon"><ChevronDown aria-hidden="true" /></Select.Icon>

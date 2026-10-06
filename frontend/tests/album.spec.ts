@@ -145,7 +145,9 @@ test("03 settings form validation, test, save, edit and delete", async ({ page }
   await page.locator("#s3-test").click();
   await expect(page.locator("#s3-msg")).toContainText("找到 2 张图片");
   await page.locator("#s3-form summary").click();
-  await page.locator("#s3-addressing").selectOption("path");
+  expect(await page.locator("#s3-addressing").evaluate(element => element.tagName)).toBe("BUTTON");
+  await page.locator("#s3-addressing").click();
+  await page.getByRole("option", { name: "路径：endpoint/bucket", exact: true }).click();
   await page.locator("#s3-save").click();
   await expect(page.locator("#s3-form")).toHaveCount(0);
   await expect(page.locator(".storage-row")).toContainText("云端家庭照片");
@@ -157,7 +159,7 @@ test("03 settings form validation, test, save, edit and delete", async ({ page }
   await page.getByRole("button", { name: "编辑 云端家庭照片" }).click();
   await expect(page.locator("#s3-secretKey")).toHaveValue("");
   await expect(page.locator("#s3-addressing")).toBeVisible();
-  await expect(page.locator("#s3-addressing")).toHaveValue("path");
+  await expect(page.locator("#s3-addressing")).toHaveText("路径：endpoint/bucket");
   await page.locator("#s3-name").fill("家庭照片备份");
   await expect(page.locator("#s3-publicEndpoint")).toHaveCount(0);
   await page.getByRole("checkbox", { name: "大图由浏览器直接从存储读取" }).click();

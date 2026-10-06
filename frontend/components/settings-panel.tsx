@@ -8,17 +8,18 @@ import { Badge } from "@/components/ui/badge";
 import { Card, CardAction, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Field, FieldDescription, FieldError, FieldGroup, FieldLabel, FieldLegend, FieldSet } from "@/components/ui/field";
-import { NativeSelect, NativeSelectOption } from "@/components/ui/native-select";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "@/components/ui/empty";
 import { Spinner } from "@/components/ui/spinner";
+import { OptionSelect } from "@/components/option-select";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Separator } from "@/components/ui/separator";
 
 const blank: StorageInput = { id: 0, name: "", endpoint: "", region: "", bucket: "", prefix: "", accessKey: "", secretKey: "", addressing: "auto", listV1: false, directOriginal: false, publicEndpoint: "" };
 type TextKey = Exclude<keyof StorageInput, "id" | "listV1" | "directOriginal">;
 const labels: Partial<Record<TextKey, string>> = { endpoint: "Endpoint", bucket: "Bucket", accessKey: "Access Key", secretKey: "Secret Key" };
+const addressingChoices = [{ value: "auto", label: "自动（推荐）" }, { value: "path", label: "路径：endpoint/bucket" }, { value: "virtual", label: "虚拟主机：bucket.endpoint" }];
 
 function Count({ photos, broken = 0 }: { photos: number; broken?: number }) {
   return <>{photos.toLocaleString("zh-CN")} 张照片{broken > 0 && <span className="source-broken"> · {broken} 个文件无法显示</span>}</>;
@@ -230,7 +231,7 @@ export default function SettingsPanel() {
             <details className="source-guide" open={advanced} onToggle={event => setAdvanced(event.currentTarget.open)}>
               <summary>高级设置</summary><FieldSet className="advanced-fields"><FieldLegend className="sr-only">对象存储高级设置</FieldLegend><FieldGroup className="storage-fields">
                 <StorageField name="region" label="Region" value={values.region} onChange={change} helper="留空自动识别，服务商要求时再填写" disabled={!!pending} />
-                <Field data-disabled={!!pending}><FieldLabel htmlFor="s3-addressing">寻址方式</FieldLabel><NativeSelect className="w-full" id="s3-addressing" name="addressing" value={values.addressing} disabled={!!pending} onChange={event => change("addressing", event.target.value)}><NativeSelectOption value="auto">自动（推荐）</NativeSelectOption><NativeSelectOption value="path">路径：endpoint/bucket</NativeSelectOption><NativeSelectOption value="virtual">虚拟主机：bucket.endpoint</NativeSelectOption></NativeSelect><FieldDescription>自建服务通常选路径，OSS / COS 可选虚拟主机。</FieldDescription></Field>
+                <Field data-disabled={!!pending}><FieldLabel htmlFor="s3-addressing">寻址方式</FieldLabel><OptionSelect id="s3-addressing" label="寻址方式" value={values.addressing} choices={addressingChoices} disabled={!!pending} onChange={value => change("addressing", value)} /><FieldDescription>自建服务通常选路径，OSS / COS 可选虚拟主机。</FieldDescription></Field>
               </FieldGroup><Field orientation="horizontal" data-disabled={!!pending}><Checkbox id="s3-listV1" name="listV1" checked={values.listV1} disabled={!!pending} onCheckedChange={checked => setValues(previous => ({ ...previous, listV1: checked }))} /><FieldLabel htmlFor="s3-listV1">使用旧版列举接口，仅在服务不支持 V2 时勾选</FieldLabel></Field></FieldSet>
             </details>
             {message?.kind === "err" ? <Alert variant="destructive" id="s3-msg"><CircleAlert aria-hidden="true" /><AlertDescription>{message.text}</AlertDescription></Alert> : <p id="s3-msg" className="form-message" data-kind={message?.kind} role="status" aria-live="polite">{message?.text || ""}</p>}

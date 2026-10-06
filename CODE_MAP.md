@@ -43,7 +43,7 @@
 | `frontend/components/album-app.tsx` | 标题、导航、网站标题折叠交互、按需加载设置页、上传页、整理页与视图选择。 |
 | `frontend/components/photo-gallery.tsx` | 游标分页、虚拟瀑布流、hash 大图、键盘/触摸切换、焦点和滚动恢复。 |
 | `frontend/components/albums.tsx` | 文件夹相册封面、数量、「作者 · 模特」、作者 / 模特多选筛选（本次访问内保留）、排序工具（名称 / 作者 / 模特 / 添加日期与升降序）、空态与重试。 |
-| `frontend/components/option-select.tsx` | 基于 Base UI Select 的单选下拉，与名字下拉同一套弹层样式；用于相册排序和整理页的填写情况。 |
+| `frontend/components/option-select.tsx` | 基于 Base UI Select 的单选下拉，与名字下拉同一套弹层样式；用于相册排序、整理页的填写情况、设置页的寻址方式和上传页的保存位置；项目里不再使用原生下拉。 |
 | `frontend/components/organize-panel.tsx` | 整理页：相册清单与作者 / 模特即时保存；按相册名、填写情况、作者、模特筛选后批量设置；名单默认折叠，改名 / 合并 / 删除与失效记录清理。 |
 | `frontend/components/person-picker.tsx` | 基于 Base UI Combobox 的名字下拉：筛选、复用已有名字、输入新建（用作筛选时只选不建），作者单选、模特多选，可全程用键盘操作。 |
 | `frontend/lib/albums.ts` | 相册排序规则（中文排序器、没填的排最后）、作者 / 模特与填写情况筛选、名字规范化、按相册统计名单、排序与筛选偏好的读写和「作者 · 模特」文字。 |
