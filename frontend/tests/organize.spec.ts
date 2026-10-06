@@ -37,6 +37,29 @@ function row(page: Page, name: string) {
 function saved(page: Page) {
   return page.waitForResponse(response => new URL(response.url()).pathname === "/api/album-people" && response.request().method() === "PUT");
 }
+async function choose(page: Page, trigger: Locator, option: string) {
+  await trigger.click();
+  await page.getByRole("option", { name: option, exact: true }).click();
+}
+async function rowNames(page: Page) {
+  return (await page.locator(".organize-row .organize-album > strong").allTextContents()).sort();
+}
+// The chosen option shows its check mark on the same line as its name.
+async function checkOnNameLine(page: Page) {
+  const chosen = page.locator(".person-option[data-selected]").first();
+  await expect(chosen).toBeVisible();
+  const check = (await chosen.locator(".person-check").boundingBox())!;
+  const name = (await chosen.locator(".person-option-name").boundingBox())!;
+  expect(Math.abs(check.y + check.height / 2 - (name.y + name.height / 2))).toBeLessThan(4);
+  expect(check.x + check.width).toBeLessThanOrEqual(name.x);
+  expect(name.height).toBeLessThan(30);
+}
+// Filters keep their list open for more picks; close it before the next control.
+async function filterBy(page: Page, box: Locator, option: RegExp) {
+  await box.click();
+  await page.getByRole("option", { name: option }).click();
+  await page.keyboard.press("Escape");
+}
 async function pick(page: Page, box: Locator, text: string, option: string | RegExp) {
   await box.click();
   await box.fill(text);
@@ -104,6 +127,11 @@ test("organize 01 new names, reuse from the list, persistence and album covers",
   const people = await (await page.request.get("/api/people")).json() as { authors: ApiPerson[]; models: ApiPerson[] };
   expect(people.authors.map(person => [person.name, person.albums])).toEqual([["LEEHEE EXPRESS", 2]]);
   expect(people.models.map(person => [person.name, person.albums])).toEqual([["G.su", 2], ["Min.E (민이)", 1]]);
+  await expect(page.locator("#people-content")).toHaveCount(0);
+  await expect(page.locator("#people-toggle")).toHaveText("展开名单");
+  await expect(page.locator("#people-card")).toContainText("作者 1 位，模特 2 位");
+  await page.locator("#people-toggle").click();
+  await expect(page.locator("#people-toggle")).toHaveAttribute("aria-expanded", "true");
   await expect(page.locator("#people-card .people-name")).toHaveText(["LEEHEE EXPRESS", "G.su", "Min.E (민이)"]);
 
   // Clearing the author with its X button saves an empty author.
@@ -121,36 +149,74 @@ test("organize 01 new names, reuse from the list, persistence and album covers",
   await page.screenshot({ path: screenshots + "/organize-albums-desktop.png" });
 });
 
-test("organize 02 filter, unfilled albums and batch setting", async ({ page }) => {
+test("organize 02 filters by fill status, authors and models, then batch setting", async ({ page }) => {
   await setPeople(page, ["misc"], { author: "Pure Media" });
+  await setPeople(page, ["batch"], { models: ["Woo"] });
+  await setPeople(page, ["子目录"], { author: "LEEHEE EXPRESS", models: ["G.su", "Min.E"] });
   await page.goto("/?view=organize");
+  const fill = page.locator("#organize-fill");
+  const authors = page.getByRole("combobox", { name: "按作者筛选" });
+  const models = page.getByRole("combobox", { name: "按模特筛选" });
+  expect(await fill.evaluate(element => element.tagName)).toBe("BUTTON");
+
   await page.locator("#organize-filter").fill("目录");
-  await expect(page.locator(".organize-row")).toHaveCount(2);
+  await expect.poll(() => rowNames(page)).toEqual(["子目录", "根目录"].sort());
   await expect(page.locator("#organize-count")).toHaveText("显示 2 / 4 本");
   await page.locator("#organize-filter").fill("");
-  await page.getByRole("checkbox", { name: "只看未填写的" }).click();
-  await expect(page.locator(".organize-row")).toHaveCount(3);
+  // Fill status: no author, no model, neither.
+  await choose(page, fill, "没填作者");
+  await expect.poll(() => rowNames(page)).toEqual(["batch", "根目录"].sort());
+  await choose(page, fill, "没填模特");
+  await expect.poll(() => rowNames(page)).toEqual(["misc", "根目录"].sort());
+  await choose(page, fill, "作者和模特都没填");
+  await expect.poll(() => rowNames(page)).toEqual(["根目录"]);
+  await choose(page, fill, "全部相册");
+  await expect(page.locator("#organize-count")).toHaveText("共 4 本");
+
+  // One author, then a second one: either matches.
+  await filterBy(page, authors, /^Pure Media/);
+  await expect.poll(() => rowNames(page)).toEqual(["misc"]);
+  await filterBy(page, authors, /^LEEHEE EXPRESS/);
+  await expect.poll(() => rowNames(page)).toEqual(["misc", "子目录"].sort());
+  // Filters only offer names in use; nothing new can be typed in.
+  await authors.fill("Nobody");
+  await expect(page.getByText("没有匹配的名字")).toBeVisible();
+  await expect(page.getByRole("option")).toHaveCount(0);
+  await page.keyboard.press("Escape");
+  await page.locator("#organize-clear").click();
+  await expect(page.locator(".organize-row")).toHaveCount(4);
+  await expect(page.locator(".organize-filters .person-chip")).toHaveCount(0);
+
+  // Several models, and authors and models together.
+  await filterBy(page, models, /^G\.su/);
+  await expect.poll(() => rowNames(page)).toEqual(["子目录"]);
+  await filterBy(page, models, /^Woo/);
+  await expect.poll(() => rowNames(page)).toEqual(["batch", "子目录"].sort());
+  await filterBy(page, authors, /^LEEHEE EXPRESS/);
+  await expect.poll(() => rowNames(page)).toEqual(["子目录"]);
+  await page.locator("#organize-clear").click();
+
+  // Batch: only the albums without an author get one; their models stay.
+  await choose(page, fill, "没填作者");
   await page.getByRole("checkbox", { name: "全选当前列表" }).click();
-  await expect(page.locator("#organize-batch")).toContainText("已选 3 本相册");
-  // Applying without choosing anything says what is missing.
+  await expect(page.locator("#organize-batch")).toContainText("已选 2 本相册");
   await page.locator("#organize-apply").click();
   await expect(page.locator("#organize-batch-message")).toHaveText("先选择作者或模特。");
-  await pick(page, page.getByRole("combobox", { name: "批量设置作者" }), "Pure", /^Pure Media/);
-  await pick(page, page.getByRole("combobox", { name: "批量设置模特" }), "Woo", "添加「Woo」");
+  await pick(page, page.getByRole("combobox", { name: "批量设置作者" }), "Fantasy Factory", "添加「Fantasy Factory」");
   const save = saved(page);
   await page.locator("#organize-apply").click();
   expect((await save).status()).toBe(200);
-  await expect(page.locator("#organize-batch-message")).toHaveText("已设置 3 本相册。");
-  await expect(page.locator("#organize-batch")).toHaveCount(0);
-  // The rows stay while the filter is on, now filled in.
-  await expect(page.locator(".organize-row")).toHaveCount(3);
-  for (const name of ["根目录", "子目录", "batch"]) await expect(row(page, name).locator(".person-chip")).toHaveText(["Woo"]);
+  await expect(page.locator("#organize-batch-message")).toHaveText("已设置 2 本相册。");
+  // The rows stay listed while the filter is on, now with an author.
+  await expect.poll(() => rowNames(page)).toEqual(["batch", "根目录"].sort());
+  for (const name of ["batch", "根目录"]) await expect(row(page, name).getByRole("combobox", { name: `「${name}」的作者` })).toHaveValue("Fantasy Factory");
   const data = await albums(page);
-  expect(data.filter(album => album.author?.name === "Pure Media")).toHaveLength(4);
-  expect(data.find(album => album.id === "misc")!.models).toEqual([]);
-  // Ticking the filter again finds nothing unfilled.
-  await page.getByRole("checkbox", { name: "只看未填写的" }).click();
-  await page.getByRole("checkbox", { name: "只看未填写的" }).click();
+  const byId = (id: string) => data.find(album => album.id === id)!;
+  expect([byId("batch").author?.name, byId(".").author?.name, byId("misc").author?.name, byId("子目录").author?.name]).toEqual(["Fantasy Factory", "Fantasy Factory", "Pure Media", "LEEHEE EXPRESS"]);
+  expect(byId("batch").models.map(model => model.name)).toEqual(["Woo"]);
+  // Choosing the status again finds no album without an author.
+  await choose(page, fill, "全部相册");
+  await choose(page, fill, "没填作者");
   await expect(page.locator(".organize-row")).toHaveCount(0);
   await expect(page.getByText("没有符合条件的相册。")).toBeVisible();
 });
@@ -159,6 +225,7 @@ test("organize 03 rename, merge and delete names; bad input stays in the row", a
   await setPeople(page, ["子目录"], { models: ["Gsu", "Nara"] });
   await setPeople(page, ["misc"], { models: ["G.su"] });
   await page.goto("/?view=organize");
+  await page.locator("#people-toggle").click();
   const card = page.locator("#people-card");
   await card.getByRole("button", { name: "改名「Nara」" }).click();
   await card.getByRole("textbox", { name: "「Nara」的新名字" }).fill("NARA");
@@ -218,25 +285,27 @@ test("organize 04 album sorting by author, model and date, unfilled last, rememb
   }, { list, newest });
   const data = (await albums(page)).map(({ id, name, added }) => ({ id, name, added }));
 
-  await expect(page.locator("#album-sort")).toHaveValue("name");
+  const sortBy = (label: string) => choose(page, page.locator("#album-sort"), label);
+  expect(await page.locator("#album-sort").evaluate(element => element.tagName)).toBe("BUTTON");
+  await expect(page.locator("#album-sort")).toHaveText("名称");
   await expect.poll(names).toEqual(await collated(data, false));
-  await page.locator("#album-sort").selectOption("author");
+  await sortBy("作者");
   await expect.poll(names).toEqual(["子目录", "batch", "根目录", "misc"]);
   await page.locator("#album-sort-direction").click();
   await expect.poll(names).toEqual(["根目录", "batch", "子目录", "misc"]);
-  await page.locator("#album-sort").selectOption("model");
+  await sortBy("模特");
   await expect.poll(names).toEqual(["根目录", "misc", "子目录", "batch"]);
   await page.locator("#album-sort-direction").click();
   await expect.poll(names).toEqual(["子目录", "misc", "根目录", "batch"]);
-  await page.locator("#album-sort").selectOption("added");
+  await sortBy("添加日期");
   await expect(page.locator("#album-sort-direction")).toHaveAttribute("aria-label", "顺序：从新到旧，点击改为从旧到新");
   await expect.poll(names).toEqual(await collated(data, true));
 
   // The choice is remembered after a reload.
-  await page.locator("#album-sort").selectOption("model");
+  await sortBy("模特");
   await page.locator("#album-sort-direction").click();
   await page.reload();
-  await expect(page.locator("#album-sort")).toHaveValue("model");
+  await expect(page.locator("#album-sort")).toHaveText("模特");
   await expect.poll(names).toEqual(["子目录", "misc", "根目录", "batch"]);
 });
 
@@ -270,8 +339,8 @@ test("organize 05 keyboard use, phones to desktops and both themes", async ({ pa
 
   for (const mode of ["night", "day"] as const) {
     await page.addInitScript(value => localStorage.setItem("juens-theme", value), mode);
-    for (const width of [320, 375, 414, 768, 1024, 1440]) {
-      await page.setViewportSize({ width, height: 900 });
+    for (const [width, height] of [[320, 900], [375, 900], [414, 900], [768, 900], [1024, 900], [1280, 800], [1440, 900], [1470, 956]]) {
+      await page.setViewportSize({ width, height });
       await page.goto("/?view=organize");
       await expect(page.locator(".organize-row")).toHaveCount(4);
       await expect(page.locator("html")).toHaveAttribute("data-mode", mode);
@@ -280,12 +349,24 @@ test("organize 05 keyboard use, phones to desktops and both themes", async ({ pa
         const box = await page.locator(selector).first().boundingBox();
         expect(box!.height, selector + " at " + width).toBeGreaterThanOrEqual(44);
       }
+      // A chosen author or model keeps its check mark on its own line (13-inch MacBook widths included).
+      await row(page, "子目录").getByRole("combobox", { name: "「子目录」的作者" }).click();
+      await checkOnNameLine(page);
+      if (width === 1470) await page.screenshot({ path: `${screenshots}/organize-author-open-${width}-${mode}.png` });
+      await page.keyboard.press("Escape");
+      await row(page, "子目录").getByRole("combobox", { name: "「子目录」的模特" }).click();
+      await checkOnNameLine(page);
+      await page.keyboard.press("Escape");
       if (width === 375 || width === 1440) await page.screenshot({ path: `${screenshots}/organize-${width}-${mode}.png`, fullPage: true });
       await page.goto("/?view=albums");
       await expect(page.locator(".album-card")).toHaveCount(4);
       await noOverflow(page);
       const sort = await page.locator("#album-sort").boundingBox();
       expect(sort!.height).toBeGreaterThanOrEqual(44);
+      await page.locator("#album-sort").click();
+      await checkOnNameLine(page);
+      if (width === 1470 || width === 375) await page.screenshot({ path: `${screenshots}/albums-sort-open-${width}-${mode}.png` });
+      await page.keyboard.press("Escape");
       if (width === 375) await page.screenshot({ path: `${screenshots}/organize-albums-${width}-${mode}.png` });
     }
   }
@@ -301,4 +382,48 @@ test("organize 05 keyboard use, phones to desktops and both themes", async ({ pa
   await expect(options).toHaveText(["G.su", "Jdabyeol (정다별이)", "Min.E (민이)"]);
   for (const option of await options.all()) expect((await option.boundingBox())!.height).toBeLessThan(30);
   await page.screenshot({ path: `${screenshots}/organize-popup-320.png` });
+});
+
+test("organize 06 album page filters by authors and models and keeps them for the visit", async ({ page }) => {
+  await setPeople(page, ["子目录"], { author: "LEEHEE EXPRESS", models: ["G.su", "Min.E"] });
+  await setPeople(page, ["misc"], { author: "LEEHEE EXPRESS", models: ["Woo"] });
+  await setPeople(page, ["batch"], { author: "Pure Media", models: ["G.su"] });
+  await page.goto("/?view=albums");
+  const cards = async () => (await page.locator(".album-card strong").allTextContents()).sort();
+  const authors = page.getByRole("combobox", { name: "按作者筛选" });
+  const models = page.getByRole("combobox", { name: "按模特筛选" });
+  await expect(page.locator(".album-card")).toHaveCount(4);
+  await expect(page.locator("#album-filter-note")).toHaveCount(0);
+
+  await filterBy(page, authors, /^LEEHEE EXPRESS/);
+  await expect.poll(cards).toEqual(["misc", "子目录"].sort());
+  await expect(page.locator("#album-filter-note")).toContainText("筛选后 2 / 4 本");
+  await filterBy(page, authors, /^Pure Media/);
+  await expect.poll(cards).toEqual(["batch", "misc", "子目录"].sort());
+  await filterBy(page, models, /^G\.su/);
+  await expect.poll(cards).toEqual(["batch", "子目录"].sort());
+  await page.screenshot({ path: screenshots + "/albums-filtered-desktop.png" });
+
+  // The filter stays while an album is opened and left again.
+  await page.getByRole("link", { name: /^子目录，1 张照片/ }).click();
+  await expect(page.locator("#page-title")).toHaveText("子目录");
+  await page.locator("#album-back").click();
+  await expect.poll(cards).toEqual(["batch", "子目录"].sort());
+  await expect(page.locator(".album-filters .person-chip")).toHaveText(["LEEHEE EXPRESS", "Pure Media", "G.su"]);
+
+  // A combination without albums says so; clearing shows every album again.
+  await page.getByRole("button", { name: "移除LEEHEE EXPRESS" }).click();
+  await page.getByRole("button", { name: "移除G.su" }).click();
+  await filterBy(page, models, /^Min\.E/);
+  await expect(page.getByText("没有符合条件的相册")).toBeVisible();
+  await page.getByRole("button", { name: "清除筛选" }).click();
+  await expect(page.locator(".album-card")).toHaveCount(4);
+  await expect(page.locator("#album-filter-note")).toHaveCount(0);
+
+  // A new tab starts without a filter.
+  await filterBy(page, authors, /^Pure Media/);
+  const fresh = await page.context().newPage();
+  await fresh.goto("/?view=albums");
+  await expect(fresh.locator(".album-card")).toHaveCount(4);
+  await fresh.close();
 });

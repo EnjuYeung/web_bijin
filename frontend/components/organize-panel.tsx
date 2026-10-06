@@ -1,12 +1,13 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Check, CircleAlert, Eraser, Pencil, RefreshCw, Trash2, UserRoundPen, Users, X } from "lucide-react";
+import { Check, ChevronDown, ChevronUp, CircleAlert, Eraser, Pencil, RefreshCw, Trash2, UserRoundPen, Users, X } from "lucide-react";
 import { api, type Album, type AlbumPage, type AlbumPeople, type People, type Person } from "@/lib/api";
-import { defaultSort, nameCollator, sortAlbums } from "@/lib/albums";
-import { PersonPicker, cleanName, nameKey } from "@/components/person-picker";
+import { albumNames, cleanName, defaultSort, emptyFilter, fillLabels, filtering, matchesFilter, nameCollator, nameKey, sortAlbums, type AlbumFilter, type FillState } from "@/lib/albums";
+import { OptionSelect } from "@/components/option-select";
+import { PersonPicker } from "@/components/person-picker";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardAction, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Field, FieldLabel } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
@@ -19,6 +20,7 @@ type RowState = { kind: "saving" } | { kind: "saved" } | { kind: "error"; text: 
 type Message = { text: string; kind: "ok" | "err" | "wait" };
 type Change = { author?: string; models?: string[] };
 interface Saved { albums: (AlbumPeople & { id: string })[]; people: People }
+const fillChoices = (Object.keys(fillLabels) as FillState[]).map(value => ({ value, label: fillLabels[value] }));
 
 function RowStatus({ state }: { state?: RowState }) {
   return <p className="organize-status" data-kind={state?.kind} role="status">
@@ -41,8 +43,11 @@ export default function OrganizePanel() {
   const [people, setPeople] = useState<People | null>(null);
   const [loadError, setLoadError] = useState("");
   const [filter, setFilter] = useState("");
-  // Albums that were empty when the filter was ticked stay listed while being filled in.
-  const [emptyIds, setEmptyIds] = useState<Set<string> | null>(null);
+  const [fill, setFill] = useState<FillState>("all");
+  const [peopleFilter, setPeopleFilter] = useState<AlbumFilter>(emptyFilter);
+  // Albums that matched when a filter was set stay listed while being filled in.
+  const [matching, setMatching] = useState<Set<string> | null>(null);
+  const [peopleOpen, setPeopleOpen] = useState(false);
   const [selected, setSelected] = useState<string[]>([]);
   const [rows, setRows] = useState<Record<string, RowState>>({});
   const [batchAuthor, setBatchAuthor] = useState<string[]>([]);
@@ -159,8 +164,9 @@ export default function OrganizePanel() {
 
   const visible = useMemo(() => {
     const wanted = nameKey(filter);
-    return (albums ?? []).filter(album => (!wanted || nameKey(album.name).includes(wanted) || nameKey(album.id).includes(wanted)) && (!emptyIds || emptyIds.has(album.id)));
-  }, [albums, filter, emptyIds]);
+    return (albums ?? []).filter(album => (!wanted || nameKey(album.name).includes(wanted) || nameKey(album.id).includes(wanted)) && (!matching || matching.has(album.id)));
+  }, [albums, filter, matching]);
+  const names = useMemo(() => albumNames(albums ?? []), [albums]);
   const visibleIds = visible.map(album => album.id);
   const allSelected = visibleIds.length > 0 && visibleIds.every(id => selected.includes(id));
   const someSelected = !allSelected && visibleIds.some(id => selected.includes(id));
@@ -172,9 +178,11 @@ export default function OrganizePanel() {
     setBatchMessage(null);
     setSelected(previous => allSelected ? previous.filter(id => !visibleIds.includes(id)) : [...new Set([...previous, ...visibleIds])]);
   }
-  function toggleEmpty(on: boolean) {
-    setEmptyIds(on && albums ? new Set(albums.filter(album => !album.author && !album.models.length).map(album => album.id)) : null);
+  function applyFilter(nextFill: FillState, nextFilter: AlbumFilter) {
+    setFill(nextFill); setPeopleFilter(nextFilter); setBatchMessage(null);
+    setMatching(filtering(nextFilter, nextFill) && albums ? new Set(albums.filter(album => matchesFilter(album, nextFilter, nextFill)).map(album => album.id)) : null);
   }
+  function clearFilters() { setFilter(""); applyFilter("all", emptyFilter); }
 
   function nameList(title: string, role: "author" | "model", list: Person[]) {
     return <section className="people-list" aria-labelledby={"people-" + role}>
@@ -206,11 +214,16 @@ export default function OrganizePanel() {
         <CardHeader><CardTitle><h2><UserRoundPen aria-hidden="true" />整理相册</h2></CardTitle><CardDescription>给相册填写作者和模特：从下拉里选已有的名字，或输入新名字后按回车。修改会立即保存。</CardDescription></CardHeader>
         <CardContent className="organize-content">
           {!albums.length ? <Empty><EmptyHeader><EmptyMedia variant="icon"><UserRoundPen aria-hidden="true" /></EmptyMedia><EmptyTitle>还没有相册</EmptyTitle><EmptyDescription>照片进入相册后，就可以在这里填写作者和模特。</EmptyDescription></EmptyHeader></Empty> : <>
-            <div className="organize-tools">
+            <div className="organize-filters">
               <Input id="organize-filter" className="organize-filter" type="search" aria-label="按相册名筛选" placeholder="按相册名筛选" value={filter} onChange={event => setFilter(event.target.value)} />
-              <Field orientation="horizontal" className="organize-toggle"><Checkbox id="organize-only-empty" checked={!!emptyIds} onCheckedChange={toggleEmpty} /><FieldLabel htmlFor="organize-only-empty">只看未填写的</FieldLabel></Field>
+              <OptionSelect id="organize-fill" label="按填写情况筛选" value={fill} choices={fillChoices} onChange={value => applyFilter(value, peopleFilter)} />
+              <PersonPicker label="按作者筛选" placeholder="全部作者" multiple create={false} people={names.authors} value={peopleFilter.authors} onChange={authors => applyFilter(fill, { ...peopleFilter, authors })} />
+              <PersonPicker label="按模特筛选" placeholder="全部模特" multiple create={false} people={names.models} value={peopleFilter.models} onChange={models => applyFilter(fill, { ...peopleFilter, models })} />
+            </div>
+            <div className="organize-tools">
               <Field orientation="horizontal" className="organize-toggle"><Checkbox id="organize-select-all" checked={allSelected} indeterminate={someSelected} disabled={!visible.length} onCheckedChange={toggleAll} /><FieldLabel htmlFor="organize-select-all">全选当前列表</FieldLabel></Field>
               <p id="organize-count" className="organize-count" aria-live="polite">{visible.length === albums.length ? `共 ${albums.length} 本` : `显示 ${visible.length} / ${albums.length} 本`}</p>
+              {(filter || matching) && <Button id="organize-clear" variant="ghost" onClick={clearFilters}><X data-icon="inline-start" aria-hidden="true" />清除筛选</Button>}
             </div>
             {selected.length > 0 && <div id="organize-batch" className="organize-batch" role="group" aria-label="批量设置所选相册">
               <p><strong>已选 {selected.length} 本相册</strong>：选好作者和 / 或模特后应用，留空的一项保持不变。</p>
@@ -239,12 +252,16 @@ export default function OrganizePanel() {
         </CardContent>
       </Card>
       <Card className="source-card" id="people-card">
-        <CardHeader><CardTitle><h2><Users aria-hidden="true" />作者与模特名单</h2></CardTitle><CardDescription>改名会同步到所有相册，改成已有的名字会合并；删除只去掉名字，照片不受影响。</CardDescription></CardHeader>
-        <CardContent className="organize-content">
+        <CardHeader>
+          <CardTitle><h2><Users aria-hidden="true" />作者与模特名单</h2></CardTitle>
+          <CardDescription>{peopleOpen ? "改名会同步到所有相册，改成已有的名字会合并；删除只去掉名字，照片不受影响。" : `作者 ${people.authors.length} 位，模特 ${people.models.length} 位${people.stale ? `；${people.stale} 本相册的记录已失效` : ""}。展开后可以改名、合并和删除。`}</CardDescription>
+          <CardAction><Button id="people-toggle" variant="outline" aria-expanded={peopleOpen} aria-controls="people-content" onClick={() => setPeopleOpen(open => !open)}>{peopleOpen ? <ChevronUp data-icon="inline-start" aria-hidden="true" /> : <ChevronDown data-icon="inline-start" aria-hidden="true" />}{peopleOpen ? "收起名单" : "展开名单"}</Button></CardAction>
+        </CardHeader>
+        {peopleOpen && <CardContent id="people-content" className="organize-content">
           {people.stale > 0 && <Alert id="organize-stale"><CircleAlert aria-hidden="true" /><AlertTitle>有 {people.stale} 本相册的文件夹已经不存在</AlertTitle><AlertDescription>文件夹可能被改名或删除了，它们的作者和模特记录还在，改回原名会自动恢复。确定不再需要时可以清理。<Button variant="outline" disabled={pending} onClick={() => void cleanStale(people.stale)}><Eraser data-icon="inline-start" aria-hidden="true" />清理失效记录</Button></AlertDescription></Alert>}
           <div className="people-columns">{nameList("作者", "author", people.authors)}{nameList("模特", "model", people.models)}</div>
           {listMessage && <p id="people-message" className="form-message" data-kind={listMessage.kind} role="status">{listMessage.text}</p>}
-        </CardContent>
+        </CardContent>}
       </Card>
     </>}
   </div>;

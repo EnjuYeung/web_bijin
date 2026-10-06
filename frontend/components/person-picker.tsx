@@ -4,22 +4,15 @@ import { useMemo, useRef, useState, type KeyboardEvent } from "react";
 import { Combobox } from "@base-ui/react/combobox";
 import { Check, ChevronDown, Plus, X } from "lucide-react";
 import type { Person } from "@/lib/api";
+import { cleanName, nameKey } from "@/lib/albums";
 
 interface Option { name: string; albums?: number; create?: boolean }
 
-// The server's rule: trimmed, single inner spaces, composed Unicode.
-export function cleanName(value: string) {
-  return value.trim().split(/\s+/).filter(Boolean).join(" ").normalize("NFC");
-}
-// Matching in the list ignores letter case; the server folds English letters.
-export function nameKey(value: string) {
-  return cleanName(value).toLocaleLowerCase("en-US");
-}
-
 // PersonPicker chooses existing names or adds the typed one. Authors take one
 // name, models several; onChange receives the complete new list of names.
-export function PersonPicker({ id, label, placeholder, people, value, multiple = false, disabled = false, onChange }: {
-  id?: string; label: string; placeholder: string; people: Person[]; value: string[]; multiple?: boolean; disabled?: boolean;
+// Filters pass create={false}: they only pick from names already in use.
+export function PersonPicker({ id, label, placeholder, people, value, multiple = false, create = true, disabled = false, onChange }: {
+  id?: string; label: string; placeholder: string; people: Person[]; value: string[]; multiple?: boolean; create?: boolean; disabled?: boolean;
   onChange: (names: string[]) => void;
 }) {
   const [query, setQuery] = useState("");
@@ -28,7 +21,7 @@ export function PersonPicker({ id, label, placeholder, people, value, multiple =
   const selected = useMemo(() => value.map(name => options.find(option => nameKey(option.name) === nameKey(name)) ?? { name }), [value, options]);
   const typed = cleanName(query);
   const known = !typed || [...options, ...selected].some(option => nameKey(option.name) === nameKey(typed));
-  const items: Option[] = known ? options : [...options, { name: typed, create: true }];
+  const items: Option[] = known || !create ? options : [...options, { name: typed, create: true }];
   const shown = !multiple && selected[0] ? nameKey(selected[0].name) : "";
 
   function choose(next: Option[]) {
@@ -42,9 +35,11 @@ export function PersonPicker({ id, label, placeholder, people, value, multiple =
   function onKeyDown(event: KeyboardEvent<HTMLInputElement>) {
     // Enter with no highlighted option takes the typed name, existing or new.
     if (event.key !== "Enter" || highlighted.current || !typed || nameKey(typed) === shown) return;
+    const existing = options.find(item => nameKey(item.name) === nameKey(typed));
+    if (!existing && !create) return;
     event.preventDefault();
     if (multiple && selected.some(option => nameKey(option.name) === nameKey(typed))) { setQuery(""); return; }
-    const option = options.find(item => nameKey(item.name) === nameKey(typed)) ?? { name: typed };
+    const option = existing ?? { name: typed };
     choose(multiple ? [...selected, option] : [option]);
     if (multiple) setQuery("");
   }
@@ -64,11 +59,11 @@ export function PersonPicker({ id, label, placeholder, people, value, multiple =
   const popup = <Combobox.Portal>
     <Combobox.Positioner className="person-positioner" sideOffset={4}>
       <Combobox.Popup className="person-popup">
-        <Combobox.Empty className="person-empty">还没有名字，输入后按回车添加</Combobox.Empty>
+        <Combobox.Empty className="person-empty">{create ? "还没有名字，输入后按回车添加" : "没有匹配的名字"}</Combobox.Empty>
         <Combobox.List>
           {(option: Option) => <Combobox.Item key={(option.create ? "+" : "") + option.name} value={option} className="person-option" data-create={option.create ? "" : undefined}>
             {option.create ? <Plus aria-hidden="true" /> : <Combobox.ItemIndicator className="person-check"><Check aria-hidden="true" /></Combobox.ItemIndicator>}
-            <span>{option.create ? `添加「${option.name}」` : option.name}</span>
+            <span className="person-option-name">{option.create ? `添加「${option.name}」` : option.name}</span>
             {!option.create && !!option.albums && <small>{option.albums} 本</small>}
           </Combobox.Item>}
         </Combobox.List>

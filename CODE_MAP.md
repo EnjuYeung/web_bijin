@@ -42,10 +42,11 @@
 | `frontend/app/page.tsx`、`frontend/app/login/page.tsx` | 首页与登录页静态导出入口。 |
 | `frontend/components/album-app.tsx` | 标题、导航、网站标题折叠交互、按需加载设置页、上传页、整理页与视图选择。 |
 | `frontend/components/photo-gallery.tsx` | 游标分页、虚拟瀑布流、hash 大图、键盘/触摸切换、焦点和滚动恢复。 |
-| `frontend/components/albums.tsx` | 文件夹相册封面、数量、「作者 · 模特」、排序工具（名称 / 作者 / 模特 / 添加日期与升降序）、空态与重试。 |
-| `frontend/components/organize-panel.tsx` | 整理页：相册清单与作者 / 模特即时保存、按名称筛选、只看未填写、批量设置，名单改名 / 合并 / 删除与失效记录清理。 |
-| `frontend/components/person-picker.tsx` | 基于 Base UI Combobox 的名字下拉：筛选、复用已有名字、输入新建，作者单选、模特多选，可全程用键盘操作。 |
-| `frontend/lib/albums.ts` | 相册排序规则（中文排序器、没填的排最后）、排序偏好的读写和「作者 · 模特」文字。 |
+| `frontend/components/albums.tsx` | 文件夹相册封面、数量、「作者 · 模特」、作者 / 模特多选筛选（本次访问内保留）、排序工具（名称 / 作者 / 模特 / 添加日期与升降序）、空态与重试。 |
+| `frontend/components/option-select.tsx` | 基于 Base UI Select 的单选下拉，与名字下拉同一套弹层样式；用于相册排序和整理页的填写情况。 |
+| `frontend/components/organize-panel.tsx` | 整理页：相册清单与作者 / 模特即时保存；按相册名、填写情况、作者、模特筛选后批量设置；名单默认折叠，改名 / 合并 / 删除与失效记录清理。 |
+| `frontend/components/person-picker.tsx` | 基于 Base UI Combobox 的名字下拉：筛选、复用已有名字、输入新建（用作筛选时只选不建），作者单选、模特多选，可全程用键盘操作。 |
+| `frontend/lib/albums.ts` | 相册排序规则（中文排序器、没填的排最后）、作者 / 模特与填写情况筛选、名字规范化、按相册统计名单、排序与筛选偏好的读写和「作者 · 模特」文字。 |
 | `frontend/components/settings-panel.tsx` | 来源卡片、校验表单、添加/编辑/测试/删除对象存储、大图直连与浏览器访问地址、上传通知状态、随机壁纸卡片（数量与可复制的接口地址）；扫描中短时刷新。 |
 | `frontend/components/upload-panel.tsx` | 独立上传页：目标选择、文件/文件夹添加、拖放、多任务进度、处理状态、停止与重试；文件夹只取直属图片。 |
 | `frontend/lib/upload.ts` | 文件选择与非递归目录处理、格式/大小筛选、XHR 传输进度、取消和等待处理。 |
@@ -63,7 +64,7 @@
 |---|---|
 | `album_test.go` | 测试文件夹相册的分组、命名、封面、添加日期和过滤。 |
 | `organize_test.go` | 作者 / 模特：名字规范化、替换 / 顺序 / 清空 / 大小写复用、重开数据库后仍在、改名合并与删除、登录 / 同源 / JSON 门禁、非法输入、失效记录与清理。 |
-| `frontend/tests/organize.spec.ts` | 整理页与相册排序：新建与复用名字、筛选与批量设置、名单改名 / 合并 / 删除、行内错误、四种排序与刷新后保持、键盘操作、320–1440 px 双主题与下拉选项不换行。 |
+| `frontend/tests/organize.spec.ts` | 整理页与相册页：新建与复用名字、填写情况 / 作者 / 模特筛选与批量设置、名单折叠与改名 / 合并 / 删除、行内错误、自绘排序下拉与刷新后保持、相册页筛选（打开相册返回后仍在、新标签页清空）、键盘操作、320–1470 px 双主题与已选项对勾同行。 |
 | `auth_test.go` | 测试登录、Cookie、访问保护和相关 HTTP 行为。 |
 | `assets_test.go` | 验证导出资源的门禁边界，以及 gzip 解压内容、MIME、缓存与拒绝压缩时的回退。 |
 | `frontend/tests/album.spec.ts`、`frontend/playwright.config.ts` | Playwright 实际浏览器回归：登录、照片/相册、大图、设置表单（含大图直连：浏览器跟随 302 直接向存储取原图）、主题/品牌交互与响应式、随机壁纸卡片与复制、别的网站无 Cookie 引用壁纸、登录页背景为壁纸。 |
@@ -117,4 +118,4 @@
 - `web/`：Next.js 静态导出产物（仅 `.gitkeep` 提交）；Go 构建前必须生成。
 - `frontend/node_modules/`、`.next/`、`out/`：安装依赖与构建缓存。
 
-更新时间：2026-10-06 17:18:15 CST。
+更新时间：2026-10-06 18:16:55 CST。
