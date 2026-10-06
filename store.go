@@ -102,6 +102,9 @@ DROP INDEX IF EXISTS photos_mtime;
 	if err := s.migrateStorages(); err != nil {
 		return err
 	}
+	if err := s.migratePeople(); err != nil {
+		return err
+	}
 	return s.migrateWallpapers()
 }
 

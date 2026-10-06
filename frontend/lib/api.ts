@@ -23,7 +23,11 @@ export async function api<T>(path: string, options: RequestInit = {}): Promise<T
 export interface ScanState { scanning: boolean; queued: boolean; lastAt?: string; lastErr?: string; seen: number; failed: number; ready: number }
 export interface SourceStatus { at: string; seen: number; err?: string }
 export interface Photo { id: number; w: number; h: number; name: string; title: string; format: string; size: number; thumb: string; src: string; mtime: number; date: string; year: number }
-export interface Album { id: string; name: string; count: number; cover: Photo }
+export interface PersonRef { id: number; name: string }
+export interface Person extends PersonRef { albums: number }
+export interface People { authors: Person[]; models: Person[]; stale: number }
+export interface AlbumPeople { author: PersonRef | null; models: PersonRef[] }
+export interface Album extends AlbumPeople { id: string; name: string; count: number; cover: Photo; added: number; addedDate: string }
 export interface PhotoPage { photos: Photo[]; total: number; next?: string; seed: string; tz: string; status: ScanState; album?: { id: string; name: string } }
 export interface AlbumPage { albums: Album[]; total: number; tz: string; status: ScanState }
 export interface StorageInput {

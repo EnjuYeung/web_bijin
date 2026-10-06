@@ -13,6 +13,9 @@ type albumSummary struct {
 	Name  string
 	Count int
 	Cover photo
+	// Added is the earliest photo time: the upload time in object storage,
+	// the modification time for local files.
+	Added int64
 }
 
 func photoAlbumID(rel string) string {
@@ -51,6 +54,9 @@ func groupAlbums(photos []photo) []albumSummary {
 			byID[id] = a
 		}
 		a.Count++
+		if a.Count == 1 || p.MtimeUnix < a.Added {
+			a.Added = p.MtimeUnix
+		}
 		if a.Cover.ID == 0 || p.MtimeUnix > a.Cover.MtimeUnix || (p.MtimeUnix == a.Cover.MtimeUnix && p.ID > a.Cover.ID) {
 			a.Cover = p
 		}

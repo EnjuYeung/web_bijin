@@ -10,7 +10,6 @@ import (
 	"image"
 	"io"
 	"net/http"
-	"net/url"
 	"os"
 	"path"
 	"strings"
@@ -79,29 +78,11 @@ func (a *uploadAPI) targets(w http.ResponseWriter, r *http.Request) {
 // New write endpoints use the existing session, accept same-origin browser
 // requests, and never take a filesystem root or S3 credentials from the client.
 func uploadOriginOK(w http.ResponseWriter, r *http.Request) bool {
-	if r.Header.Get("Sec-Fetch-Site") == "cross-site" {
-		writeJSON(w, http.StatusForbidden, map[string]string{"error": "只能从相册网站上传"})
-		return false
-	}
-	if raw := r.Header.Get("Origin"); raw != "" {
-		u, err := url.Parse(raw)
-		if err != nil || u.Host != r.Host || (u.Scheme != "http" && u.Scheme != "https") {
-			writeJSON(w, http.StatusForbidden, map[string]string{"error": "只能从相册网站上传"})
-			return false
-		}
-	}
-	return true
+	return sameOriginOK(w, r, "只能从相册网站上传")
 }
 
 func uploadJSONOK(w http.ResponseWriter, r *http.Request) bool {
-	if !uploadOriginOK(w, r) {
-		return false
-	}
-	if strings.Split(r.Header.Get("Content-Type"), ";")[0] != "application/json" {
-		writeJSON(w, http.StatusUnsupportedMediaType, map[string]string{"error": "请使用 JSON 请求"})
-		return false
-	}
-	return true
+	return sameOriginJSON(w, r, "只能从相册网站上传")
 }
 
 func uploadPath(in uploadInput) (string, string, error) {

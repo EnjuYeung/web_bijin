@@ -10,6 +10,7 @@ import (
 	"log/slog"
 	"mime"
 	"net/http"
+	"net/url"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -27,6 +28,7 @@ func newRouter(st *store, sc *scanner, thumbs *thumbCache, sources *sourceSet, t
 
 	mux := http.NewServeMux()
 	newUploadAPI(st, sc, sources).routes(mux, gate)
+	(&organizeAPI{store: st}).routes(mux, gate)
 	mux.Handle("GET /api/health", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]any{
 			"ok":     true,
@@ -216,20 +218,32 @@ func handleAlbums(w http.ResponseWriter, r *http.Request, st *store, sc *scanner
 		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "list failed"})
 		return
 	}
+	links, err := st.albumPeopleMap()
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "list failed"})
+		return
+	}
 	type item struct {
-		ID    string    `json:"id"`
-		Name  string    `json:"name"`
-		Count int       `json:"count"`
-		Cover photoItem `json:"cover"`
+		ID        string    `json:"id"`
+		Name      string    `json:"name"`
+		Count     int       `json:"count"`
+		Cover     photoItem `json:"cover"`
+		Added     int64     `json:"added"`
+		AddedDate string    `json:"addedDate"`
+		albumPeople
 	}
 	albums := groupAlbums(all)
 	out := make([]item, 0, len(albums))
 	for _, a := range albums {
+		added, _ := formatDateInTZ(a.Added, tz)
 		out = append(out, item{
-			ID:    a.ID,
-			Name:  a.Name,
-			Count: a.Count,
-			Cover: makePhotoItem(a.Cover, tz),
+			ID:          a.ID,
+			Name:        a.Name,
+			Count:       a.Count,
+			Cover:       makePhotoItem(a.Cover, tz),
+			Added:       a.Added,
+			AddedDate:   added,
+			albumPeople: withModels(links[a.ID]),
 		})
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
@@ -352,6 +366,35 @@ func writeJSON(w http.ResponseWriter, code int, v any) {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.WriteHeader(code)
 	_ = json.NewEncoder(w).Encode(v)
+}
+
+// sameOriginOK refuses write requests that a browser sends from another
+// website; for these endpoints the session cookie alone is not enough.
+func sameOriginOK(w http.ResponseWriter, r *http.Request, message string) bool {
+	if r.Header.Get("Sec-Fetch-Site") == "cross-site" {
+		writeJSON(w, http.StatusForbidden, map[string]string{"error": message})
+		return false
+	}
+	if raw := r.Header.Get("Origin"); raw != "" {
+		u, err := url.Parse(raw)
+		if err != nil || u.Host != r.Host || (u.Scheme != "http" && u.Scheme != "https") {
+			writeJSON(w, http.StatusForbidden, map[string]string{"error": message})
+			return false
+		}
+	}
+	return true
+}
+
+// sameOriginJSON also requires a JSON body, which a plain form cannot send.
+func sameOriginJSON(w http.ResponseWriter, r *http.Request, message string) bool {
+	if !sameOriginOK(w, r, message) {
+		return false
+	}
+	if strings.Split(r.Header.Get("Content-Type"), ";")[0] != "application/json" {
+		writeJSON(w, http.StatusUnsupportedMediaType, map[string]string{"error": "请使用 JSON 请求"})
+		return false
+	}
+	return true
 }
 
 func withLog(next http.Handler) http.Handler {

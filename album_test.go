@@ -50,3 +50,22 @@ func TestValidAlbumID(t *testing.T) {
 		}
 	}
 }
+
+func TestGroupAlbumsAddedIsEarliestPhoto(t *testing.T) {
+	albums := groupAlbums([]photo{
+		{ID: 1, RelPath: "a/1.jpg", MtimeUnix: 30},
+		{ID: 2, RelPath: "a/2.jpg", MtimeUnix: 10},
+		{ID: 3, RelPath: "a/3.jpg", MtimeUnix: 20},
+		{ID: 4, RelPath: "b/4.jpg", MtimeUnix: 5},
+	})
+	byID := make(map[string]albumSummary)
+	for _, a := range albums {
+		byID[a.ID] = a
+	}
+	if a := byID["a"]; a.Added != 10 || a.Cover.ID != 1 {
+		t.Fatalf("album a: added %d (want earliest 10), cover %d (want newest 1)", a.Added, a.Cover.ID)
+	}
+	if b := byID["b"]; b.Added != 5 {
+		t.Fatalf("album b added %d", b.Added)
+	}
+}
