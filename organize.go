@@ -15,7 +15,7 @@ import (
 )
 
 // Album authors and models. Albums are still aggregated from photo folders on
-// every request; only the people of a folder are stored, keyed by the album id
+// photo changes; only the people of a folder are stored, keyed by the album id
 // (its full relative directory). A renamed folder leaves its people behind as
 // stale entries until they are cleaned up on the organize page.
 
@@ -151,12 +151,18 @@ func (s *store) setAlbumPeople(albums []string, author *string, models []string)
 			}
 		}
 	}
-	return tx.Commit()
+	return s.commitPeople(tx)
 }
 
 // albumPeopleMap returns the people of every album that has any, including
 // albums whose folder no longer exists.
 func (s *store) albumPeopleMap() (map[string]albumPeople, error) {
+	return s.cache.people.get(&s.cache.peopleRevision, func(uint64) (map[string]albumPeople, error) {
+		return s.loadAlbumPeople()
+	})
+}
+
+func (s *store) loadAlbumPeople() (map[string]albumPeople, error) {
 	rows, err := s.db.Query(`SELECT ap.album, p.id, p.role, p.name FROM album_people ap
 	  JOIN people p ON p.id = ap.person_id ORDER BY ap.album, ap.position, p.id`)
 	if err != nil {
@@ -235,7 +241,7 @@ func (s *store) renamePerson(id int64, name string) (personRef, bool, error) {
 	if _, err := tx.Exec(`UPDATE people SET name = ? WHERE id = ?`, name, target); err != nil {
 		return personRef{}, false, err
 	}
-	if err := tx.Commit(); err != nil {
+	if err := s.commitPeople(tx); err != nil {
 		return personRef{}, false, err
 	}
 	return personRef{ID: target, Name: name}, merged, nil
@@ -258,7 +264,7 @@ func (s *store) deletePerson(id int64) error {
 	if n, _ := res.RowsAffected(); n == 0 {
 		return errPersonNotFound
 	}
-	return tx.Commit()
+	return s.commitPeople(tx)
 }
 
 // deleteAlbumPeople removes every entry of the given albums.
@@ -273,7 +279,15 @@ func (s *store) deleteAlbumPeople(albums []string) error {
 			return err
 		}
 	}
-	return tx.Commit()
+	return s.commitPeople(tx)
+}
+
+func (s *store) commitPeople(tx *sql.Tx) error {
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	s.cache.peopleRevision.Add(1)
+	return nil
 }
 
 // withModels makes an album without models answer [] instead of null.
@@ -312,13 +326,13 @@ type peopleView struct {
 
 // currentAlbums returns the ids of the albums that have photos now.
 func (a *organizeAPI) currentAlbums() (map[string]bool, error) {
-	photos, err := a.store.listOK()
+	index, err := a.store.photoIndex()
 	if err != nil {
 		return nil, err
 	}
 	ids := make(map[string]bool)
-	for _, p := range photos {
-		ids[photoAlbumID(p.RelPath)] = true
+	for album := range index.albums {
+		ids[album] = true
 	}
 	return ids, nil
 }

@@ -2,7 +2,6 @@ package main
 
 import (
 	"path"
-	"sort"
 	"strings"
 )
 
@@ -42,47 +41,4 @@ func validAlbumID(raw string) (string, bool) {
 		return "", false
 	}
 	return clean, true
-}
-
-func groupAlbums(photos []photo) []albumSummary {
-	byID := make(map[string]*albumSummary)
-	for _, p := range photos {
-		id := photoAlbumID(p.RelPath)
-		a := byID[id]
-		if a == nil {
-			a = &albumSummary{ID: id, Name: albumDisplayName(id)}
-			byID[id] = a
-		}
-		a.Count++
-		if a.Count == 1 || p.MtimeUnix < a.Added {
-			a.Added = p.MtimeUnix
-		}
-		if a.Cover.ID == 0 || p.MtimeUnix > a.Cover.MtimeUnix || (p.MtimeUnix == a.Cover.MtimeUnix && p.ID > a.Cover.ID) {
-			a.Cover = p
-		}
-	}
-
-	out := make([]albumSummary, 0, len(byID))
-	for _, a := range byID {
-		out = append(out, *a)
-	}
-	sort.Slice(out, func(i, j int) bool {
-		ni := strings.ToLower(out[i].Name)
-		nj := strings.ToLower(out[j].Name)
-		if ni == nj {
-			return out[i].ID < out[j].ID
-		}
-		return ni < nj
-	})
-	return out
-}
-
-func filterAlbum(photos []photo, albumID string) []photo {
-	out := make([]photo, 0)
-	for _, p := range photos {
-		if photoAlbumID(p.RelPath) == albumID {
-			out = append(out, p)
-		}
-	}
-	return out
 }

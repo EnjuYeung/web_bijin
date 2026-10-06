@@ -82,8 +82,8 @@ func (s *scanner) sourceStatuses() map[string]sourceStatus {
 
 func (s *scanner) snapshot() scanState {
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	st := s.state
+	s.mu.Unlock()
 	if n, err := s.store.countOK(); err == nil {
 		st.Ready = n
 	}

@@ -29,7 +29,8 @@ func (p photo) sourceKey() string {
 }
 
 type store struct {
-	db *sql.DB
+	db    *sql.DB
+	cache queryCaches
 }
 
 func openStore(path string) (*store, error) {
@@ -69,7 +70,8 @@ CREATE TABLE IF NOT EXISTS photos (
   height INTEGER NOT NULL DEFAULT 0,
   broken INTEGER NOT NULL DEFAULT 0,
   source_version TEXT NOT NULL DEFAULT '',
-  display_path TEXT NOT NULL DEFAULT ''
+  display_path TEXT NOT NULL DEFAULT '',
+  album_path TEXT NOT NULL DEFAULT ''
 );
 DROP INDEX IF EXISTS photos_mtime;
 `); err != nil {
@@ -98,6 +100,9 @@ DROP INDEX IF EXISTS photos_mtime;
 		if err != nil {
 			return err
 		}
+	}
+	if err := s.migratePhotoQueries(); err != nil {
+		return err
 	}
 	if err := s.migrateStorages(); err != nil {
 		return err
@@ -177,18 +182,22 @@ func (s *store) upsert(p photo) (int64, error) {
 	}
 	if ok {
 		_, err = s.db.Exec(
-			`UPDATE photos SET display_path=?, size=?, mtime_unix=?, width=?, height=?, broken=?, source_version=? WHERE id=?`,
-			p.RelPath, p.Size, p.MtimeUnix, p.Width, p.Height, broken, p.SourceVersion, existing.ID,
+			`UPDATE photos SET display_path=?, size=?, mtime_unix=?, width=?, height=?, broken=?, source_version=?, album_path=? WHERE id=?`,
+			p.RelPath, p.Size, p.MtimeUnix, p.Width, p.Height, broken, p.SourceVersion, photoAlbumID(p.RelPath), existing.ID,
 		)
+		if err == nil {
+			s.photoChanged(existing, p)
+		}
 		return existing.ID, err
 	}
 	res, err := s.db.Exec(
-		`INSERT INTO photos (rel_path, display_path, size, mtime_unix, width, height, broken, source_version) VALUES (?,?,?,?,?,?,?,?)`,
-		key, p.RelPath, p.Size, p.MtimeUnix, p.Width, p.Height, broken, p.SourceVersion,
+		`INSERT INTO photos (rel_path, display_path, size, mtime_unix, width, height, broken, source_version, album_path) VALUES (?,?,?,?,?,?,?,?,?)`,
+		key, p.RelPath, p.Size, p.MtimeUnix, p.Width, p.Height, broken, p.SourceVersion, photoAlbumID(p.RelPath),
 	)
 	if err != nil {
 		return 0, err
 	}
+	s.photoChanged(photo{}, p)
 	return res.LastInsertId()
 }
 
@@ -199,9 +208,14 @@ func (s *store) maxID() (int64, error) {
 }
 
 func (s *store) deleteByID(id int64) error {
+	before, _, err := s.getByID(id)
+	if err != nil {
+		return err
+	}
 	if _, err := s.db.Exec(`DELETE FROM photos WHERE id=?`, id); err != nil {
 		return err
 	}
+	s.photoChanged(before, photo{})
 	return s.deleteWallpapers(id)
 }
 
@@ -227,6 +241,9 @@ func (s *store) deleteMissing(keep map[string]struct{}, failed map[string]bool, 
 	if err := rows.Err(); err != nil {
 		return nil, err
 	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
 	for _, p := range gone {
 		if err := s.deleteByID(p.ID); err != nil {
 			return nil, err
@@ -236,9 +253,11 @@ func (s *store) deleteMissing(keep map[string]struct{}, failed map[string]bool, 
 }
 
 func (s *store) countOK() (int, error) {
-	var n int
-	err := s.db.QueryRow(`SELECT COUNT(*) FROM photos WHERE broken=0 AND width>0 AND height>0`).Scan(&n)
-	return n, err
+	index, err := s.photoIndex()
+	if err != nil {
+		return 0, err
+	}
+	return len(index.ids), nil
 }
 
 type ownerCount struct {
@@ -250,6 +269,12 @@ type ownerCount struct {
 // ("local", "s3-<id>"). Rows reserved for an image still being processed have
 // no version yet and are not counted.
 func (s *store) countByOwner() (map[string]ownerCount, error) {
+	return s.cache.owners.get(&s.cache.sourceRevision, func(uint64) (map[string]ownerCount, error) {
+		return s.loadOwnerCounts()
+	})
+}
+
+func (s *store) loadOwnerCounts() (map[string]ownerCount, error) {
 	rows, err := s.db.Query(`SELECT rel_path, broken=0 AND width>0 AND height>0 FROM photos WHERE broken=0 OR source_version != ''`)
 	if err != nil {
 		return nil, err
@@ -269,27 +294,6 @@ func (s *store) countByOwner() (map[string]ownerCount, error) {
 			c.Broken++
 		}
 		out[keyOwner(key)] = c
-	}
-	return out, rows.Err()
-}
-
-func (s *store) listOK() ([]photo, error) {
-	rows, err := s.db.Query(`SELECT id, rel_path, display_path, size, mtime_unix, width, height, broken, source_version
-	      FROM photos
-	      WHERE broken=0 AND width>0 AND height>0`)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var out []photo
-	for rows.Next() {
-		var p photo
-		var broken int
-		if err := rows.Scan(&p.ID, &p.SourceKey, &p.RelPath, &p.Size, &p.MtimeUnix, &p.Width, &p.Height, &broken, &p.SourceVersion); err != nil {
-			return nil, err
-		}
-		p.Broken = broken != 0
-		out = append(out, p)
 	}
 	return out, rows.Err()
 }

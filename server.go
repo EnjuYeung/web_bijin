@@ -137,35 +137,29 @@ func handleList(w http.ResponseWriter, r *http.Request, st *store, sc *scanner, 
 		}
 	}
 	afterRank, afterID := parseCursor(r.URL.Query().Get("after"))
-	all, err := st.listOK()
-	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "list failed"})
-		return
-	}
 	var selectedAlbum *albumRef
+	album := ""
 	if r.URL.Query().Has("album") {
 		albumID, ok := validAlbumID(r.URL.Query().Get("album"))
 		if !ok {
 			writeJSON(w, http.StatusBadRequest, map[string]any{"error": "invalid album"})
 			return
 		}
-		all = filterAlbum(all, albumID)
+		album = albumID
 		selectedAlbum = &albumRef{ID: albumID, Name: albumDisplayName(albumID)}
 	}
-	sortByRank(all, seed)
-	photos := pageAfter(all, seed, afterRank, afterID, limit)
+	photos, total, next, err := st.photoPage(seed, album, afterRank, afterID, limit)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "list failed"})
+		return
+	}
 	out := make([]photoItem, 0, len(photos))
 	for _, p := range photos {
 		out = append(out, makePhotoItem(p, tz))
 	}
-	var next *string
-	if len(photos) == pickLimit(limit) {
-		c := formatCursor(seed, photos[len(photos)-1])
-		next = &c
-	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"photos": out,
-		"total":  len(all),
+		"total":  total,
 		"next":   next,
 		"seed":   strconv.FormatInt(seed, 10),
 		"tz":     tz,
@@ -213,7 +207,7 @@ func makePhotoItem(p photo, tz string) photoItem {
 }
 
 func handleAlbums(w http.ResponseWriter, r *http.Request, st *store, sc *scanner, tz string) {
-	all, err := st.listOK()
+	albums, err := st.albumSummaries()
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "list failed"})
 		return
@@ -232,7 +226,6 @@ func handleAlbums(w http.ResponseWriter, r *http.Request, st *store, sc *scanner
 		AddedDate string    `json:"addedDate"`
 		albumPeople
 	}
-	albums := groupAlbums(all)
 	out := make([]item, 0, len(albums))
 	for _, a := range albums {
 		added, _ := formatDateInTZ(a.Added, tz)
@@ -268,11 +261,10 @@ func handleLoginBg(w http.ResponseWriter, r *http.Request, st *store) {
 	if r.URL.Query().Get("orient") == "port" {
 		profile = "mobile-1440"
 	}
-	rows, err := st.wallpaperCandidates(wallFilter{profile: profile})
-	if err == nil && len(rows) == 0 {
-		rows, err = st.wallpaperCandidates(wallFilter{})
+	v, ok, err := st.randomWallpaper(wallFilter{profile: profile})
+	if err == nil && !ok {
+		v, ok, err = st.randomWallpaper(wallFilter{})
 	}
-	v, ok := pickWallpaper(rows)
 	if err != nil || !ok {
 		http.NotFound(w, r)
 		return

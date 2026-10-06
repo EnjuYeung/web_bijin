@@ -9,7 +9,6 @@ import (
 	"fmt"
 	"image"
 	"math"
-	"math/rand/v2"
 	"net/http"
 	"net/url"
 	"os"
@@ -206,24 +205,6 @@ func writeFileAtomic(path string, b []byte) error {
 	return os.Rename(tmp, path)
 }
 
-// pickWallpaper chooses a photo uniformly, then one of its wallpapers, so a
-// square photo with two sizes is not chosen twice as often.
-func pickWallpaper(rows []wallpaper) (wallpaper, bool) {
-	if len(rows) == 0 {
-		return wallpaper{}, false
-	}
-	var order []int64
-	byPhoto := map[int64][]wallpaper{}
-	for _, r := range rows {
-		if _, ok := byPhoto[r.PhotoID]; !ok {
-			order = append(order, r.PhotoID)
-		}
-		byPhoto[r.PhotoID] = append(byPhoto[r.PhotoID], r)
-	}
-	group := byPhoto[order[rand.IntN(len(order))]]
-	return group[rand.IntN(len(group))], true
-}
-
 // wallID is a stable UUID-shaped id of one photo version (UUIDv8 layout).
 func wallID(v wallpaper) string {
 	sum := sha256.Sum256([]byte(fmt.Sprintf("bijin-wallpaper|%d|%s", v.PhotoID, v.SourceVersion)))
@@ -311,12 +292,11 @@ func handleRandomWallpaper(w http.ResponseWriter, r *http.Request, st *store) {
 		writeJSON(w, http.StatusBadRequest, map[string]any{"error": err.Error()})
 		return
 	}
-	rows, err := st.wallpaperCandidates(f)
+	v, ok, err := st.randomWallpaper(f)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "list failed"})
 		return
 	}
-	v, ok := pickWallpaper(rows)
 	if !ok {
 		w.WriteHeader(http.StatusNoContent)
 		return
@@ -395,27 +375,6 @@ CREATE INDEX IF NOT EXISTS wallpapers_sha256 ON wallpapers(sha256);
 const wallCurrent = ` FROM wallpapers w JOIN photos p ON p.id = w.photo_id
  WHERE p.broken = 0 AND p.width > 0 AND p.height > 0 AND w.source_version = p.source_version`
 
-func (s *store) wallpaperCandidates(f wallFilter) ([]wallpaper, error) {
-	rows, err := s.db.Query(`SELECT w.photo_id, w.profile, w.source_version, w.orientation, w.width, w.height,
-	  w.bytes, w.sha256, w.color, w.file, p.width, p.height`+wallCurrent+`
-	  AND (?1 = '' OR w.orientation = ?1) AND (?2 = '' OR w.profile = ?2) AND w.width >= ?3 AND w.height >= ?4`,
-		f.orientation, f.profile, f.minW, f.minH)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var out []wallpaper
-	for rows.Next() {
-		var v wallpaper
-		if err := rows.Scan(&v.PhotoID, &v.Profile, &v.SourceVersion, &v.Orientation, &v.Width, &v.Height,
-			&v.Bytes, &v.SHA256, &v.Color, &v.File, &v.PhotoW, &v.PhotoH); err != nil {
-			return nil, err
-		}
-		out = append(out, v)
-	}
-	return out, rows.Err()
-}
-
 func (s *store) wallpaperFile(sha string) (string, bool, error) {
 	var file string
 	err := s.db.QueryRow(`SELECT w.file`+wallCurrent+` AND w.sha256 = ? LIMIT 1`, sha).Scan(&file)
@@ -459,11 +418,18 @@ func (s *store) replaceWallpapers(photoID int64, list []wallpaper) error {
 			return err
 		}
 	}
-	return tx.Commit()
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	s.cache.wallRevision.Add(1)
+	return nil
 }
 
 func (s *store) deleteWallpapers(photoID int64) error {
 	_, err := s.db.Exec(`DELETE FROM wallpapers WHERE photo_id = ?`, photoID)
+	if err == nil {
+		s.cache.wallRevision.Add(1)
+	}
 	return err
 }
 
@@ -478,17 +444,38 @@ type wallStats struct {
 }
 
 func (s *store) wallpaperStats() (wallStats, error) {
+	return s.cache.wallStats.get(&s.cache.wallRevision, func(uint64) (wallStats, error) {
+		return s.loadWallpaperStats()
+	})
+}
+
+func (s *store) loadWallpaperStats() (wallStats, error) {
 	var st wallStats
-	all, err := s.listOK()
+	tx, err := s.db.Begin()
 	if err != nil {
 		return st, err
 	}
-	for _, p := range all {
-		if wantsWallpaper(p.RelPath) {
+	defer tx.Rollback()
+	photos, err := tx.Query("SELECT display_path FROM photos WHERE " + visiblePhotos)
+	if err != nil {
+		return st, err
+	}
+	for photos.Next() {
+		var path string
+		if err := photos.Scan(&path); err != nil {
+			photos.Close()
+			return st, err
+		}
+		if wantsWallpaper(path) {
 			st.Photos++
 		}
 	}
-	rows, err := s.db.Query(`SELECT w.photo_id, w.orientation, w.bytes` + wallCurrent)
+	err = photos.Err()
+	photos.Close()
+	if err != nil {
+		return st, err
+	}
+	rows, err := tx.Query(`SELECT w.photo_id, w.orientation, w.bytes` + wallCurrent)
 	if err != nil {
 		return st, err
 	}

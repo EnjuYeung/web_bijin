@@ -176,3 +176,7 @@ npm run test:ui
 ```
 
 先完成前端构建再运行 Go 测试：`go test -tags nodynamic ./...`、`go vet -tags nodynamic ./...`。`nodynamic` 让 WebP 编码固定使用内置的纯 Go 实现，与 Docker 构建一致。`go run genphotos.go` 会往 `photos/` 写测试图片，不要在生产目录（`photos/` 是线上本地照片目录）里执行，先把代码复制到别的目录再测。测试账号仅用于回归测试，测试服务监听 `127.0.0.1:18092` / `18093`，不会连接实际对象存储。测试截图和报告在 `output/`。
+
+查询扩容测试：`go test -race -tags nodynamic ./...` 检查并发；`BIJIN_QUERY_SCALE=1 go test -tags nodynamic -run '^TestQueryScale$' -count=1 -v` 在临时 SQLite 里生成 10 万和 20 万条元数据，核对实际 HTTP 响应后测量 5 并发的冷态、热态和深分页，并记录缓存构建次数及内存。压测不生成对应容量的原图，也不连接生产桶。
+
+照片索引启动时补充 `album_path` 和有效照片部分索引。进程内缓存有效 ID、随机顺序、相册汇总、壁纸候选及统计；首次打开、数据变化或缓存淘汰时会重新构建。顺序缓存最多 8 份/32 MiB，壁纸筛选最多 16 份/16 MiB，空闲 30 分钟的条目在后续请求中清理；基础 ID 与候选元数据另外计入进程内存。原有 seed、游标、目录相册和壁纸抽取规则继续使用。

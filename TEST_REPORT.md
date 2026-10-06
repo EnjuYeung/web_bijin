@@ -1,31 +1,56 @@
-# 验收记录
+# 查询扩容验收记录
 
 ## 测试环境说明
 
-- 时间：2026-10-06 19:11:27 CST。本次把设置页「寻址方式」和上传页「保存位置」换成与相册排序同款的自绘下拉（Base UI Select），并删除不再使用的原生下拉组件；之后按用户要求清理测试与回退资源。只改了前端，接口与数据库不变。
-- 开发、构建、测试、部署全部在 netcup 完成。隔离测试在 /opt/bijin-organize-test，使用源码副本、独立照片 / SQLite / S3 fixture 和测试账号，不连接生产数据；测试结束后已删除。
-- 生产：bijin 单容器（6 核、4 GiB），镜像 bijin:local（45.2 MB）。按用户要求，上线验证后不再保留回退镜像和数据库备份。
-- 工具：Go 1.27 Alpine（nodynamic）、Node 24 Alpine（类型检查与静态导出）、Playwright 1.63.0 Noble（Chromium，另用 WebKit 即 Safari 内核复测）。
+- 时间：2026-10-06 22:16:13 CST。基于 master 的 39ff1d0 开发；新增 album_path 与两个部分索引、分页/相册/壁纸/统计缓存，保持单机、单进程和单个 SQLite 连接。没有修改前端或既有浏览器用例。
+- netcup：Debian 13、AMD EPYC 9645；Go 1.27.1 Alpine、Node 24 Alpine；Go 回归和压测容器限制 6 核/4 GiB。新构建镜像 bijin:query-test 仅用于隔离验收。
+- 本地辅助验证：macOS amd64、Go 1.27.1、Node 26.0.0、Playwright 1.63.0；Chromium 153、WebKit 26.6。
+- 数据：所有用例使用临时 SQLite、生成的照片或本机 S3 fixture；压测生成 100,000 / 200,000 条元数据与约 4/3 倍壁纸记录、1,000 本相册，不生成对应容量的原图，不连接生产桶。
+- 生产容器与生产数据库没有部署或迁移；正式启用新版本后才会执行 schema 补列和回填。隔离运行容器测试结束后已删除。
 
 ## 测试方法说明
 
-1. 浏览器：在 Chromium 中跑完整回归，并修改用例：设置页「寻址方式」与上传页「保存位置」都要求是按钮（不是原生 select），用点开再选的方式操作；另外用临时脚本截下两个下拉展开时的画面（1470 px 夜间、375 px 日间）人工查看，脚本用完即删。相册与整理部分在 WebKit 中复测。
-2. Go 全量回归（内嵌的前端变了）。
-3. 部署前给当前镜像打临时回退标签；部署后核对健康状态、日志、资源限制、原表哈希、作者 / 模特数据和未登录访问，确认无误后再清理。
+1. 先完成前端 npm ci、typecheck 和静态构建，再运行 Go 回归。netcup 最终代码运行 go test -tags nodynamic -count=1 ./... 和 go vet -tags nodynamic ./...。
+2. 新增 12 项专项验收：旧顺序与游标、字段迁移和回滚旧版后回填、实时详情、目录/损坏/删除失效、来源统计、人物变更、索引命中、计数不等待数据库、缓存并发与上限、壁纸概率和过期候选、淘汰后续页。
+3. 本地完整竞态检查通过（176.491 秒）；最终统计改动后，重新运行 query 专项及相关统计的竞态检查，通过（25.506 秒）。
+4. BIJIN_QUERY_SCALE=1 go test -tags nodynamic -run '^TestQueryScale$' -count=1 -v：真实 HTTP 入口先核对照片数量与字段、相册数量/封面及壁纸内容，再逐入口运行 5 并发、250 次请求。深分页从随机序列 90% 位置继续；检查热态前后缓存构建次数相同。
+5. 使用最终二进制运行 Chromium 全套；另运行 WebKit 非剪贴板用例，保留其工具限制的失败记录。
+6. netcup 构建完整 Docker 镜像，在 127.0.0.1:18095 的独立容器和独立目录验收登录、原图、缩略图、壁纸哈希、数据库字段/索引及重启持久化；不替换生产容器。
 
 ## 测试结果说明
 
-| 编号 | 功能、操作与预期 | 实际验证和证据 | 状态 |
-| --- | --- | --- | --- |
-| S01 | 设置页「寻址方式」为自绘下拉，选择与保存正确 | album 03：#s3-addressing 是按钮（role=combobox）；选「路径：endpoint/bucket」保存后再编辑，显示同一项；1470 px 夜间截图：实色弹层、樱粉对勾，空间不足时向上展开 | 通过 |
-| S02 | 上传页「保存位置」为自绘下拉，本地 / S3 切换与上传正确 | upload 01–05：选「本地 · 本地照片目录」和「S3 · 存储名」后上传成功、进入图库；upload 06 两种主题、窄屏宽屏下控件高度 ≥ 44 px；375 px 日间截图核对。上传开始后该下拉禁用（沿用原条件） | 通过 |
-| S03 | 不再使用原生下拉 | 源码中已无 NativeSelect / native-select，组件文件和对应焦点样式已删除；类型检查与静态导出成功 | 通过 |
-| R01 | 回归 | Chromium：19 passed（1.6m）。WebKit：相册与整理 13 项中 11 passed（含设置页 03），另 2 项用了 Chromium 专有的测试接口（CDP 触摸模拟、clipboard-write 权限），无法在 WebKit 运行，不是应用问题，在 Chromium 中通过。Go：gofmt 无输出，vet 成功，go test -tags nodynamic -count=1 ./...：ok（51.5s） | 通过 |
-| D01 | 部署 | 用原 Compose 重启约 9 s 后健康；6 核 / 4 GiB 不变；启动扫描 3,894 张，0 失败；WARN / ERROR 为 0 | 通过 |
-| D02 | 生产数据不变 | 原照片 / 存储 / 壁纸三张表的哈希与部署前一致；作者 / 模特的 21 个名字、76 条关联不变；未登录访问接口均 401，设置页跳转登录，公开壁纸 302 | 通过 |
-| C01 | 按用户要求清理 | 已删除：数据库备份目录（pre-organize / pre-import / pre-filters 三份）、镜像 bijin:pre-organize、bijin:pre-filters 和本次的临时回退 bijin:pre-selects、Playwright 测试镜像（3.55 GB）、测试工作区（1.8 GB）及服务器临时截图。只保留运行中的 bijin:local 和原有的 node / golang 基础镜像；服务仍然健康，磁盘已用由 66G 降到 61G | 通过 |
-| D03 | 真实网站登录后使用 | 用户已确认上一轮功能并要求清理；本次两个下拉的改动需要用户登录后查看 | 待用户验收 |
+| 编号 | 功能、操作与预期 | 方法与实际证据 | 状态 |
+|---|---|---|---|
+| Q01 | 启动与旧库迁移：历史目录正确，新/旧版切换后能补齐空字段 | TestQueryMigrationBackfillsDirectoriesAndRollbackWrites；根目录、中文目录、旧版漏写新列均正确 | 通过 |
+| Q02 | 瀑布流：固定 seed 与旧实现一致，分页不重复遗漏、淘汰后继续 | TestQueryPagesPreserveLegacyOrder、TestQueryOrderEvictionRebuildsSameCursor，含负 seed 与 int64 上界 | 通过 |
+| Q03 | 并发变化：详情实时，损坏/移目录/删除不返回旧候选 | TestQueryVisibleScopeDetailsAndInvalidation、TestQueryPageSkipsStaleCandidatesAndFillsPage；跳过后填满本页并推进游标 | 通过 |
+| Q04 | 相册与人物：数量、最早时间、最新封面、关联正确 | TestQueryAlbumSummaryAndPeopleInvalidation；人物变更不重建照片汇总，删除封面后正确替换 | 通过 |
+| Q05 | 壁纸：均匀按照片抽取，规格/尺寸过滤和版本校验正确 | 9,000 次抽样，3 张照片各选中次数落在 2,600–3,400；方图不获双倍权重；过期候选不返回 | 通过 |
+| Q06 | 缓存：有容量限制、不重复构建，不发布过期版本 | TestQueryCachesSingleBuildStalePublishAndLimits、并发读写；热计数在唯一 DB 连接被占用时立即返回 | 通过 |
+| Q07 | 设置统计：待处理不算坏图，损坏与修复后刷新 | TestQuerySourceCountsPendingBrokenAndRecovered；壁纸统计的两个读取共用短读事务，竞态通过 | 通过 |
+| Q08 | 查询计划：ID 和相册查询命中目标索引 | TestQueryPlansUseIndexes 验证 photos_visible_id、photos_visible_album_time 和 INTEGER PRIMARY KEY | 通过 |
+| Q09 | Go 回归与构建 | 共 106 个测试定义；常规回归中 105 个执行、1 个显式压测跳过；随后压测独立执行通过。netcup 回归 52.945 秒，vet 通过，Docker 镜像构建成功 | 通过 |
+| Q10 | Chromium 实际操作：登录、瀑布流/大图、相册整理、设置、本地/S3 上传 | 最终二进制 19/19 通过，92.975 秒；涵盖异常输入、重试、响应式与两种主题 | 通过 |
+| Q11 | WebKit 回归 | 18 项执行，17 项通过；第 06 项在 CDP 手势调用处失败，第 07 项剪贴板按工具适用范围未执行，详见下文 | 部分验证 |
+| Q12 | 隔离容器运行与重启持久化 | private /api/photos=401；登录后 1 张照片/1 本相册；原图 23,395 B、缩略图 5,275 B、壁纸 2,680 B；原图逐字节一致、壁纸 SHA-256 一致；重启 ID 与 Cookie 持续有效，album_path 与索引存在 | 通过 |
+
+5 并发热态 HTTP 的 P95（同机内部请求，ms）：
+
+| 元数据条数 | 照片首段 | 相册列表 | 随机壁纸 JSON | 90% 位置深分页 |
+|---:|---:|---:|---:|---:|
+| 100,000 | 6.148 | 9.603 | 3.073 | 6.004 |
+| 200,000 | 5.895 | 11.079 | 2.976 | 6.048 |
+
+冷态首次构建耗时（ms）：100,000 条照片 167.4、相册 47.8、壁纸 366.5；200,000 条照片 347.1、相册 67.5、壁纸 686.9。首次打开新 seed、失效或淘汰后仍有构建成本，不能以热态数据代替冷态。
+
+内存：100,000 条保留 Go 堆 15.00 MiB，200,000 条 28.67 MiB；200,000 条测试进程 RSS 105,164 KiB（约 102.7 MiB），峰值 109,640 KiB（约 107.1 MiB）。不是生产空闲内存，也不含实际大图下载/解码/编码时的峰值。
+
+WebKit 限制：现有 album.spec.ts 第 06 项使用 browserContext.newCDPSession / Input.dispatchTouchEvent，WebKit 报 CDP session is only available in Chromium；书签、关闭、浏览器前进后退的前置断言已通过，手势步骤未验证。第 07 项使用 Chromium 的剪贴板权限而未执行。原前端和原用例均未修改；Chromium 中对应两项通过。不能把这两项记为 WebKit 通过。
+
+证据：隔离 netcup 的 go-final.log、docker-build.log、runtime-smoke.json/log；本地 output/go-race.log、query-race-final.log、query-test.log、ui-chromium-final.json、ui-webkit-final.json。测试日志为临时产物，不提交源代码仓库；核心命令、结果和限制保存在本报告中。
 
 ## 测试结论说明
 
-设置页和上传页的下拉已换成与界面一致的自绘样式并部署生产，数据和配置没有变化。至此项目里不再有弹出系统菜单的原生下拉。测试工作区、回退镜像和数据库备份都已按要求清理；以后再改动时会重新搭建隔离测试环境。
+查询改动通过 Go 回归、专项与竞态、Chromium 19 项、WebKit 17 个适用项、10 万/20 万元数据压测及隔离容器实际运行与重启验收。热态 P95 均低于预定 100 ms 目标，后段翻页未随分页位置增加成本，热请求没有重建全量索引/汇总。
+
+WebKit 的 CDP 手势和剪贴板两项未完整验证；真实手机 Safari 手势、公网/CDN 传输、400 GiB 原图导入与编码吞吐不在本次已验证范围。代码和文档按要求提交 master 并推送 Git；生产部署留给启用新版本时执行。

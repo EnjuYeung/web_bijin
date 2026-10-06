@@ -1,7 +1,6 @@
 package main
 
 import (
-	"sort"
 	"strconv"
 	"strings"
 )
@@ -13,39 +12,6 @@ func photoRank(seed, id int64) uint64 {
 	h *= 0x94d049bb133111eb
 	h ^= h >> 31
 	return h
-}
-
-func sortByRank(photos []photo, seed int64) {
-	sort.SliceStable(photos, func(i, j int) bool {
-		ri, rj := photoRank(seed, photos[i].ID), photoRank(seed, photos[j].ID)
-		if ri != rj {
-			return ri < rj
-		}
-		return photos[i].ID < photos[j].ID
-	})
-}
-
-func pageAfter(photos []photo, seed int64, afterRank uint64, afterID int64, limit int) []photo {
-	limit = pickLimit(limit)
-	start := 0
-	if afterID > 0 {
-		start = len(photos)
-		for i, p := range photos {
-			r := photoRank(seed, p.ID)
-			if r > afterRank || (r == afterRank && p.ID > afterID) {
-				start = i
-				break
-			}
-		}
-	}
-	if start >= len(photos) {
-		return nil
-	}
-	end := start + limit
-	if end > len(photos) {
-		end = len(photos)
-	}
-	return photos[start:end]
 }
 
 func parseCursor(after string) (rank uint64, id int64) {
