@@ -47,7 +47,7 @@
 
 WebKit 限制：现有 album.spec.ts 第 06 项使用 browserContext.newCDPSession / Input.dispatchTouchEvent，WebKit 报 CDP session is only available in Chromium；书签、关闭、浏览器前进后退的前置断言已通过，手势步骤未验证。第 07 项使用 Chromium 的剪贴板权限而未执行。原前端和原用例均未修改；Chromium 中对应两项通过。不能把这两项记为 WebKit 通过。
 
-证据：隔离 netcup 的 go-final.log、docker-build.log、runtime-smoke.json/log；本地 output/go-race.log、query-race-final.log、query-test.log、ui-chromium-final.json、ui-webkit-final.json。测试日志为临时产物，不提交源代码仓库；核心命令、结果和限制保存在本报告中。
+证据：隔离 netcup 的 go-final.log、docker-build.log、runtime-smoke.json/log；本地 output/go-race.log、query-race-final.log、query-test.log、ui-chromium-final.json、ui-webkit-final.json。测试日志为临时产物，已按用户本次清理要求删除；核心命令、结果和限制保存在本报告中。
 
 ## 同条件旧版/新版性能对照与生产部署（2026-10-06 22:46:49 CST）
 
@@ -89,9 +89,22 @@ P95 热态 HTTP 时延（ms；倍数为旧时延÷新时延，并非吞吐量上
 | Q16 | 本机与公网 HTTPS 能继续登录、浏览、使用壁纸；原登录保持 | 两处升级前签发的 Cookie 均可继续请求；固定 seed 首两页与 48 本相册内容哈希一致。匿名 5 个私有入口=401；无效相册/壁纸参数=400；无候选壁纸=204；页面与静态 JS 成功读取 | 通过 |
 | Q17 | 实际图片字节正确、公开壁纸完整 | 原图 ID 5012：202,807 B，缩略图 45,769 B，升级前后哈希相同；本机和公网随机壁纸均实际下载、RIFF/WEBP 与 bytes/SHA-256 一致，匿名重定向、CORS 和 immutable 缓存头正确 | 通过 |
 
-备份与回退：/opt/bijin-query-release/rollback/（目录 0700，数据库、配置和会话文件 0600）；原镜像保留为 bijin:rollback-query-20261006。只保留这次部署所需回退数据，没有复制原图。生产验收期间未写入测试照片或修改相册人物关联。
+部署时曾在 /opt/bijin-query-release/rollback/ 保存 owner-only 的数据库、配置和会话备份，并将原镜像标记为 bijin:rollback-query-20261006；这些临时回退资源现已按用户要求全部删除。生产验收期间未写入测试照片或修改相册人物关联。
 
-本次证据：output/production-query/matched-old.log、matched-new.log、build.log、before-db.json、probe-before.json、probe-after.json、deploy.log。日志和兼容压测脚本保存在本地临时产物中，汇总实测数据另保存为用户输出的 web_bijin-query-performance.json。
+本次证据：output/production-query/matched-old.log、matched-new.log、build.log、before-db.json、probe-before.json、probe-after.json、deploy.log。上述原始日志及兼容压测临时脚本现已按用户要求删除；本报告保留实测方法与结果，汇总数据仍保存在用户输出的 web_bijin-query-performance.json。
+
+## 本次开发资源清理（2026-10-06 23:21:58 CST）
+
+- 按用户要求删除 /opt/bijin-query-release（含 SQLite、.env、Compose、session.key 的备份及压测/部署日志）；此前已删除的隔离压测源码、Go 缓存和容器未再生成。生产 data、photos、.env 和会话密钥保留。
+- 删除 bijin:rollback-query-20261006 与重复标签 bijin:query-7b1a0ff，以及无容器使用的 node:24-alpine、golang:1.27-alpine、alpine:3.22。Docker 仅余三个运行服务所用镜像：bijin:local、rustfs/rustfs:latest、1panel/openresty:1.31.1.1-2-4-noble。
+- 按构建记录 ID 删除 bijin 的 74 条构建缓存，Docker 报告回收 5.542 GB；其他项目构建缓存逐 ID 核对保留。清理文件、镜像和缓存期间，netcup 可用空间合计增加约 6.19 GiB。
+- 删除服务器和本地源码目录中的 node_modules、.next、静态构建产物及测试输出；删除本地 Playwright 浏览器、临时 Go SDK/模块缓存/构建缓存、fixture 照片、临时数据库、截图、日志、二进制及辅助脚本。20 份 Go 测试源码、3 份浏览器 spec 和汇总报告保留，源码文件无改动。
+
+| 编号 | 操作与预期 | 实际证据 | 状态 |
+|---|---|---|---|
+| Q18 | 删除临时资源后生产可正常使用且数据完整 | 清理前后五张业务表全字段哈希相同，session.key 哈希相同；镜像 ID、挂载与运行容器保持；SQLite integrity_check=ok；公网登录、40 张照片页、48 本相册及公开壁纸真实字节/SHA-256 通过；ready=3,894、failed=0，WARN=0、ERROR=0 | 通过 |
+
+清理仅删除生成的测试及构建产物，未改动应用行为；本次未重新运行完整 Go/浏览器套件，既有开发验收结论与工具限制仍如上记录。
 
 ## 测试结论说明
 
