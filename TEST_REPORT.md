@@ -1,113 +1,52 @@
-# 查询扩容与生产部署验收记录
+# 登录两步验证验收记录
 
 ## 测试环境说明
 
-- 时间：2026-10-06 22:16:13 CST。基于 master 的 39ff1d0 开发；新增 album_path 与两个部分索引、分页/相册/壁纸/统计缓存，保持单机、单进程和单个 SQLite 连接。没有修改前端或既有浏览器用例。
-- netcup：Debian 13、AMD EPYC 9645；Go 1.27.1 Alpine、Node 24 Alpine；Go 回归和压测容器限制 6 核/4 GiB。新构建镜像 bijin:query-test 仅用于隔离验收。
-- 本地辅助验证：macOS amd64、Go 1.27.1、Node 26.0.0、Playwright 1.63.0；Chromium 153、WebKit 26.6。
-- 数据：所有用例使用临时 SQLite、生成的照片或本机 S3 fixture；压测生成 100,000 / 200,000 条元数据与约 4/3 倍壁纸记录、1,000 本相册，不生成对应容量的原图，不连接生产桶。
-- 开发阶段的隔离验收已完成；本次于 2026-10-06 22:46:49 CST 部署生产并完成真实数据库迁移、公网与本机验收，详情见下方生产部署记录。
+- 时间：2026-10-08 22:40–23:12 CST。代码 415fb48（基于 master 的 a767b02），新增登录两步验证（动态码）、按 IP 输错锁定、`bijin two-step` 子命令和 `scripts/two-step.sh`。
+- netcup：Debian 13.7、Docker 29.8.1、Compose v5.5.1；Go 回归在 golang:1.27-alpine（go1.27.1 linux/amd64）容器里运行，限 6 核/4 GiB；目录 `/root/bijin-2fa-work`，与生产目录分开。
+- 本地：macOS 15.8.1 x86_64、Node 26.0.0、Playwright 1.63.0、Chromium 153.0.8010.12；本机没有 Go，浏览器测试用的 darwin/amd64 二进制在 netcup 上交叉编译后取回。
+- 一键脚本的端到端测试使用独立容器 `bijin-2fa-e2e`（镜像 bijin:two-step-test，127.0.0.1:18096，独立 `.env`、数据目录和测试账号），不碰生产容器。
+- 测试密钥为 RFC 6238 公开样例密钥或测试中临时生成的密钥；生产环境尚未写入密钥。
 
 ## 测试方法说明
 
-1. 先完成前端 npm ci、typecheck 和静态构建，再运行 Go 回归。netcup 最终代码运行 go test -tags nodynamic -count=1 ./... 和 go vet -tags nodynamic ./...。
-2. 新增 12 项专项验收：旧顺序与游标、字段迁移和回滚旧版后回填、实时详情、目录/损坏/删除失效、来源统计、人物变更、索引命中、计数不等待数据库、缓存并发与上限、壁纸概率和过期候选、淘汰后续页。
-3. 本地完整竞态检查通过（176.491 秒）；最终统计改动后，重新运行 query 专项及相关统计的竞态检查，通过（25.506 秒）。
-4. BIJIN_QUERY_SCALE=1 go test -tags nodynamic -run '^TestQueryScale$' -count=1 -v：真实 HTTP 入口先核对照片数量与字段、相册数量/封面及壁纸内容，再逐入口运行 5 并发、250 次请求。深分页从随机序列 90% 位置继续；检查热态前后缓存构建次数相同。
-5. 使用最终二进制运行 Chromium 全套；另运行 WebKit 非剪贴板用例，保留其工具限制的失败记录。
-6. netcup 构建完整 Docker 镜像，在 127.0.0.1:18095 的独立容器和独立目录验收登录、原图、缩略图、壁纸哈希、数据库字段/索引及重启持久化；不替换生产容器。
+1. 前端 `npm ci`、`npm run typecheck`、`npm run build`；Go 端 `gofmt -l`、`go vet -tags nodynamic ./...`、`go test -tags nodynamic -count=1 ./...`，再对两步验证相关用例单独跑 `-v` 和 `-race`。
+2. 终端二维码：把 `bijin two-step` 的真实终端输出逐格还原成 PNG，用 macOS CoreImage 的二维码识别器解码，核对链接和下方文字密钥一致。
+3. Playwright：同一个二进制起两个服务（18092 只用密码，18094 开启两步验证），跑完整 Chromium 回归和新增 4 项。
+4. 端到端：在 pty 中像人一样运行 `sh scripts/two-step.sh on/off` 并输入动态码，对隔离容器核对 `.env`、`session.key`、登录与 Cookie。
+5. 生产部署后通过公网域名验证：只用密码登录、公开接口、经 OpenResty 的按 IP 锁定，以及浏览器里的登录页。
 
 ## 测试结果说明
 
 | 编号 | 功能、操作与预期 | 方法与实际证据 | 状态 |
 |---|---|---|---|
-| Q01 | 启动与旧库迁移：历史目录正确，新/旧版切换后能补齐空字段 | TestQueryMigrationBackfillsDirectoriesAndRollbackWrites；根目录、中文目录、旧版漏写新列均正确 | 通过 |
-| Q02 | 瀑布流：固定 seed 与旧实现一致，分页不重复遗漏、淘汰后继续 | TestQueryPagesPreserveLegacyOrder、TestQueryOrderEvictionRebuildsSameCursor，含负 seed 与 int64 上界 | 通过 |
-| Q03 | 并发变化：详情实时，损坏/移目录/删除不返回旧候选 | TestQueryVisibleScopeDetailsAndInvalidation、TestQueryPageSkipsStaleCandidatesAndFillsPage；跳过后填满本页并推进游标 | 通过 |
-| Q04 | 相册与人物：数量、最早时间、最新封面、关联正确 | TestQueryAlbumSummaryAndPeopleInvalidation；人物变更不重建照片汇总，删除封面后正确替换 | 通过 |
-| Q05 | 壁纸：均匀按照片抽取，规格/尺寸过滤和版本校验正确 | 9,000 次抽样，3 张照片各选中次数落在 2,600–3,400；方图不获双倍权重；过期候选不返回 | 通过 |
-| Q06 | 缓存：有容量限制、不重复构建，不发布过期版本 | TestQueryCachesSingleBuildStalePublishAndLimits、并发读写；热计数在唯一 DB 连接被占用时立即返回 | 通过 |
-| Q07 | 设置统计：待处理不算坏图，损坏与修复后刷新 | TestQuerySourceCountsPendingBrokenAndRecovered；壁纸统计的两个读取共用短读事务，竞态通过 | 通过 |
-| Q08 | 查询计划：ID 和相册查询命中目标索引 | TestQueryPlansUseIndexes 验证 photos_visible_id、photos_visible_album_time 和 INTEGER PRIMARY KEY | 通过 |
-| Q09 | Go 回归与构建 | 共 106 个测试定义；常规回归中 105 个执行、1 个显式压测跳过；随后压测独立执行通过。netcup 回归 52.945 秒，vet 通过，Docker 镜像构建成功 | 通过 |
-| Q10 | Chromium 实际操作：登录、瀑布流/大图、相册整理、设置、本地/S3 上传 | 最终二进制 19/19 通过，92.975 秒；涵盖异常输入、重试、响应式与两种主题 | 通过 |
-| Q11 | WebKit 回归 | 18 项执行，17 项通过；第 06 项在 CDP 手势调用处失败，第 07 项剪贴板按工具适用范围未执行，详见下文 | 部分验证 |
-| Q12 | 隔离容器运行与重启持久化 | private /api/photos=401；登录后 1 张照片/1 本相册；原图 23,395 B、缩略图 5,275 B、壁纸 2,680 B；原图逐字节一致、壁纸 SHA-256 一致；重启 ID 与 Cookie 持续有效，album_path 与索引存在 | 通过 |
-
-5 并发热态 HTTP 的 P95（同机内部请求，ms）：
-
-| 元数据条数 | 照片首段 | 相册列表 | 随机壁纸 JSON | 90% 位置深分页 |
-|---:|---:|---:|---:|---:|
-| 100,000 | 6.148 | 9.603 | 3.073 | 6.004 |
-| 200,000 | 5.895 | 11.079 | 2.976 | 6.048 |
-
-冷态首次构建耗时（ms）：100,000 条照片 167.4、相册 47.8、壁纸 366.5；200,000 条照片 347.1、相册 67.5、壁纸 686.9。首次打开新 seed、失效或淘汰后仍有构建成本，不能以热态数据代替冷态。
-
-内存：100,000 条保留 Go 堆 15.00 MiB，200,000 条 28.67 MiB；200,000 条测试进程 RSS 105,164 KiB（约 102.7 MiB），峰值 109,640 KiB（约 107.1 MiB）。不是生产空闲内存，也不含实际大图下载/解码/编码时的峰值。
-
-WebKit 限制：现有 album.spec.ts 第 06 项使用 browserContext.newCDPSession / Input.dispatchTouchEvent，WebKit 报 CDP session is only available in Chromium；书签、关闭、浏览器前进后退的前置断言已通过，手势步骤未验证。第 07 项使用 Chromium 的剪贴板权限而未执行。原前端和原用例均未修改；Chromium 中对应两项通过。不能把这两项记为 WebKit 通过。
-
-证据：隔离 netcup 的 go-final.log、docker-build.log、runtime-smoke.json/log；本地 output/go-race.log、query-race-final.log、query-test.log、ui-chromium-final.json、ui-webkit-final.json。测试日志为临时产物，已按用户本次清理要求删除；核心命令、结果和限制保存在本报告中。
-
-## 同条件旧版/新版性能对照与生产部署（2026-10-06 22:46:49 CST）
-
-应用版本：旧版 39ff1d0825fa016b03b7c5112954d2ce72d16607，新版 7b1a0ff2102ece48fc8174a5bf9063ffd75bd005。两份源码用 git archive 导出到隔离目录，使用同一个兼容测试脚本（SHA-256 d2b56bcee9b062550595fb0aacd0bd317bfd4e82a99f830be409262bdea8c54f），没有切换生产分支或改动应用源码。
-
-方法：相同 netcup 主机、Go 1.27.1、Alpine 3.22、6 CPU/4 GiB 限额；旧版、新版顺序运行，数据均为 100,000/200,000 张、1,000 本相册、约 4/3 倍壁纸记录。每张 size 为 5 MiB，约对应 488.3/976.6 GiB 原图容量，但只生成元数据。真实 HTTP handler、相同 seed=42、40 张/页，深分页从随机序列 90% 位置继续。先检查响应内容和数量，随后每个入口 5 个并发客户端各 20 次，共 100 次请求；测量包含响应体读完的时延。每次数据库迁移采用对应版本的 schema。旧版也先访问一次，避免将其冷态与新版热态混比；生产服务保持运行。
-
-P95 热态 HTTP 时延（ms；倍数为旧时延÷新时延，并非吞吐量上限）：
-
-| 元数据条数 | 入口 | 旧版 | 新版 | 时延比 | 时延降低 |
-|---:|---|---:|---:|---:|---:|
-| 100,000 | 照片首段 | 1890.931 | 10.402 | 181.8 倍 | 99.45% |
-| 100,000 | 相册列表 | 2202.283 | 12.630 | 174.4 倍 | 99.43% |
-| 100,000 | 随机壁纸 JSON | 7601.040 | 3.039 | 2501.4 倍 | 99.96% |
-| 100,000 | 90% 位置深分页 | 2250.417 | 8.742 | 257.4 倍 | 99.61% |
-| 200,000 | 照片首段 | 3754.566 | 8.891 | 422.3 倍 | 99.76% |
-| 200,000 | 相册列表 | 4706.406 | 12.050 | 390.6 倍 | 99.74% |
-| 200,000 | 随机壁纸 JSON | 14253.268 | 2.661 | 5357.1 倍 | 99.98% |
-| 200,000 | 90% 位置深分页 | 4162.765 | 6.705 | 620.9 倍 | 99.84% |
-
-首次查询（单次实测，包含首次缓存构建，ms）：
-
-| 元数据条数 | 入口 | 旧版 | 新版 | 时延比 |
-|---:|---|---:|---:|---:|
-| 100,000 | 照片首段 | 482.522 | 170.274 | 2.83 倍 |
-| 100,000 | 相册列表 | 328.162 | 58.435 | 5.62 倍 |
-| 100,000 | 随机壁纸 JSON | 723.995 | 398.853 | 1.82 倍 |
-| 200,000 | 照片首段 | 1099.079 | 368.925 | 2.98 倍 |
-| 200,000 | 相册列表 | 618.802 | 70.009 | 8.84 倍 |
-| 200,000 | 随机壁纸 JSON | 1422.417 | 767.486 | 1.85 倍 |
-
-这是同机隔离 API 对照，不包含公网延迟、CDN、原图下载、磁盘容量占满和图片编码。100 次样本的 P95 是近似值；新 seed、数据变更或缓存淘汰会重新构建，不能承诺每次打开页面均有热态倍数。当前生产图库为 3,894 张，体感也受图片传输影响。
-
-| 编号 | 操作与预期 | 实际证据 | 状态 |
-|---|---|---|---|
-| Q13 | 同数据、同限额比较旧版/新版，响应业务内容正确 | 两版 TestMatchedQueryScale 的 10 万/20 万场景均 PASS；每种规模 4 个热态入口与 3 个首次入口均有记录 | 通过 |
-| Q14 | 升级前在线备份，迁移不改已有业务数据 | SQLite backup 与 integrity_check=ok；升级后 5 张表原有列逐行哈希一致：photos=3,894、storages=1、people=21、album_people=76、wallpapers=3,939；album_path 回填错误=0、两个部分索引存在 | 通过 |
-| Q15 | 按现有 Compose 部署，保持配置/挂载/资源限制 | 镜像 sha256:5d7a3c375733473d4649d29aed3d9c8a78846609db15275d67a3b2e2569f6eda；docker compose up -d --no-build；环境变量、挂载、6 CPU/4 GiB 限额与原容器一致，Docker healthy，首轮扫描 3,894 张、0 失败；启动及验收日志 WARN=0、ERROR=0 | 通过 |
-| Q16 | 本机与公网 HTTPS 能继续登录、浏览、使用壁纸；原登录保持 | 两处升级前签发的 Cookie 均可继续请求；固定 seed 首两页与 48 本相册内容哈希一致。匿名 5 个私有入口=401；无效相册/壁纸参数=400；无候选壁纸=204；页面与静态 JS 成功读取 | 通过 |
-| Q17 | 实际图片字节正确、公开壁纸完整 | 原图 ID 5012：202,807 B，缩略图 45,769 B，升级前后哈希相同；本机和公网随机壁纸均实际下载、RIFF/WEBP 与 bytes/SHA-256 一致，匿名重定向、CORS 和 immutable 缓存头正确 | 通过 |
-
-部署时曾在 /opt/bijin-query-release/rollback/ 保存 owner-only 的数据库、配置和会话备份，并将原镜像标记为 bijin:rollback-query-20261006；这些临时回退资源现已按用户要求全部删除。生产验收期间未写入测试照片或修改相册人物关联。
-
-本次证据：output/production-query/matched-old.log、matched-new.log、build.log、before-db.json、probe-before.json、probe-after.json、deploy.log。上述原始日志及兼容压测临时脚本现已按用户要求删除；本报告保留实测方法与结果，汇总数据仍保存在用户输出的 web_bijin-query-performance.json。
-
-## 本次开发资源清理（2026-10-06 23:21:58 CST）
-
-- 按用户要求删除 /opt/bijin-query-release（含 SQLite、.env、Compose、session.key 的备份及压测/部署日志）；此前已删除的隔离压测源码、Go 缓存和容器未再生成。生产 data、photos、.env 和会话密钥保留。
-- 删除 bijin:rollback-query-20261006 与重复标签 bijin:query-7b1a0ff，以及无容器使用的 node:24-alpine、golang:1.27-alpine、alpine:3.22。Docker 仅余三个运行服务所用镜像：bijin:local、rustfs/rustfs:latest、1panel/openresty:1.31.1.1-2-4-noble。
-- 按构建记录 ID 删除 bijin 的 74 条构建缓存，Docker 报告回收 5.542 GB；其他项目构建缓存逐 ID 核对保留。清理文件、镜像和缓存期间，netcup 可用空间合计增加约 6.19 GiB。
-- 删除服务器和本地源码目录中的 node_modules、.next、静态构建产物及测试输出；删除本地 Playwright 浏览器、临时 Go SDK/模块缓存/构建缓存、fixture 照片、临时数据库、截图、日志、二进制及辅助脚本。20 份 Go 测试源码、3 份浏览器 spec 和汇总报告保留，源码文件无改动。
-
-| 编号 | 操作与预期 | 实际证据 | 状态 |
-|---|---|---|---|
-| Q18 | 删除临时资源后生产可正常使用且数据完整 | 清理前后五张业务表全字段哈希相同，session.key 哈希相同；镜像 ID、挂载与运行容器保持；SQLite integrity_check=ok；公网登录、40 张照片页、48 本相册及公开壁纸真实字节/SHA-256 通过；ready=3,894、failed=0，WARN=0、ERROR=0 | 通过 |
-
-清理仅删除生成的测试及构建产物，未改动应用行为；本次未重新运行完整 Go/浏览器套件，既有开发验收结论与工具限制仍如上记录。
+| T01 | 安装与构建 | typecheck 无错误；静态导出 4 个路由；gofmt 无输出（首次发现 config.go 对齐问题，已修正）；vet 通过；Docker 镜像 68 秒构建完成，45.4 MB | 通过 |
+| T02 | 动态码算法与 RFC 6238 一致 | TestStepCodeMatchesRFC6238：官方 SHA-1 样例 6 个时间点（59 → 287082 等）全部一致 | 通过 |
+| T03 | 手机时间偏差 ±30 秒可用，±60 秒拒绝；带空格可用，非 6 位数字拒绝 | TestCodeStepAllowsOneStepOfClockDrift | 通过 |
+| T04 | 密钥格式：App 风格小写带空格、带填充可用；过短、非法字符拒绝；格式不对时拒绝启动 | TestParseTwoStepSecret、TestLoadConfigTwoStepSecret；端到端 E5：容器反复重启，日志 `AUTH_TWO_STEP_SECRET must be base32 text of at least 26 characters` | 通过 |
+| T05 | 开启后必须输入正确动态码；同一个码只能用一次，下一个码可用 | TestTwoStepLoginNeedsFreshCode；Playwright 22、23：错码提示「用户名、密码或动态码不对」，用过的码被拒，下一个码进入相册（58 张） | 通过 |
+| T06 | 同一 IP 连续输错 5 次锁 15 分钟，锁定中输对也拒绝且不延长；别的 IP 不受影响；成功或 15 分钟无失败清零；只用密码时同样锁定；表单登录跳到 `?err=locked` | TestLoginLockoutPerIP（Retry-After 900）、TestLoginFailCountResets、TestPasswordOnlyLoginIgnoresCode、TestFormLoginLockedRedirect；Playwright 24；端到端 E6 | 通过 |
+| T07 | 部署（无密钥）不让人重新登录；开启、更换让旧登录失效；关闭后开启前的旧 Cookie 也不复活 | TestTwoStepSessionsSignOut；端到端 E2、E4：开启后旧 Cookie 401，关闭后开启前 Cookie 与开启期间 Cookie 都 401，session.key 每次更换 | 通过 |
+| T08 | 登录页：只用密码时没有动态码框；开启时显示必填动态码框（one-time-code、数字键盘），桌面和 390 px 手机不横向溢出 | Playwright 21、22 及截图 two-step-login-desktop/mobile、two-step-locked；TestLoginOptions（`no-store`） | 通过 |
+| T09 | 开启命令：二维码可被识别；输错可重试；3 次不对或没有输入则什么都不改 | TestTwoStepSetupConfirmsBeforePrinting、TestOtpauthURI、TestTerminalQRDrawsEveryModule；CoreImage 解码得到 `otpauth://totp/bijin:juen?algorithm=SHA1&digits=6&issuer=bijin&period=30&secret=…`，与文字密钥一致；端到端 E3：退出码 1、`.env` 不变、容器未重启、旧 Cookie 仍有效 | 通过 |
+| T10 | 一键脚本 on/off | 端到端 9/9：先输错再输对后开启，`.env` 只多一行且等于显示的密钥，其余行和 0600 权限不变；off 删除密钥并恢复只用密码；off 能救回格式错误的密钥 | 通过 |
+| T11 | Go 回归 | 121 个测试定义，常规回归 120 个执行、1 个显式压测（TestQueryScale）跳过；`ok bijin 51.855s`；两步验证相关 23 个用例逐个 PASS；相关用例 `-race` 通过（1.682 秒） | 通过 |
+| T12 | 浏览器回归 | Chromium 23/23 通过（原有 19 项 + 新增 4 项），2.1 分钟 | 通过 |
+| T13 | 生产部署 | 415fb48 部署 7 秒，healthy；日志 `twoStep=false`，无 WARN/ERROR；session.key 哈希部署前后都是 b973b22db1ca（已登录设备不受影响） | 通过 |
+| T14 | 生产公网验证 | `/api/login-options` → `{"twoStep":false}`、`no-store`；未登录 `/api/photos`、`/original/1` → 401；只用密码登录 200，照片 3,937 张、相册 49 本；随机壁纸 JSON 200；浏览器打开登录页只有「用户名」「密码」 | 通过 |
+| T15 | 生产经 OpenResty 按 IP 锁定 | 从 netcup 自身经公网域名连续输错：401×5 后 429、Retry-After 900；同时从本机输错一次仍是 401。说明 OpenResty 传入的是访客真实 IP，锁定互不影响 | 通过 |
+| T16 | 生产开启两步验证后的真实登录 | 只有用户手机上有动态码，需用户运行 `scripts/two-step.sh on` 后自己登录确认 | 待用户验证 |
 
 ## 测试结论说明
 
-查询改动通过 Go 回归、专项与竞态、Chromium 19 项、WebKit 17 个适用项、10 万/20 万元数据压测及隔离容器实际运行与重启验收。热态 P95 均低于预定 100 ms 目标，后段翻页未随分页位置增加成本，热请求没有重建全量索引/汇总。
+两步验证、按 IP 输错锁定、开启/关闭命令和登录页的全部自动化测试与端到端测试通过，已部署生产。部署后生产仍是只用密码登录，行为与之前一致，已登录的设备没有被登出。
 
-WebKit 的 CDP 手势和剪贴板两项未完整验证；真实手机 Safari 手势、公网/CDN 传输吞吐、400 GiB 原图导入与编码吞吐不在本次已验证范围。应用 7b1a0ff 已部署生产，正式数据库迁移和本机/公网核心流程验证通过；代码与部署记录按要求直接提交 master 并推送 Git。
+未测试 / 限制：
+
+- 生产环境开启两步验证、用真实手机扫码并登录（T16）由用户完成。密钥只出现在用户自己的终端里。
+- 本次只跑了 Chromium，没有跑 WebKit / Safari。登录页只是多了一个普通输入框，但没有在 Safari 上实测。
+- 二维码是在终端输出还原的图片上用 macOS 识别器解码的，没有用 1Password 或手机摄像头实拍终端屏幕。
+- 计数只在内存：重启 bijin 会清零锁定和「用过的码」记录，重启后 90 秒内刚用过的码理论上能再用一次。
+- 验证过程中有 1 次生产登录失败是测试脚本的错误：`.env` 的值带引号，脚本没去掉引号就发出请求。它只计入 netcup 自身 IP，随后的成功登录已清零；锁定探测又把 netcup 自身 IP 锁了 15 分钟，不影响其他访客。
+
+证据：Go 测试输出、端到端 9 项结果、Playwright 列表和三张截图（`output/two-step-*.png`，本地临时文件，不入库）、生产命令输出。核心命令和结果都记录在本报告中。
