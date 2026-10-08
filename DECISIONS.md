@@ -283,3 +283,8 @@ Go 标准库和 `x/image` 只能解码 WebP。选 `github.com/gen2brain/webp`：
 - 每次已提交照片、壁纸或人物变化更新对应版本，覆盖上传、扫描、通知、删除和部分完成的复合操作。有效数量、来源统计和壁纸统计复用缓存；壁纸统计的两个读取共用一个短读事务。
 - 删除正式程序里未使用的旧全量查询与排序；原算法放在 legacy_query_test.go 作为回归参照，既有验收用例不改。没有新增依赖、数据库容器、缓存服务、公开接口或常驻刷新任务。
 - 10 万/20 万条元数据的 5 并发 HTTP 测试作为扩容证据；图库不变时检查热态请求不重建全量查询，并分别记录冷态成本和内存。原图传输、编码耗时及公网/CDN 时延不包含在这个压测里。
+
+## 2026-10-08 22:27:25 CST：Agent 技能沿用 DECISIONS.md 记决策，issue 记在 GitHub
+
+- 接入 mattpocock 工程技能（triage、to-tickets、domain-modeling 等）。这些技能默认把决策写成 `docs/adr/0001-*.md`，但 AGENTS.md 已规定决策写进 DECISIONS.md。两处并存会让决策分散、互相过期，所以在 `docs/agents/domain.md` 里让技能改为向本文件末尾追加，不建 `docs/adr/`。
+- issue 记在仓库的 GitHub Issues，不用 `.scratch/` 下的本地 markdown：仓库本来就在 GitHub，手机上能直接看和评论，也不会在工作区里多出一批待办文件。分类标签用技能默认的五个，已在 GitHub 上建好。

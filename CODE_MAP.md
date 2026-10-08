@@ -113,6 +113,7 @@
 | `design.md` | Hallmark 锁定的界面设计系统，约束主图库、登录页和大图层共享的视觉语言。 |
 | `CHANGELOG.md` | 记录各版本完成功能。 |
 | `AGENTS.md` | 约束后续开发、测试、文档和部署工作的项目规则。 |
+| `docs/agents/` | 工程技能（triage、to-tickets 等）读取的配置：issue 位置、分类标签、术语与决策文档的读写规则。 |
 
 ## 运行时目录
 
