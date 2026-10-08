@@ -178,12 +178,12 @@ func TestFixConcurrentMissingThumbnailAndCancelledWait(t *testing.T) {
 }
 func TestFixPasswordChangeRevokesCookie(t *testing.T) {
 	key := bytes.Repeat([]byte{7}, 32)
-	old := newAuthGate("user", "old", key)
+	old := newAuthGate("user", "old", nil, key)
 	cookie := old.sign(time.Now().Add(time.Hour).Unix())
-	if !newAuthGate("user", "old", key).validSession(cookie) {
+	if !newAuthGate("user", "old", nil, key).validSession(cookie) {
 		t.Fatal("restart invalidated unchanged credentials")
 	}
-	if newAuthGate("user", "new", key).validSession(cookie) {
+	if newAuthGate("user", "new", nil, key).validSession(cookie) {
 		t.Fatal("password change retained session")
 	}
 }

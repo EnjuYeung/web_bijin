@@ -18,6 +18,8 @@ services:
       TZ: ${TZ:-Asia/Shanghai}
       AUTH_USER: ${AUTH_USER:-juen}
       AUTH_PASS: ${AUTH_PASS:-changeme}
+      # 登录两步验证密钥，由 scripts/two-step.sh 写入 .env；留空只用密码
+      AUTH_TWO_STEP_SECRET: ${AUTH_TWO_STEP_SECRET:-}
       # 只用于在设置页显示宿主机照片目录
       PHOTOS_HOST_DIR: ${PHOTOS_DIR:-./photos}
       THUMB_WORKERS: ${THUMB_WORKERS:-}

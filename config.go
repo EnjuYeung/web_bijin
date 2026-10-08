@@ -17,8 +17,10 @@ type config struct {
 	TZ        string
 	AuthUser  string
 	AuthPass  string
-	ScanEvery time.Duration
-	MaxPixels int64
+	// TwoStepKey is the decoded AUTH_TWO_STEP_SECRET; empty: password only.
+	TwoStepKey []byte
+	ScanEvery  time.Duration
+	MaxPixels  int64
 	// PhotosHostDir is only shown on the settings page; Compose does the mount.
 	PhotosHostDir string
 	// ThumbWorkers is how many images are read and decoded at once.
@@ -64,6 +66,14 @@ func loadConfig() (config, error) {
 	cfg.DataDir = data
 	if cfg.AuthUser == "" || cfg.AuthPass == "" {
 		return cfg, fmt.Errorf("AUTH_USER and AUTH_PASS must be set")
+	}
+	// A broken secret stops startup instead of quietly dropping to password only.
+	if v := strings.TrimSpace(os.Getenv("AUTH_TWO_STEP_SECRET")); v != "" {
+		key, err := parseTwoStepSecret(v)
+		if err != nil {
+			return cfg, err
+		}
+		cfg.TwoStepKey = key
 	}
 	if v := strings.TrimSpace(os.Getenv("THUMB_WORKERS")); v != "" {
 		n, err := strconv.Atoi(v)

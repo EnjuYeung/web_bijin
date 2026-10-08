@@ -9,6 +9,7 @@ require (
 	golang.org/x/image v0.30.0
 	golang.org/x/text v0.28.0
 	modernc.org/sqlite v1.38.2
+	rsc.io/qr v0.2.0
 )
 
 require (

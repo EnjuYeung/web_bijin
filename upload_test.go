@@ -49,7 +49,7 @@ func newUploadTestApp(t *testing.T, fake *fakeS3) *uploadTestApp {
 	}
 	thumbs := newThumbCache(cfg.ThumbDir(), cfg.WallDir(), sources, cfg.ThumbWorkers)
 	sc := newScanner(cfg, st, thumbs, sources)
-	gate := newAuthGate("upload-test", "fixture-password", bytes.Repeat([]byte{4}, 32))
+	gate := newAuthGate("upload-test", "fixture-password", nil, bytes.Repeat([]byte{4}, 32))
 	server := httptest.NewServer(newRouter(st, sc, thumbs, sources, cfg.TZ, gate))
 	t.Cleanup(func() { server.Close(); st.Close() })
 	return &uploadTestApp{server, st, sc, cfg, &http.Cookie{Name: sessionCookie, Value: gate.sign(time.Now().Add(time.Hour).Unix())}}

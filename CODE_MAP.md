@@ -8,7 +8,7 @@
 2. `ARCHITECTURE.md`：了解技术栈、数据流和主要设计。
 3. `main.go`、`config.go`：了解程序如何启动。
 4. `source.go`、`scan.go`、`events.go`、`store.go`、`thumb.go`、`wallpaper.go`：了解照片如何进入图库并生成壁纸。
-5. `server.go`、`auth.go`、`upload.go`：了解页面、接口和登录。
+5. `server.go`、`auth.go`、`totp.go`、`upload.go`：了解页面、接口、登录和两步验证。
 6. `frontend/components/album-app.tsx`、`frontend/components/photo-gallery.tsx`、`frontend/app/globals.css`：了解浏览器界面。
 
 ## Go 后端
@@ -21,7 +21,9 @@
 | `settings.go` | 设置页接口：读取本地说明、各来源状态、上传通知状态与壁纸统计、添加/修改/删除对象存储、测试连接；Secret Key 只写不读。 |
 | `server.go` | 注册 HTTP 路由，提供照片、相册、缩略图（不可变缓存）、原图（转发或 302 到预签名地址）、登录背景（302 到一张壁纸）、公开随机壁纸和健康检查接口，并内嵌前端文件；相册列表附带作者、模特与添加日期，写接口共用同源检查。 |
 | `upload.go` | GUI 上传：同源与路径校验、现有目标、本地原子提交、S3 条件预签名与保存验证、进程内任务状态，以及复用扫描器的索引/缩略图/壁纸处理。 |
-| `auth.go` | 校验用户名和密码，生成签名 Cookie，保护需要登录的页面和接口。 |
+| `auth.go` | 校验用户名、密码和动态码，按 IP 输错锁定，生成签名 Cookie，保护需要登录的页面和接口。 |
+| `totp.go` | 两步验证：动态码计算（RFC 6238）、密钥解析与生成，以及 `bijin two-step` 子命令的终端二维码和确认流程。 |
+| `scripts/two-step.sh` | 在服务器上一键开启 / 更换 / 关闭两步验证：确认动态码后改写 `.env`、换会话密钥并重建容器。 |
 | `store.go` | 管理 SQLite 照片索引，包括建表、查询、更新、按来源计数和删除；提交每次变化后更新缓存版本，来源统计按照片版本复用；数据库权限收紧为 0600。 |
 | `query_cache.go` | 不可变的版本缓存、同一缓存的单次构建、按数量/字节/空闲时间限制的 LRU，以及照片提交后的失效规则；缓存锁与数据库等待分开。 |
 | `query_photos.go` | album_path 回填与部分索引、轻量图库 ID 集合、按 seed 缓存随机顺序、游标二分定位与本页主键查询、相册汇总及索引选封面。 |
@@ -53,7 +55,7 @@
 | `frontend/components/settings-panel.tsx` | 来源卡片、校验表单、添加/编辑/测试/删除对象存储、大图直连与浏览器访问地址、上传通知状态、随机壁纸卡片（数量与可复制的接口地址）；扫描中短时刷新。 |
 | `frontend/components/upload-panel.tsx` | 独立上传页：目标选择、文件/文件夹添加、拖放、多任务进度、处理状态、停止与重试；文件夹只取直属图片。 |
 | `frontend/lib/upload.ts` | 文件选择与非递归目录处理、格式/大小筛选、XHR 传输进度、取消和等待处理。 |
-| `frontend/components/login.tsx` | 登录表单、错误提示与安全返回地址。 |
+| `frontend/components/login.tsx` | 登录表单（开启两步验证时显示动态码框）、错误与锁定提示、安全返回地址。 |
 | `frontend/components/ui/` | 官方 shadcn/ui Base UI 组件；统一语义颜色、按钮状态、表单与对话框。 |
 | `frontend/lib/api.ts`、`frontend/lib/preferences.ts` | 现有 Go API 的类型与请求、格式化、主题与侧栏偏好。 |
 | `frontend/app/globals.css` | 令牌到 Tailwind / shadcn 的映射、各页面布局、响应式与减少动态规则。 |
@@ -69,6 +71,8 @@
 | `organize_test.go` | 作者 / 模特：名字规范化、替换 / 顺序 / 清空 / 大小写复用、重开数据库后仍在、改名合并与删除、登录 / 同源 / JSON 门禁、非法输入、失效记录与清理。 |
 | `frontend/tests/organize.spec.ts` | 整理页与相册页：新建与复用名字、填写情况 / 作者 / 模特筛选与批量设置、名单折叠与改名 / 合并 / 删除、行内错误、自绘排序下拉与刷新后保持、相册页筛选（打开相册返回后仍在、新标签页清空）、键盘操作、320–1470 px 双主题与已选项对勾同行。 |
 | `auth_test.go` | 测试登录、Cookie、访问保护和相关 HTTP 行为。 |
+| `two_step_test.go` | 测试 RFC 6238 官方样例、时间容差、密钥格式与拒绝启动、动态码单次使用、按 IP 锁定与解锁、旧登录失效、终端二维码逐点还原和开启确认流程。 |
+| `frontend/tests/two-step.spec.ts` | 两步验证登录页：只用密码时不显示动态码框；开启时必填、错码提示、用过的码被拒、下一个码可用、按 IP 锁定与提示，桌面与手机截图。 |
 | `assets_test.go` | 验证导出资源的门禁边界，以及 gzip 解压内容、MIME、缓存与拒绝压缩时的回退。 |
 | `frontend/tests/album.spec.ts`、`frontend/playwright.config.ts` | Playwright 实际浏览器回归：登录、照片/相册、大图、设置表单（含大图直连：浏览器跟随 302 直接向存储取原图）、主题/品牌交互与响应式、随机壁纸卡片与复制、别的网站无 Cookie 引用壁纸、登录页背景为壁纸。 |
 | `frontend/tests/s3_fixture.py` | 仅监听本机的 S3 浏览器测试服务，使用生成的测试图片，接受预签名读写、条件写入与任务元数据，并按 `response-*` 参数返回响应头，不连接真实桶。 |

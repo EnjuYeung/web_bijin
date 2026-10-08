@@ -3,15 +3,20 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 )
 
 func main() {
+	if len(os.Args) == 2 && os.Args[1] == "two-step" {
+		os.Exit(twoStepCommand())
+	}
 	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo})))
 
 	cfg, err := loadConfig()
@@ -46,7 +51,7 @@ func main() {
 		slog.Error("session key", "err", err)
 		os.Exit(1)
 	}
-	gate := newAuthGate(cfg.AuthUser, cfg.AuthPass, key)
+	gate := newAuthGate(cfg.AuthUser, cfg.AuthPass, cfg.TwoStepKey, key)
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
@@ -70,7 +75,8 @@ func main() {
 		}()
 	}
 	slog.Info("listen", "addr", cfg.Listen, "events", cfg.EventsListen, "workers", cfg.ThumbWorkers,
-		"scanEvery", cfg.ScanEvery.String(), "storages", len(storages), "data", cfg.DataDir)
+		"scanEvery", cfg.ScanEvery.String(), "storages", len(storages), "data", cfg.DataDir,
+		"twoStep", len(cfg.TwoStepKey) > 0)
 
 	select {
 	case <-ctx.Done():
@@ -88,4 +94,15 @@ func main() {
 			slog.Error("shutdown", "err", err)
 		}
 	}
+}
+
+// twoStepCommand runs `bijin two-step` for scripts/two-step.sh inside the
+// running container: a new secret, confirmed with one code from the app.
+func twoStepCommand() int {
+	secret, err := newTwoStepSecret()
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		return 1
+	}
+	return runTwoStepSetup(os.Stdin, os.Stdout, os.Stderr, secret, strings.TrimSpace(os.Getenv("AUTH_USER")), time.Now)
 }

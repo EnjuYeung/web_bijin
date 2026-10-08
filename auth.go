@@ -7,30 +7,61 @@ import (
 	"crypto/subtle"
 	"encoding/hex"
 	"encoding/json"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
 const (
 	sessionCookie = "bijin"
 	sessionTTL    = 30 * 24 * time.Hour
+
+	// maxLoginFails wrong logins in a row from one IP lock it out for
+	// loginLockout; the count also resets after loginLockout without a miss.
+	maxLoginFails = 5
+	loginLockout  = 15 * time.Minute
 )
 
 type authGate struct {
-	user string
-	pass string
-	key  []byte
+	user    string
+	pass    string
+	twoStep []byte // empty: password only
+	key     []byte
+	now     func() time.Time
+
+	mu       sync.Mutex
+	lastStep int64 // newest accepted code step; each code works once
+	fails    map[string]loginFails
 }
 
-func newAuthGate(user, pass string, key []byte) *authGate {
+type loginFails struct {
+	n    int
+	last time.Time
+}
+
+type loginResult int
+
+const (
+	loginOK loginResult = iota
+	loginWrong
+	loginLocked
+)
+
+func newAuthGate(user, pass string, twoStep, key []byte) *authGate {
 	mac := hmac.New(sha256.New, key)
 	mac.Write([]byte("bijin-session-v2\x00" + user + "\x00" + pass))
-	return &authGate{user: user, pass: pass, key: mac.Sum(nil)}
+	// Turning two-step on or changing its secret signs every device out.
+	if len(twoStep) > 0 {
+		mac.Write([]byte("\x00two-step\x00"))
+		mac.Write(twoStep)
+	}
+	return &authGate{user: user, pass: pass, twoStep: twoStep, key: mac.Sum(nil), now: time.Now, fails: map[string]loginFails{}}
 }
 
 func loadSessionKey(dataDir string) ([]byte, error) {
@@ -85,6 +116,64 @@ func (g *authGate) check(user, pass string) bool {
 	return okU && okP
 }
 
+// attempt checks one login from ip. A locked IP is refused before its
+// password is looked at, and a wrong password, code or reused code all count
+// as one miss.
+func (g *authGate) attempt(ip, user, pass, code string) loginResult {
+	now := g.now()
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	f := g.fails[ip]
+	if now.Sub(f.last) >= loginLockout {
+		f = loginFails{}
+	}
+	if f.n >= maxLoginFails {
+		return loginLocked
+	}
+	ok := g.check(user, pass)
+	step := int64(0)
+	if len(g.twoStep) > 0 {
+		var codeOK bool
+		step, codeOK = codeStepAt(g.twoStep, code, now)
+		ok = ok && codeOK && step > g.lastStep
+	}
+	if !ok {
+		g.fails[ip] = loginFails{n: f.n + 1, last: now}
+		for k, v := range g.fails {
+			if now.Sub(v.last) >= loginLockout {
+				delete(g.fails, k)
+			}
+		}
+		return loginWrong
+	}
+	delete(g.fails, ip)
+	if step > 0 {
+		g.lastStep = step
+	}
+	return loginOK
+}
+
+// lockedFor is how long ip must still wait, for the Retry-After header.
+func (g *authGate) lockedFor(ip string) time.Duration {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	return max(0, loginLockout-g.now().Sub(g.fails[ip].last))
+}
+
+// clientIP is the visitor's address as OpenResty puts it in X-Real-IP. The
+// port is published on 127.0.0.1 only and OpenResty overwrites the header,
+// so visitors cannot choose it; direct requests use the connection address.
+func clientIP(r *http.Request) string {
+	if ip := strings.TrimSpace(r.Header.Get("X-Real-IP")); net.ParseIP(ip) != nil {
+		return ip
+	}
+	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		return r.RemoteAddr
+	}
+	return host
+}
+
 func (g *authGate) setSession(w http.ResponseWriter) {
 	exp := time.Now().Add(sessionTTL).Unix()
 	http.SetCookie(w, &http.Cookie{
@@ -129,28 +218,46 @@ func safeNext(v string) string {
 	return v
 }
 
-func readLogin(r *http.Request) (user, pass string) {
+func readLogin(r *http.Request) (user, pass, code string) {
 	ct := r.Header.Get("Content-Type")
 	if strings.HasPrefix(ct, "application/json") {
 		var body struct {
 			User string `json:"user"`
 			Pass string `json:"pass"`
+			Code string `json:"code"`
 		}
 		_ = json.NewDecoder(r.Body).Decode(&body)
-		return body.User, body.Pass
+		return body.User, body.Pass, body.Code
 	}
 	if strings.HasPrefix(ct, "multipart/form-data") {
 		_ = r.ParseMultipartForm(1 << 20)
 	} else {
 		_ = r.ParseForm()
 	}
-	return r.FormValue("user"), r.FormValue("pass")
+	return r.FormValue("user"), r.FormValue("pass"), r.FormValue("code")
+}
+
+// handleLoginOptions tells the login page whether to ask for a code.
+func (g *authGate) handleLoginOptions(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Cache-Control", "no-store")
+	writeJSON(w, http.StatusOK, map[string]any{"twoStep": len(g.twoStep) > 0})
 }
 
 func (g *authGate) handleLogin(w http.ResponseWriter, r *http.Request) {
-	user, pass := readLogin(r)
-	if !g.check(user, pass) {
-		if strings.HasPrefix(r.Header.Get("Content-Type"), "application/json") || strings.Contains(r.Header.Get("Accept"), "application/json") {
+	asJSON := strings.HasPrefix(r.Header.Get("Content-Type"), "application/json") || strings.Contains(r.Header.Get("Accept"), "application/json")
+	user, pass, code := readLogin(r)
+	ip := clientIP(r)
+	switch g.attempt(ip, user, pass, code) {
+	case loginLocked:
+		w.Header().Set("Retry-After", strconv.Itoa(int(g.lockedFor(ip).Seconds())+1))
+		if asJSON {
+			writeJSON(w, http.StatusTooManyRequests, map[string]any{"error": "locked"})
+			return
+		}
+		http.Redirect(w, r, "/login?err=locked", http.StatusFound)
+		return
+	case loginWrong:
+		if asJSON {
 			writeJSON(w, http.StatusUnauthorized, map[string]any{"error": "unauthorized"})
 			return
 		}
@@ -163,7 +270,7 @@ func (g *authGate) handleLogin(w http.ResponseWriter, r *http.Request) {
 	if q := r.URL.Query().Get("next"); q != "" {
 		next = safeNext(q)
 	}
-	if strings.HasPrefix(r.Header.Get("Content-Type"), "application/json") || strings.Contains(r.Header.Get("Accept"), "application/json") {
+	if asJSON {
 		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "next": next})
 		return
 	}

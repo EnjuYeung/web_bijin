@@ -15,10 +15,15 @@ import (
 )
 
 func testGate() *authGate {
-	return newAuthGate("juen", "secret", bytes.Repeat([]byte{7}, 32))
+	return newAuthGate("juen", "secret", nil, bytes.Repeat([]byte{7}, 32))
 }
 
 func testApp(t *testing.T) (*httptest.Server, *store, string) {
+	t.Helper()
+	return testAppWithGate(t, testGate())
+}
+
+func testAppWithGate(t *testing.T, gate *authGate) (*httptest.Server, *store, string) {
 	t.Helper()
 	photos := t.TempDir()
 	data := t.TempDir()
@@ -38,7 +43,7 @@ func testApp(t *testing.T) (*httptest.Server, *store, string) {
 	sources := newSourceSet(&localPhotoSource{root: photos})
 	th := newThumbCache(filepath.Join(data, "thumbs"), filepath.Join(data, "wallpapers"), sources, 1)
 	sc := newScanner(config{PhotosDir: photos, DataDir: data, ScanEvery: time.Hour, MaxPixels: 64_000_000}, st, th, sources)
-	h := newRouter(st, sc, th, sources, "Asia/Shanghai", testGate())
+	h := newRouter(st, sc, th, sources, "Asia/Shanghai", gate)
 	srv := httptest.NewServer(h)
 	t.Cleanup(srv.Close)
 	return srv, st, photos
