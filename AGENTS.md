@@ -41,3 +41,17 @@
 - 忽略错误日志
 - 隐瞒未测试项目
 - 使用“应该可以”“理论上没问题”代替实际验证
+
+## Agent skills
+
+### Issue tracker
+
+问题和待办记在 GitHub Issues（`EnjuYeung/web_bijin`），用 `gh` 命令操作。详见 `docs/agents/issue-tracker.md`。
+
+### Triage labels
+
+使用默认五个分类标签：`needs-triage`、`needs-info`、`ready-for-agent`、`ready-for-human`、`wontfix`。详见 `docs/agents/triage-labels.md`。
+
+### Domain docs
+
+单一上下文：术语表放在根目录 `CONTEXT.md`（需要时再建），决策只追加到 `DECISIONS.md`，不建 `docs/adr/`。详见 `docs/agents/domain.md`。
