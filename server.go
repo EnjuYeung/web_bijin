@@ -53,6 +53,7 @@ func newRouter(st *store, sc *scanner, thumbs *thumbCache, sources *sourceSet, t
 	mux.Handle("OPTIONS /media/sha256/{prefix}/{name}", http.HandlerFunc(handleWallpaperPreflight))
 	mux.Handle("POST /api/login", http.HandlerFunc(gate.handleLogin))
 	mux.Handle("GET /api/login-options", http.HandlerFunc(gate.handleLoginOptions))
+	mux.Handle("POST /logout", http.HandlerFunc(handleLogout))
 	mux.Handle("GET /login", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if gate.signedIn(r) {
 			http.Redirect(w, r, safeNext(r.URL.Query().Get("next")), http.StatusFound)

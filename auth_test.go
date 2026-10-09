@@ -348,6 +348,104 @@ func TestFormLogin(t *testing.T) {
 	}
 }
 
+func logout(t *testing.T, srv *httptest.Server, method string, c *http.Cookie, headers map[string]string) *http.Response {
+	t.Helper()
+	req, err := http.NewRequest(method, srv.URL+"/logout", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c != nil {
+		req.AddCookie(c)
+	}
+	for k, v := range headers {
+		req.Header.Set(k, v)
+	}
+	client := &http.Client{CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+	res, err := client.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	res.Body.Close()
+	return res
+}
+
+func photosStatus(t *testing.T, srv *httptest.Server, c *http.Cookie) int {
+	t.Helper()
+	req, _ := http.NewRequest(http.MethodGet, srv.URL+"/api/photos?limit=1", nil)
+	req.AddCookie(c)
+	res, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	res.Body.Close()
+	return res.StatusCode
+}
+
+func TestLogoutSignsOnlyThisDeviceOut(t *testing.T) {
+	srv, _, _ := testApp(t)
+	phone := loginCookie(t, srv, "juen", "secret")
+	laptop := loginCookie(t, srv, "juen", "secret")
+
+	res := logout(t, srv, http.MethodPost, phone, map[string]string{"Origin": srv.URL, "Sec-Fetch-Site": "same-origin"})
+	if res.StatusCode != http.StatusSeeOther || res.Header.Get("Location") != "/login?out=1" {
+		t.Fatalf("logout %d to %q", res.StatusCode, res.Header.Get("Location"))
+	}
+	if got := res.Header.Get("Clear-Site-Data"); got != `"cache"` {
+		t.Fatalf("Clear-Site-Data %q, want only the cache cleared", got)
+	}
+	if res.Header.Get("Cache-Control") != "no-store" {
+		t.Fatalf("Cache-Control %q", res.Header.Get("Cache-Control"))
+	}
+	var cleared *http.Cookie
+	for _, c := range res.Cookies() {
+		if c.Name == sessionCookie {
+			cleared = c
+		}
+	}
+	if cleared == nil || cleared.Value != "" || cleared.MaxAge >= 0 || cleared.Path != "/" || !cleared.HttpOnly {
+		t.Fatalf("session cookie not removed: %+v", cleared)
+	}
+	if photosStatus(t, srv, laptop) != http.StatusOK {
+		t.Fatal("logging out the phone signed the laptop out too")
+	}
+}
+
+func TestLogoutWhenAlreadySignedOut(t *testing.T) {
+	srv, _, _ := testApp(t)
+	res := logout(t, srv, http.MethodPost, nil, map[string]string{"Origin": srv.URL})
+	if res.StatusCode != http.StatusSeeOther || res.Header.Get("Location") != "/login?out=1" {
+		t.Fatalf("logout without a session %d to %q", res.StatusCode, res.Header.Get("Location"))
+	}
+	expired := &http.Cookie{Name: sessionCookie, Value: testGate().sign(time.Now().Add(-time.Hour).Unix())}
+	res = logout(t, srv, http.MethodPost, expired, nil)
+	if res.StatusCode != http.StatusSeeOther {
+		t.Fatalf("logout with an expired session %d", res.StatusCode)
+	}
+}
+
+func TestLogoutRefusesOtherSitesAndGet(t *testing.T) {
+	srv, _, _ := testApp(t)
+	c := loginCookie(t, srv, "juen", "secret")
+	for name, headers := range map[string]map[string]string{
+		"cross-site fetch":   {"Sec-Fetch-Site": "cross-site"},
+		"foreign origin":     {"Origin": "https://evil.example"},
+		"non-http(s) origin": {"Origin": "null"},
+	} {
+		res := logout(t, srv, http.MethodPost, c, headers)
+		if res.StatusCode != http.StatusForbidden || len(res.Cookies()) != 0 || res.Header.Get("Clear-Site-Data") != "" {
+			t.Fatalf("%s: %d, cookies %v, Clear-Site-Data %q", name, res.StatusCode, res.Cookies(), res.Header.Get("Clear-Site-Data"))
+		}
+	}
+	// A link or image tag cannot sign anyone out.
+	res := logout(t, srv, http.MethodGet, c, nil)
+	if res.StatusCode != http.StatusMethodNotAllowed || len(res.Cookies()) != 0 {
+		t.Fatalf("GET /logout %d, cookies %v", res.StatusCode, res.Cookies())
+	}
+	if photosStatus(t, srv, c) != http.StatusOK {
+		t.Fatal("refused logouts must leave the session working")
+	}
+}
+
 func TestLoadSessionKeyPersists(t *testing.T) {
 	dir := t.TempDir()
 	a, err := loadSessionKey(dir)

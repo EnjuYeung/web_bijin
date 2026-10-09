@@ -186,6 +186,28 @@ func (g *authGate) setSession(w http.ResponseWriter) {
 	})
 }
 
+// handleLogout signs this device out: its cookie goes, and the browser drops
+// what it cached for the site, such as thumbnails. Other devices keep their
+// own cookies, which stay valid until they expire. It works when already
+// signed out too, and only from this site's own pages.
+func handleLogout(w http.ResponseWriter, r *http.Request) {
+	if !sameOriginOK(w, r, "请在相册页面里退出登录") {
+		return
+	}
+	http.SetCookie(w, &http.Cookie{
+		Name:     sessionCookie,
+		Path:     "/",
+		HttpOnly: true,
+		SameSite: http.SameSiteLaxMode,
+		MaxAge:   -1,
+	})
+	// Not "cookies": that would also clear every other site under the same
+	// registered domain.
+	w.Header().Set("Clear-Site-Data", `"cache"`)
+	w.Header().Set("Cache-Control", "no-store")
+	http.Redirect(w, r, "/login?out=1", http.StatusSeeOther)
+}
+
 func (g *authGate) protect(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if g.signedIn(r) {

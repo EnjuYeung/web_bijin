@@ -6,6 +6,16 @@ export function loginURL() {
   return "/login?next=" + encodeURIComponent(location.pathname + location.search + location.hash);
 }
 
+// The login page notes the time here after a logout. Other tabs of the same
+// browser hear the change, and a page that Back restores checks it.
+export const signedOutKey = "juens-signed-out";
+export function markSignedOut() {
+  try { localStorage.setItem(signedOutKey, String(Date.now())); } catch { /* Other tabs find out on their next request. */ }
+}
+export function signedOutSince(time: number) {
+  try { return Number(localStorage.getItem(signedOutKey)) > time; } catch { return false; }
+}
+
 export async function api<T>(path: string, options: RequestInit = {}): Promise<T> {
   const response = await fetch(path, {
     ...options,

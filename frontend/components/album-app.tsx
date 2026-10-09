@@ -1,9 +1,11 @@
 "use client";
 
 import { lazy, Suspense, useCallback, useEffect, useRef, useState } from "react";
-import { ArrowLeft, Contrast, FolderHeart, Images, Moon, SlidersHorizontal, Sun, Upload, UserRoundPen } from "lucide-react";
+import { ArrowLeft, Contrast, FolderHeart, Images, LogOut, Moon, SlidersHorizontal, Sun, Upload, UserRoundPen } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { Spinner } from "@/components/ui/spinner";
 import { GallerySkeleton } from "@/components/gallery-skeleton";
+import { signedOutKey, signedOutSince } from "@/lib/api";
 import { modeLabels, usePreferences } from "@/lib/preferences";
 import { PhotoGallery } from "@/components/photo-gallery";
 import { Albums } from "@/components/albums";
@@ -21,6 +23,7 @@ export function AlbumApp() {
   const [count, setCount] = useState<number | null>(null);
   const [ready, setReady] = useState(false);
   const [timezone, setTimezone] = useState("Asia/Shanghai");
+  const [leaving, setLeaving] = useState(false);
   const { expanded, mode, toggleSidebar, cycleMode } = usePreferences(timezone);
   const brand = useRef<HTMLButtonElement>(null);
   const updateCount = useCallback((value: number) => setCount(value), []);
@@ -42,6 +45,28 @@ export function AlbumApp() {
     return () => controller.abort();
   }, []);
   useEffect(() => { document.title = title + " · Juen's"; }, [title]);
+  useEffect(() => {
+    // Logging out in another tab, or before Back brought this page back from
+    // the browser's memory, sends this page to the login page too.
+    const loadedAt = Date.now();
+    const leave = () => location.replace("/login?out=1");
+    const onStorage = (event: StorageEvent) => { if (event.key === signedOutKey && signedOutSince(loadedAt)) leave(); };
+    const onShow = (event: PageTransitionEvent) => {
+      if (!event.persisted) return;
+      if (signedOutSince(loadedAt)) leave();
+      else setLeaving(false); // the logout never got through, e.g. offline
+    };
+    addEventListener("storage", onStorage);
+    addEventListener("pageshow", onShow);
+    return () => { removeEventListener("storage", onStorage); removeEventListener("pageshow", onShow); };
+  }, []);
+  function logout() {
+    // An upload in progress makes the browser ask before leaving. If it does,
+    // the person may choose to stay, so the button must not stay "正在退出…".
+    const ask = new Event("beforeunload", { cancelable: true });
+    dispatchEvent(ask);
+    if (!ask.defaultPrevented) setLeaving(true);
+  }
   useEffect(() => {
     const onEscape = (event: KeyboardEvent) => {
       if (event.key === "Escape" && !event.defaultPrevented && expanded && matchMedia("(max-width:719px)").matches) {
@@ -72,6 +97,11 @@ export function AlbumApp() {
         <a id="nav-upload" className="nav-item" href="/?view=upload" title="上传" aria-label="上传" aria-current={view === "upload" ? "page" : undefined}><Upload aria-hidden="true" /><span>上传</span></a>
         <a id="nav-settings" className="nav-item" href="/?view=settings" title="设置" aria-label="设置" aria-current={view === "settings" ? "page" : undefined}><SlidersHorizontal aria-hidden="true" /><span>设置</span></a>
       </nav>
+      <form className="sidebar-logout" method="post" action="/logout" onSubmit={logout}>
+        <button id="nav-logout" className="nav-item" type="submit" disabled={leaving} title="退出登录" aria-label={leaving ? "正在退出登录" : "退出登录"}>
+          {leaving ? <Spinner aria-hidden="true" /> : <LogOut aria-hidden="true" />}<span>{leaving ? "正在退出…" : "退出登录"}</span>
+        </button>
+      </form>
       <p className="sidebar-foot"><span>家里的回忆</span></p>
     </aside>
     <div className="app-main">

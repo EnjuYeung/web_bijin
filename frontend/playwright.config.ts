@@ -10,12 +10,15 @@ export default defineConfig({
   reporter: [["list"], ["json", { outputFile: "../output/ui-results.json" }]],
   use: {
     baseURL: "http://127.0.0.1:18092",
-    browserName: "chromium",
     viewport: { width: 1440, height: 1000 },
-    launchOptions: { args: ["--no-sandbox"] },
     trace: "retain-on-failure",
     screenshot: "only-on-failure",
   },
+  projects: [
+    { name: "chromium", use: { browserName: "chromium", launchOptions: { args: ["--no-sandbox"] } } },
+    // Safari's engine, for what logging out leaves behind on iPhones and Macs.
+    { name: "webkit", use: { browserName: "webkit" }, testMatch: /logout\.spec\.ts/ },
+  ],
   webServer: [
     { command: "python3 tests/s3_fixture.py", port: 18093, reuseExistingServer: false },
     {
