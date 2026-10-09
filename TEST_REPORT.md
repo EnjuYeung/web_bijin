@@ -35,15 +35,27 @@
 
 ## 生产部署与验证
 
-尚未部署，部署与公网验证完成后补充。
+| 编号 | 操作 | 结果与证据 |
+|---|---|---|
+| P01 | 部署前备份 | 在线备份 SQLite（integrity_check=ok，3937 photos / 3982 wallpapers / 1 storage / 21 people / 78 album_people，与线上一致），复制 `.env`、`session.key`、Compose 到 `/root/bijin-backup-20261010-logout`（权限 700/600）；旧镜像另存为 `bijin:rollback-89b0be8` |
+| P02 | 构建与切换 | 生产目录 `git pull --ff-only` 到 `4e6258b`，按原 Dockerfile 构建 `bijin:local`（`sha256:8d7e0677…`，45,425,771 字节，revision 标签 `4e6258b`）；2026-10-10 00:14:13 CST `docker compose up -d --no-build --wait`，容器 healthy |
+| P03 | 启动与日志 | 启动扫描 3937 seen / 3937 ready / 0 failed / 0 removed / 0 sourceErrors；两步验证仍开启；10 分钟内 WARN/ERROR 日志 0 行；运行中进程与 `/app/bijin` SHA-256 一致，二进制内含新页面代码 |
+| P04 | 数据与登录密钥 | 部署后 integrity_check=ok，各表行数与部署前一致；`.env`、`session.key`、Compose 哈希不变，签名密钥未变，已登录设备不会被退出 |
+| P05 | 公网退出接口（curl，经 OpenResty） | 同源 `POST /logout`：303 到 `/login?out=1`，`clear-site-data: "cache"`，`cache-control: no-store`，`set-cookie: bijin=; Path=/; Max-Age=0; HttpOnly; SameSite=Lax`；外来 Origin 与跨站请求 403；GET 405 |
+| P06 | 公网访问保护 | 未登录 `/api/photos`、`/api/albums`、`/api/settings`、`/thumb/1`、`/original/1` 均 401，`/` 302 到登录页；`/login?out=1` 200；公开随机壁纸 302 正常 |
+| P07 | 公网 Chromium（真实 HTTPS、带磁盘缓存的配置，不登录） | 公开壁纸两次读取同一 Date（来自缓存）；在登录页提交退出后显示「已退出登录。」，同一标签页与新标签页再读都回服务器取到新 Date：缓存已清；无页面错误；390 px 手机无横向溢出；截图已查看 |
+| P08 | 公网 WebKit（Playwright Linux 版） | 退出与提示正常；缓存未清，与 L10 一致 |
+| P09 | 公网 Apple WebKit（本机 WKWebView，Safari 27 的内核，真实 HTTPS） | 两次实验都显示退出后同一窗口和新窗口仍从缓存取得壁纸：缓存未清。没有直接操作 Safari 这个 App |
+
+没有用生产账号登录；需要登录才能看到的侧栏按钮与已登录退出流程由本地浏览器测试覆盖（L05–L09）。
 
 ## 结论与限制
 
-本地验收全部通过：只退当前设备、只清本站缓存、拒绝别的网站与 GET、其他标签页跟随、上传中先询问、返回键不回相册、偏好保留。
+本地与生产验收通过：只退当前设备、拒绝别的网站与 GET、其他标签页跟随、上传中先询问、返回键不回相册、偏好保留；生产数据、登录密钥和已登录设备不受部署影响。
 
 限制：
 
-- 清缓存由浏览器执行。Chromium（Chrome、Edge 等）实测会清。Playwright 的 Linux WebKit 和本机 Apple WebKit（`http://127.0.0.1` 上）实测都不清，iPhone 和 Mac 上的 Safari 是否会在 HTTPS 上清，以生产验证为准。不清时退出登录仍然生效，只是看过的缩略图留在这台设备的浏览器缓存里，别人只有知道完整地址或翻查缓存文件才能看到。
+- 清缓存只在 Chromium 内核的浏览器（Chrome、Edge 等）里生效，已在生产 HTTPS 上实测。Safari 的内核（Apple WebKit，本机 macOS 15.8.1）在生产 HTTPS 上实测不清；按此推断 iPhone 和 Mac 上的 Safari 退出后，看过的缩略图仍留在浏览器缓存里。退出登录本身照常生效：相册、接口和新的缩略图都要重新登录，留下的缓存只有知道完整地址或翻查缓存文件才能看到。
 - 原图直链在存储域名下，不归本站清，拿到后 24 小时内仍可打开。
 - 退出只删本设备的 Cookie。退出前被复制走的 Cookie 到期前仍然有效；要让所有设备退出，仍需改密码或用两步验证脚本。
 

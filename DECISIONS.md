@@ -319,3 +319,4 @@ Go 标准库和 `x/image` 只能解码 WebP。选 `github.com/gen2brain/webp`：
 - 清缓存只发 `Clear-Site-Data: "cache"`：`"cookies"` 会清掉同一注册域 `jgbman.cc` 下其他网站的 Cookie，`"storage"` 会清掉主题、侧栏、排序等偏好。浏览器是否执行由浏览器决定，原图直链在存储域名下，不归本站清，24 小时内仍可打开。
 - 其他标签页：登录页带 `?out=1` 时往 localStorage 记退出时间，其他标签页靠 `storage` 事件、返回键从内存恢复的旧页面靠 `pageshow` 检查后转到登录页。没有用 BroadcastChannel（内存里暂存的页面收不到消息），也没有加查询登录状态的接口。
 - 「正在退出…」：提交前先派发一次模拟的 beforeunload 事件，页面有离开保护（上传中）就不进入等待状态，避免选「留下」后按钮一直卡在等待。
+- 2026-10-10 补充实测：Chromium 在 303 跳转上执行 `Clear-Site-Data: "cache"`；Playwright 的 Linux WebKit 与本机 Apple WebKit（Safari 的内核）在生产 HTTPS 上都不执行。仍保留这一行：它对 Chrome、Edge 有效，对 Safari 无害。没有为 Safari 改成每张缩略图都回服务器校验（`no-cache`），因为那会让每次浏览多出大量往返，而留下的缓存只有知道完整地址或翻查缓存文件才看得到。
