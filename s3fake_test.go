@@ -1,6 +1,7 @@
 package main
 
 import (
+	"crypto/md5"
 	"encoding/xml"
 	"fmt"
 	"io"
@@ -22,13 +23,14 @@ type fakeS3 struct {
 	accessKey string
 	location  string // empty: GetBucketLocation returns NotImplemented
 
-	mu        sync.Mutex
-	objects   map[string][]byte
-	uploadIDs map[string]string
-	down      bool
-	delay     time.Duration // added to every object GET
-	requests  []string
-	auths     []string
+	mu          sync.Mutex
+	objects     map[string][]byte
+	uploadIDs   map[string]string
+	down        bool
+	delay       time.Duration // added to every object GET
+	requests    []string
+	auths       []string
+	beforeServe func(*http.Request) // controlled boundary, set under mu
 }
 
 func newFakeS3(t *testing.T, bucket string) *fakeS3 {
@@ -153,7 +155,7 @@ func (f *fakeS3) serve(w http.ResponseWriter, r *http.Request) {
 		sort.Strings(keys)
 		res := fakeList{Name: f.bucket, Prefix: prefix, MaxKeys: 1000}
 		for _, k := range keys {
-			res.Contents = append(res.Contents, fakeObject{Key: k, LastModified: lastModified.Format("2006-01-02T15:04:05.000Z"), ETag: fmt.Sprintf(`"%x"`, len(f.objects[k])*31+len(k)), Size: len(f.objects[k])})
+			res.Contents = append(res.Contents, fakeObject{Key: k, LastModified: lastModified.Format("2006-01-02T15:04:05.000Z"), ETag: fmt.Sprintf(`"%x"`, md5.Sum(f.objects[k])), Size: len(f.objects[k])})
 		}
 		f.mu.Unlock()
 		if q.Get("list-type") == "2" {
@@ -166,15 +168,19 @@ func (f *fakeS3) serve(w http.ResponseWriter, r *http.Request) {
 		data, ok := f.objects[key]
 		delay := f.delay
 		uploadID := f.uploadIDs[key]
+		beforeServe := f.beforeServe
 		f.mu.Unlock()
 		if !ok {
 			fakeError(w, http.StatusNotFound, "NoSuchKey")
 			return
 		}
+		if beforeServe != nil {
+			beforeServe(r)
+		}
 		if r.Method == http.MethodGet {
 			time.Sleep(delay)
 		}
-		w.Header().Set("ETag", fmt.Sprintf(`"%x"`, len(data)*31+len(key)))
+		w.Header().Set("ETag", fmt.Sprintf(`"%x"`, md5.Sum(data)))
 		w.Header().Set("Last-Modified", lastModified.Format(http.TimeFormat))
 		w.Header().Set("Content-Type", "image/jpeg")
 		if uploadID != "" {

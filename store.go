@@ -219,11 +219,11 @@ func (s *store) deleteByID(id int64) error {
 	return s.deleteWallpapers(id)
 }
 
-// deleteMissing removes rows up to id `upTo` that were not seen in this scan,
+// missingPhotos selects rows up to id `upTo` that were not seen in this scan,
 // except rows of sources whose listing failed. Rows of a removed storage are
 // always removed; rows added after the scan started are left alone.
-func (s *store) deleteMissing(keep map[string]struct{}, failed map[string]bool, upTo int64) ([]photo, error) {
-	rows, err := s.db.Query(`SELECT id, rel_path, display_path FROM photos WHERE id <= ?`, upTo)
+func (s *store) missingPhotos(keep map[string]struct{}, failed map[string]bool, upTo int64) ([]photo, error) {
+	rows, err := s.db.Query(`SELECT id, rel_path, display_path, source_version FROM photos WHERE id <= ?`, upTo)
 	if err != nil {
 		return nil, err
 	}
@@ -231,7 +231,7 @@ func (s *store) deleteMissing(keep map[string]struct{}, failed map[string]bool, 
 	var gone []photo
 	for rows.Next() {
 		var p photo
-		if err := rows.Scan(&p.ID, &p.SourceKey, &p.RelPath); err != nil {
+		if err := rows.Scan(&p.ID, &p.SourceKey, &p.RelPath, &p.SourceVersion); err != nil {
 			return nil, err
 		}
 		if _, ok := keep[p.SourceKey]; !ok && !failed[keyOwner(p.SourceKey)] {
@@ -243,11 +243,6 @@ func (s *store) deleteMissing(keep map[string]struct{}, failed map[string]bool, 
 	}
 	if err := rows.Close(); err != nil {
 		return nil, err
-	}
-	for _, p := range gone {
-		if err := s.deleteByID(p.ID); err != nil {
-			return nil, err
-		}
 	}
 	return gone, nil
 }

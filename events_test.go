@@ -225,7 +225,7 @@ func TestScanEventAndThumbRequestReadOnce(t *testing.T) {
 	}()
 	go func() {
 		defer wg.Done()
-		if b, err := th.serveBytes(context.Background(), p); err != nil || len(b) == 0 {
+		if b, err := testThumbnailBytes(sc.photos, context.Background(), p.ID); err != nil || len(b) == 0 {
 			t.Errorf("thumbnail: %v", err)
 		}
 	}()
@@ -248,6 +248,10 @@ func (s *slowSource) Walk(_ context.Context, visit func(sourceObject) error) err
 		}
 	}
 	return nil
+}
+
+func (s *slowSource) Stat(ctx context.Context, rel string) (sourceObject, error) {
+	return statTestSource(ctx, s, rel)
 }
 
 func (s *slowSource) Open(context.Context, string) (readSeekCloser, error) {
@@ -294,9 +298,15 @@ func TestCleanupKeepsPhotosAddedDuringScan(t *testing.T) {
 	if _, err := st.upsert(photo{RelPath: "added-by-event.jpg", Width: 1, Height: 1, SourceVersion: "v1"}); err != nil {
 		t.Fatal(err)
 	}
-	gone, err := st.deleteMissing(map[string]struct{}{}, nil, before)
+	gone, err := st.missingPhotos(map[string]struct{}{}, nil, before)
 	if err != nil || len(gone) != 1 || gone[0].SourceKey != "listed-gone.jpg" {
 		t.Fatalf("gone=%+v err=%v", gone, err)
+	}
+	processor := newPhotoProcessor(st, newThumbCache(t.TempDir(), t.TempDir(), newMemSource(map[string][]byte{}), 1), newSourceSet(newMemSource(map[string][]byte{})), 64_000_000)
+	for _, candidate := range gone {
+		if removed, err := processor.RemoveIfUnchanged(context.Background(), candidate); err != nil || !removed {
+			t.Fatalf("remove: %v %v", removed, err)
+		}
 	}
 	if _, ok, _ := st.getBySourceKey("added-by-event.jpg"); !ok {
 		t.Fatal("photo added during the scan was removed")

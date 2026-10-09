@@ -5,12 +5,14 @@ import (
 	"crypto/sha256"
 	"embed"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io/fs"
 	"log/slog"
 	"mime"
 	"net/http"
 	"net/url"
+	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -87,7 +89,7 @@ func newRouter(st *store, sc *scanner, thumbs *thumbCache, sources *sourceSet, t
 		handleAlbums(w, r, st, sc, tz)
 	})))
 	mux.Handle("GET /thumb/{id}", gate.protect(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		handleThumb(w, r, st, thumbs)
+		handleThumb(w, r, sc.photos)
 	})))
 	mux.Handle("GET /original/{id}", gate.protect(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		handleOriginal(w, r, st, sources)
@@ -274,32 +276,30 @@ func handleLoginBg(w http.ResponseWriter, r *http.Request, st *store) {
 	http.Redirect(w, r, v.mediaPath(), http.StatusFound)
 }
 
-func handleThumb(w http.ResponseWriter, r *http.Request, st *store, thumbs *thumbCache) {
-	p, ok := photoFromReq(w, r, st)
-	if !ok {
-		return
-	}
-	if p.Broken {
+func handleThumb(w http.ResponseWriter, r *http.Request, photos *photoProcessor) {
+	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil || id <= 0 {
 		http.NotFound(w, r)
 		return
 	}
-	etag := fmt.Sprintf(`"%d-%s"`, p.ID, photoVersion(p))
-	w.Header().Set("ETag", etag)
-	// Thumbnail URLs carry the source version, so a changed photo gets a new
-	// URL and the browser never has to revalidate an old one.
-	w.Header().Set("Cache-Control", "private, max-age=31536000, immutable")
-	if r.Header.Get("If-None-Match") == etag {
-		w.WriteHeader(http.StatusNotModified)
+	thumb, err := photos.Thumbnail(r.Context(), id, r.Header.Get("If-None-Match"))
+	if errors.Is(err, os.ErrNotExist) {
+		http.NotFound(w, r)
 		return
 	}
-	b, err := thumbs.serveBytes(r.Context(), p)
 	if err != nil {
 		http.Error(w, "thumb failed", http.StatusInternalServerError)
 		return
 	}
+	w.Header().Set("ETag", thumbnailETag(thumb.Photo))
+	w.Header().Set("Cache-Control", "private, max-age=31536000, immutable")
+	if thumb.NotModified {
+		w.WriteHeader(http.StatusNotModified)
+		return
+	}
 	w.Header().Set("Content-Type", "image/jpeg")
-	w.Header().Set("Content-Length", strconv.Itoa(len(b)))
-	_, _ = w.Write(b)
+	w.Header().Set("Content-Length", strconv.Itoa(len(thumb.Bytes)))
+	_, _ = w.Write(thumb.Bytes)
 }
 
 // originalLinker is implemented by sources that can send the browser straight

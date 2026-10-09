@@ -408,7 +408,7 @@ func TestWallpaperBackfillForIndexedPhotos(t *testing.T) {
 		if err != nil || !info.ModTime().Equal(thumbs[p.RelPath].ModTime()) || info.Size() != thumbs[p.RelPath].Size() {
 			t.Fatalf("thumbnail of %s rewritten", p.RelPath)
 		}
-		if ready, err := h.sc.wallpapersReady(p); err != nil || !ready {
+		if ready, err := h.sc.photos.wallpapersReady(p); err != nil || !ready {
 			t.Fatalf("%s not backfilled: %v", p.RelPath, err)
 		}
 	}

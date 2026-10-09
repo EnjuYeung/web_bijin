@@ -32,6 +32,10 @@ type fixSource struct {
 func (s *fixSource) Walk(ctx context.Context, visit func(sourceObject) error) error {
 	return visit(s.object)
 }
+func (s *fixSource) Stat(ctx context.Context, rel string) (sourceObject, error) {
+	return s.object, ctx.Err()
+}
+
 func (s *fixSource) Open(context.Context, string) (readSeekCloser, error) {
 	s.opens.Add(1)
 	if s.fail {
@@ -149,14 +153,17 @@ func TestFixCorruptImageSkippedUntilVersionChanges(t *testing.T) {
 	}
 }
 func TestFixConcurrentMissingThumbnailAndCancelledWait(t *testing.T) {
-	_, src, th, _ := fixSetup(t)
-	p := photo{ID: 1, RelPath: "a.jpg", SourceVersion: "v1"}
+	st, src, th, sc := fixSetup(t)
+	p := photo{ID: 1, RelPath: "a.jpg", SourceVersion: "v1", Width: 128, Height: 96}
+	if _, err := st.upsert(p); err != nil {
+		t.Fatal(err)
+	}
 	if err := th.lock(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	if err := th.ensure(ctx, p); !errors.Is(err, context.Canceled) {
+	if err := testThumbnailError(sc.photos, ctx, p.ID); !errors.Is(err, context.Canceled) {
 		t.Fatalf("wait not cancelled: %v", err)
 	}
 	var wg sync.WaitGroup
@@ -164,7 +171,7 @@ func TestFixConcurrentMissingThumbnailAndCancelledWait(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			b, err := th.serveBytes(context.Background(), p)
+			b, err := testThumbnailBytes(sc.photos, context.Background(), p.ID)
 			if err != nil || len(b) == 0 {
 				t.Errorf("thumbnail: %v", err)
 			}
@@ -188,7 +195,7 @@ func TestFixPasswordChangeRevokesCookie(t *testing.T) {
 	}
 }
 func TestFixCacheTracksSourceVersion(t *testing.T) {
-	st, src, th, sc := fixSetup(t)
+	st, src, _, sc := fixSetup(t)
 	sc.run(context.Background())
 	p, _, _ := st.getBySourceKey("a.jpg")
 	oldItem := makePhotoItem(p, "Asia/Shanghai")
@@ -200,7 +207,7 @@ func TestFixCacheTracksSourceVersion(t *testing.T) {
 		if original {
 			handleOriginal(w, r, st, src)
 		} else {
-			handleThumb(w, r, st, th)
+			handleThumb(w, r, sc.photos)
 		}
 		return w
 	}
@@ -266,7 +273,7 @@ func TestFixS3BodyCancellationAndSingleRead(t *testing.T) {
 				defer cancel()
 			}
 			start := time.Now()
-			err = th.ensure(ctx, photo{ID: 1, RelPath: "a.jpg"})
+			err = prepareTestThumbnail(th, ctx, photo{ID: 1, RelPath: "a.jpg"})
 			if stall {
 				if err == nil || time.Since(start) > 2*time.Second {
 					t.Fatalf("deadline failed: %v", err)
@@ -327,7 +334,7 @@ func TestFixOrientationAndPixelLimit(t *testing.T) {
 		t.Fatalf("orientation: %+v %+v %v", p, cfg, err)
 	}
 	src.object.Version = "v2"
-	sc.cfg.MaxPixels = 100
+	sc = newScanner(config{MaxPixels: 100}, st, th, sc.sources)
 	sc.run(context.Background())
 	p, _, _ = st.getByID(p.ID)
 	if !p.Broken || sc.snapshot().Ready != 0 || !errors.Is(sc.walk(context.Background()), nil) {
@@ -357,7 +364,7 @@ func TestFixS3DefaultDeadline(t *testing.T) {
 	}
 	th := newThumbCache(t.TempDir(), t.TempDir(), src, 1)
 	start := time.Now()
-	err = th.ensure(context.Background(), photo{ID: 1, RelPath: "a.jpg"})
+	err = prepareTestThumbnail(th, context.Background(), photo{ID: 1, RelPath: "a.jpg"})
 	if err == nil || time.Since(start) > imageReadTimeout+3*time.Second {
 		t.Fatalf("unbounded body read: %v after %s", err, time.Since(start))
 	}

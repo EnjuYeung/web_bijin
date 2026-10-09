@@ -4,7 +4,6 @@ import (
 	"context"
 	"crypto/subtle"
 	"encoding/json"
-	"errors"
 	"log/slog"
 	"net/http"
 	"net/url"
@@ -32,34 +31,6 @@ func (s *scanner) eventSnapshot() eventState {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.events
-}
-
-// syncObject applies the storage's current state of one key. The storage is
-// asked again instead of trusting the event, so repeated, late or reordered
-// notifications all end in the same index.
-func (s *scanner) syncObject(ctx context.Context, t eventTarget) error {
-	object, err := t.src.Stat(ctx, t.rel)
-	if isNotFound(err) {
-		return s.removeKey(t.key)
-	}
-	if err != nil {
-		return err
-	}
-	object.Key = t.key
-	return s.ingest(ctx, object)
-}
-
-func (s *scanner) removeKey(key string) error {
-	defer s.thumbs.lockKey(key)()
-	p, ok, err := s.store.getBySourceKey(key)
-	if err != nil || !ok {
-		return err
-	}
-	if err := s.store.deleteByID(p.ID); err != nil {
-		return err
-	}
-	s.thumbs.remove(p.ID)
-	return nil
 }
 
 type eventHub struct {
@@ -171,8 +142,8 @@ func (h *eventHub) schedule(t eventTarget) {
 func (h *eventHub) sync(t eventTarget) {
 	for attempt := 1; ; attempt++ {
 		start := time.Now()
-		err := h.scanner.syncObject(h.ctx, t)
-		var invalid *invalidImageError
+		result := h.scanner.photos.SyncKey(h.ctx, t.key)
+		err := result.Err
 		switch {
 		case err == nil:
 			slog.Info("storage event", "source", t.source, "path", t.rel, "ms", time.Since(start).Milliseconds())
@@ -180,7 +151,7 @@ func (h *eventHub) sync(t eventTarget) {
 			return
 		case h.ctx.Err() != nil:
 			return
-		case errors.As(err, &invalid):
+		case !result.Retryable:
 			// Recorded as unreadable; only a new version is tried again.
 			slog.Warn("storage event", "source", t.source, "path", t.rel, "err", err)
 			return

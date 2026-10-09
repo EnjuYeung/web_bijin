@@ -30,6 +30,7 @@ type sourceObject struct {
 	Mtime   time.Time
 	Version string
 	Backend string
+	ETag    string // source metadata for conditional S3 reads; not persisted
 }
 
 type readSeekCloser interface {
@@ -44,6 +45,7 @@ type imageOpener interface {
 
 type photoSource interface {
 	imageOpener
+	Stat(context.Context, string) (sourceObject, error)
 	Walk(context.Context, func(sourceObject) error) error
 }
 
@@ -132,19 +134,55 @@ func (s *sourceSet) useStorages(list []s3Config) {
 	s.setRemotes(remotes)
 }
 
-func (s *sourceSet) Open(ctx context.Context, key string) (readSeekCloser, error) {
+var errSourceNotConfigured = errors.New("photo source is not configured")
+
+func (s *sourceSet) resolve(key string) (photoSource, string, error) {
 	owner := keyOwner(key)
 	if owner == localSourceID {
-		return s.local.Open(ctx, key)
+		return s.local, key, nil
 	}
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	for _, r := range s.remotes {
 		if r.ID == owner {
-			return r.Src.Open(ctx, strings.TrimPrefix(key, r.Prefix))
+			return r.Src, strings.TrimPrefix(key, r.Prefix), nil
 		}
 	}
-	return nil, fmt.Errorf("source %s is not configured", owner)
+	return nil, "", fmt.Errorf("%w: %s", errSourceNotConfigured, owner)
+}
+
+func (s *sourceSet) Open(ctx context.Context, key string) (readSeekCloser, error) {
+	source, rel, err := s.resolve(key)
+	if err != nil {
+		return nil, err
+	}
+	return source.Open(ctx, rel)
+}
+
+func (s *sourceSet) Stat(ctx context.Context, key string) (sourceObject, error) {
+	ctx, cancel := context.WithTimeout(ctx, imageReadTimeout)
+	defer cancel()
+	source, rel, err := s.resolve(key)
+	if err != nil {
+		return sourceObject{}, err
+	}
+	object, err := source.Stat(ctx, rel)
+	object.Key = key
+	return object, err
+}
+
+func (s *sourceSet) OpenVersion(ctx context.Context, object sourceObject) (readSeekCloser, error) {
+	source, rel, err := s.resolve(object.Key)
+	if err != nil {
+		return nil, err
+	}
+	if opener, ok := source.(interface {
+		OpenVersion(context.Context, sourceObject) (readSeekCloser, error)
+	}); ok {
+		object.Key, object.RelPath = rel, rel
+		return opener.OpenVersion(ctx, object)
+	}
+	return source.Open(ctx, rel)
 }
 
 // originalLink returns a presigned browser URL for an original when the
@@ -202,6 +240,10 @@ func (s *sourceSet) match(bucket, objectKey string) []eventTarget {
 }
 
 type brokenSource struct{ err error }
+
+func (b brokenSource) Stat(context.Context, string) (sourceObject, error) {
+	return sourceObject{}, b.err
+}
 
 func (b brokenSource) Walk(context.Context, func(sourceObject) error) error { return b.err }
 func (b brokenSource) Open(context.Context, string) (readSeekCloser, error) {
@@ -266,6 +308,45 @@ func (s *localPhotoSource) Open(_ context.Context, rel string) (readSeekCloser, 
 		return nil, err
 	}
 	return os.Open(full)
+}
+
+func localObject(rel string, info os.FileInfo) sourceObject {
+	return sourceObject{Key: rel, RelPath: rel, Size: info.Size(), Mtime: info.ModTime(),
+		Version: fmt.Sprintf("local:%d:%d", info.Size(), info.ModTime().UnixNano()), Backend: "local"}
+}
+
+func (s *localPhotoSource) Stat(ctx context.Context, rel string) (sourceObject, error) {
+	if err := ctx.Err(); err != nil {
+		return sourceObject{}, err
+	}
+	full, err := safeRelPath(s.root, filepath.FromSlash(rel))
+	if err != nil {
+		return sourceObject{}, err
+	}
+	info, err := os.Stat(full)
+	if err != nil {
+		return sourceObject{}, err
+	}
+	if !info.Mode().IsRegular() {
+		return sourceObject{}, fmt.Errorf("photo is not a regular file")
+	}
+	return localObject(rel, info), nil
+}
+
+func (s *localPhotoSource) OpenVersion(ctx context.Context, object sourceObject) (readSeekCloser, error) {
+	file, err := s.Open(ctx, object.RelPath)
+	if err != nil {
+		return nil, err
+	}
+	info, err := file.(*os.File).Stat()
+	if err == nil && localObject(object.RelPath, info).Version != object.Version {
+		err = errSourceChanged
+	}
+	if err != nil {
+		file.Close()
+		return nil, err
+	}
+	return file, nil
 }
 
 // s3PhotoSource reads one bucket/prefix of any S3-compatible service.
@@ -429,7 +510,7 @@ func s3Object(rel, etag string, size int64, mtime time.Time) sourceObject {
 	if version == "" {
 		version = fmt.Sprintf("%d:%d", size, mtime.UnixNano())
 	}
-	return sourceObject{Key: rel, RelPath: rel, Size: size, Mtime: mtime, Version: "s3:" + version, Backend: "s3"}
+	return sourceObject{Key: rel, RelPath: rel, Size: size, Mtime: mtime, Version: "s3:" + version, Backend: "s3", ETag: strings.Trim(etag, `"`)}
 }
 
 // Stat reads the current state of one object; a notification only names it.
@@ -451,7 +532,7 @@ func (s *s3PhotoSource) Stat(ctx context.Context, rel string) (sourceObject, err
 
 func isNotFound(err error) bool {
 	var resp minio.ErrorResponse
-	return errors.As(err, &resp) && (resp.StatusCode == http.StatusNotFound || resp.Code == "NoSuchKey")
+	return errors.Is(err, os.ErrNotExist) || errors.As(err, &resp) && (resp.StatusCode == http.StatusNotFound || resp.Code == "NoSuchKey")
 }
 
 // Presign returns a browser URL for the original of one object version. The
@@ -500,6 +581,14 @@ func (s *s3PhotoSource) Presign(ctx context.Context, rel, version string) (strin
 }
 
 func (s *s3PhotoSource) Open(ctx context.Context, rel string) (readSeekCloser, error) {
+	return s.open(ctx, rel, "", "")
+}
+
+func (s *s3PhotoSource) OpenVersion(ctx context.Context, object sourceObject) (readSeekCloser, error) {
+	return s.open(ctx, object.RelPath, object.Version, object.ETag)
+}
+
+func (s *s3PhotoSource) open(ctx context.Context, rel, version, etag string) (readSeekCloser, error) {
 	key, err := s.objectKey(rel)
 	if err != nil {
 		return nil, err
@@ -509,12 +598,23 @@ func (s *s3PhotoSource) Open(ctx context.Context, rel string) (readSeekCloser, e
 		return nil, err
 	}
 	ctx, cancel := context.WithTimeout(ctx, imageReadTimeout)
-	object, err := client.GetObject(ctx, s.cfg.Bucket, key, minio.GetObjectOptions{})
+	options := minio.GetObjectOptions{}
+	if etag != "" {
+		if err := options.SetMatchETag(etag); err != nil {
+			cancel()
+			return nil, err
+		}
+	}
+	object, err := client.GetObject(ctx, s.cfg.Bucket, key, options)
 	if err != nil {
 		cancel()
 		return nil, err
 	}
-	if _, err := object.Stat(); err != nil {
+	info, err := object.Stat()
+	if err == nil && version != "" && s3Object(rel, info.ETag, info.Size, info.LastModified).Version != version {
+		err = errSourceChanged
+	}
+	if err != nil {
 		_ = object.Close()
 		cancel()
 		return nil, err

@@ -10,7 +10,6 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"sync"
 	"time"
 
 	"github.com/disintegration/imaging"
@@ -25,18 +24,10 @@ type thumbCache struct {
 	// gate bounds how many images are read and decoded at once; scanning,
 	// storage events and missing-thumbnail requests share it.
 	gate chan struct{}
-
-	keysMu sync.Mutex
-	keys   map[string]*keyLock
-}
-
-type keyLock struct {
-	sync.Mutex
-	users int
 }
 
 func newThumbCache(dir, wallDir string, source imageOpener, workers int) *thumbCache {
-	return &thumbCache{dir: dir, wallDir: wallDir, source: source, edge: 720, gate: make(chan struct{}, max(1, workers)), keys: map[string]*keyLock{}}
+	return &thumbCache{dir: dir, wallDir: wallDir, source: source, edge: 720, gate: make(chan struct{}, max(1, workers))}
 }
 
 const imageReadTimeout = 45 * time.Second
@@ -56,28 +47,6 @@ func (t *thumbCache) lock(ctx context.Context) error {
 	}
 }
 func (t *thumbCache) unlock() { <-t.gate }
-
-// lockKey serializes work on one index key, so a scan, an event and a page
-// request for the same photo read it once; different photos run in parallel.
-func (t *thumbCache) lockKey(key string) (unlock func()) {
-	t.keysMu.Lock()
-	l := t.keys[key]
-	if l == nil {
-		l = &keyLock{}
-		t.keys[key] = l
-	}
-	l.users++
-	t.keysMu.Unlock()
-	l.Lock()
-	return func() {
-		l.Unlock()
-		t.keysMu.Lock()
-		if l.users--; l.users == 0 {
-			delete(t.keys, key)
-		}
-		t.keysMu.Unlock()
-	}
-}
 
 func (t *thumbCache) path(p photo) string {
 	return filepath.Join(t.dir, fmt.Sprintf("%d-%s.jpg", p.ID, photoVersion(p)))
@@ -116,7 +85,7 @@ type decoded struct {
 
 // Caller holds a generation slot. Spooling to disk keeps remote I/O errors
 // separate from invalid image bytes without retaining whole originals.
-func (t *thumbCache) prepare(ctx context.Context, key string, maxPixels int64) (decoded, error) {
+func (t *thumbCache) prepareVersion(ctx context.Context, object sourceObject, maxPixels int64) (decoded, error) {
 	ctx, cancel := context.WithTimeout(ctx, imageReadTimeout)
 	defer cancel()
 	if err := os.MkdirAll(t.dir, 0o755); err != nil {
@@ -128,7 +97,16 @@ func (t *thumbCache) prepare(ctx context.Context, key string, maxPixels int64) (
 	}
 	defer os.Remove(f.Name())
 	defer f.Close()
-	src, err := t.source.Open(ctx, key)
+	var src readSeekCloser
+	var errOpen error
+	if source, ok := t.source.(interface {
+		OpenVersion(context.Context, sourceObject) (readSeekCloser, error)
+	}); ok && object.Version != "" {
+		src, errOpen = source.OpenVersion(ctx, object)
+	} else {
+		src, errOpen = t.source.Open(ctx, object.Key)
+	}
+	err = errOpen
 	if err != nil {
 		return decoded{}, err
 	}
@@ -193,30 +171,6 @@ func (t *thumbCache) save(p photo, b []byte) error {
 	}
 	return os.Rename(tmp, t.path(p))
 }
-func (t *thumbCache) ensure(ctx context.Context, p photo) error {
-	defer t.lockKey(p.sourceKey())()
-	if t.exists(p) {
-		return nil
-	}
-	if err := t.lock(ctx); err != nil {
-		return err
-	}
-	defer t.unlock()
-	d, err := t.prepare(ctx, p.sourceKey(), 64_000_000)
-	if err != nil {
-		return err
-	}
-	return t.save(p, d.thumb)
-}
-func (t *thumbCache) serveBytes(ctx context.Context, p photo) ([]byte, error) {
-	if !t.exists(p) {
-		if err := t.ensure(ctx, p); err != nil {
-			return nil, err
-		}
-	}
-	return os.ReadFile(t.path(p))
-}
-
 func fitEdge(w, h, edge int) (int, int) {
 	if w <= 0 || h <= 0 {
 		return edge, edge

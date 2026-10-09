@@ -108,7 +108,7 @@ func wallFile(p photo, profile string) string {
 }
 
 // wallpapersReady reports whether a photo version has all its wallpapers.
-func (s *scanner) wallpapersReady(p photo) (bool, error) {
+func (s *photoProcessor) wallpapersReady(p photo) (bool, error) {
 	if p.Broken || !wantsWallpaper(p.RelPath) {
 		return true, nil
 	}
@@ -139,7 +139,7 @@ func (s *scanner) wallpapersReady(p photo) (bool, error) {
 // saveWallpapers encodes the wallpapers of a committed photo version from its
 // decoded image and replaces the photo's rows; files of earlier versions go
 // afterwards. Caller holds the photo's key lock and a generation slot.
-func (s *scanner) saveWallpapers(ctx context.Context, p photo, img image.Image) error {
+func (s *photoProcessor) saveWallpapers(ctx context.Context, p photo, img image.Image) error {
 	if !wantsWallpaper(p.RelPath) {
 		return nil
 	}
@@ -182,6 +182,9 @@ func (s *scanner) saveWallpapers(ctx context.Context, p photo, img image.Image) 
 	}
 	// Encoding cannot be interrupted, so a late finish is caught here.
 	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if err := s.validate(ctx, sourceObject{Key: p.sourceKey(), Version: p.SourceVersion}); err != nil {
 		return err
 	}
 	if err := s.store.replaceWallpapers(p.ID, rows); err != nil {

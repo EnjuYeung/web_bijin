@@ -5,7 +5,6 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"image"
 	"io"
@@ -445,47 +444,21 @@ func (a *uploadAPI) start(t *uploadTask) {
 	go func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
 		defer cancel()
-		var object sourceObject
-		var err error
-		if t.src != nil {
-			object, err = t.src.Stat(ctx, t.Path)
-		} else {
-			var root *os.Root
-			root, err = os.OpenRoot(a.scanner.cfg.PhotosDir)
-			if err == nil {
-				var info os.FileInfo
-				info, err = root.Stat(t.Path)
-				root.Close()
-				if err == nil {
-					object = sourceObject{Key: t.Path, RelPath: t.Path, Size: info.Size(), Mtime: info.ModTime(),
-						Version: fmt.Sprintf("local:%d:%d", info.Size(), info.ModTime().UnixNano()), Backend: "local"}
-				}
-			}
-		}
-		if err == nil {
-			object.Key = t.key
-			err = a.scanner.ingest(ctx, object)
-		}
-		retryable := true
-		if err == nil {
-			var p photo
-			var found bool
-			p, found, err = a.store.getBySourceKey(t.key)
-			if err == nil && (!found || p.Broken || p.Width < 1 || !a.scanner.thumbs.exists(p)) {
+		result := a.scanner.photos.SyncKey(ctx, t.key)
+		err := result.Err
+		if err == nil && (!result.AlbumUsable || !result.WallpapersReady) {
+			switch {
+			case result.Invalid:
 				err = fmt.Errorf("图片无法完整解码，未进入图库；请检查原文件")
-				retryable = false
-			}
-			if err == nil {
-				var ready bool
-				ready, err = a.scanner.wallpapersReady(p)
-				if err == nil && !ready {
-					err = fmt.Errorf("壁纸仍未生成完成")
-				}
+			case result.Missing:
+				err = fmt.Errorf("保存的图片已不存在")
+			default:
+				err = fmt.Errorf("图片处理尚未完成")
+				result.Retryable = true
 			}
 		}
 		if err != nil {
-			var invalid *invalidImageError
-			a.fail(t, "图片已保存，图库处理失败："+describeSourceError(err), retryable && !errors.As(err, &invalid))
+			a.fail(t, "图片已保存，图库处理失败："+describeSourceError(err), result.Retryable)
 			return
 		}
 		a.mu.Lock()

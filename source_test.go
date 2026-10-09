@@ -53,6 +53,10 @@ func (unavailableSource) Walk(context.Context, func(sourceObject) error) error {
 	return errors.New("source offline")
 }
 
+func (unavailableSource) Stat(context.Context, string) (sourceObject, error) {
+	return sourceObject{}, errors.New("source offline")
+}
+
 func (unavailableSource) Open(context.Context, string) (readSeekCloser, error) {
 	return nil, errors.New("source offline")
 }
@@ -86,7 +90,14 @@ func TestScanFailureKeepsExistingIndex(t *testing.T) {
 	}
 }
 
-type migrationLocalSource struct{ unavailableSource }
+type migrationLocalSource struct {
+	unavailableSource
+	object sourceObject
+}
+
+func (s migrationLocalSource) Stat(context.Context, string) (sourceObject, error) {
+	return s.object, nil
+}
 
 func TestLocalMigrationReusesExistingMetadataAndThumb(t *testing.T) {
 	data := t.TempDir()
@@ -106,15 +117,6 @@ func TestLocalMigrationReusesExistingMetadataAndThumb(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	source := migrationLocalSource{}
-	thumbs := newThumbCache(filepath.Join(data, "thumbs"), filepath.Join(data, "wallpapers"), source, 1)
-	if err := os.MkdirAll(thumbs.dir, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(thumbs.dir, fmt.Sprintf("%d.jpg", id)), []byte("existing-thumb"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	scanner := newScanner(config{MaxPixels: 64_000_000}, st, thumbs, newSourceSet(source))
 	object := sourceObject{
 		Key:     "existing.jpg",
 		RelPath: "existing.jpg",
@@ -123,7 +125,16 @@ func TestLocalMigrationReusesExistingMetadataAndThumb(t *testing.T) {
 		Version: "local:10:123",
 		Backend: "local",
 	}
-	if err := scanner.ingest(context.Background(), object); err != nil {
+	source := migrationLocalSource{object: object}
+	thumbs := newThumbCache(filepath.Join(data, "thumbs"), filepath.Join(data, "wallpapers"), source, 1)
+	if err := os.MkdirAll(thumbs.dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(thumbs.dir, fmt.Sprintf("%d.jpg", id)), []byte("existing-thumb"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	scanner := newScanner(config{MaxPixels: 64_000_000}, st, thumbs, newSourceSet(source))
+	if err := scanner.photos.ApplyListed(context.Background(), object).Err; err != nil {
 		t.Fatal(err)
 	}
 	got, ok, err := st.getBySourceKey("existing.jpg")
@@ -183,6 +194,10 @@ func (m *memSource) Walk(_ context.Context, visit func(sourceObject) error) erro
 		}
 	}
 	return nil
+}
+
+func (m *memSource) Stat(ctx context.Context, rel string) (sourceObject, error) {
+	return statTestSource(ctx, m, rel)
 }
 
 func (m *memSource) Open(_ context.Context, rel string) (readSeekCloser, error) {
@@ -320,7 +335,7 @@ func TestRemovedStorageDropsItsPhotosAndThumbs(t *testing.T) {
 		t.Fatal(err)
 	}
 	gone := keysOf(t, st)[storageKeyPrefix(2)+"r2.jpg"]
-	if !sc.thumbs.exists(gone) {
+	if !sc.photos.thumbs.exists(gone) {
 		t.Fatal("thumbnail missing before removal")
 	}
 	set.setRemotes([]namedSource{remote(1, r1)})
@@ -332,7 +347,7 @@ func TestRemovedStorageDropsItsPhotosAndThumbs(t *testing.T) {
 			t.Fatalf("removed storage row kept: %s", key)
 		}
 	}
-	if sc.thumbs.exists(gone) {
+	if sc.photos.thumbs.exists(gone) {
 		t.Fatal("removed storage thumbnail kept")
 	}
 	if n, _ := st.countOK(); n != 3 {

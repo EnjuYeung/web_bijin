@@ -150,7 +150,7 @@ func TestUploadLocalFeedsExistingPhotoAndWallpaperWorkflow(t *testing.T) {
 	if err != nil || !ok || p.Broken || p.Width != 64 {
 		t.Fatalf("indexed photo: %+v %v", p, err)
 	}
-	if !a.scanner.thumbs.exists(p) {
+	if !a.scanner.photos.thumbs.exists(p) {
 		t.Fatal("thumbnail missing")
 	}
 	walls, err := a.store.wallpapersOf(p.ID)
@@ -352,7 +352,7 @@ func TestUploadS3ReusesConfiguredKeyAndIndexesSavedObject(t *testing.T) {
 		t.Fatalf("S3 processing: %s", task.Message)
 	}
 	photo, ok, _ := a.store.getBySourceKey(storageKeyPrefix(1) + "家人/云端 日落.jpg")
-	if !ok || photo.Broken || !a.scanner.thumbs.exists(photo) {
+	if !ok || photo.Broken || !a.scanner.photos.thumbs.exists(photo) {
 		t.Fatal("S3 upload not in existing gallery workflow")
 	}
 	walls, _ := a.store.wallpapersOf(photo.ID)
@@ -385,7 +385,7 @@ func TestUploadS3DoesNotReportCachedBrokenImageAsDone(t *testing.T) {
 		t.Fatal(err)
 	}
 	object.Key = storageKeyPrefix(1) + object.RelPath
-	if err := a.scanner.ingest(context.Background(), object); err == nil {
+	if err := a.scanner.photos.ApplyListed(context.Background(), object).Err; err == nil {
 		t.Fatal("broken image was accepted")
 	}
 	res, body := a.request(t, http.MethodPost, "/api/uploads/"+p.Task.ID+"/complete", []byte("{}"))
