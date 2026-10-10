@@ -61,6 +61,17 @@ CREATE TABLE IF NOT EXISTS album_people (
   PRIMARY KEY (album, person_id)
 );
 CREATE INDEX IF NOT EXISTS album_people_person ON album_people(person_id);
+CREATE TABLE IF NOT EXISTS organize_receipts (
+ operation_id TEXT PRIMARY KEY,
+ issued_ms INTEGER NOT NULL,
+ fingerprint TEXT NOT NULL,
+ result BLOB NOT NULL
+);
+CREATE TABLE IF NOT EXISTS organize_receipt_floor (
+ id INTEGER PRIMARY KEY CHECK (id = 1),
+ before_ms INTEGER NOT NULL
+);
+INSERT OR IGNORE INTO organize_receipt_floor (id, before_ms) VALUES (1, 0);
 `)
 	return err
 }
@@ -112,6 +123,13 @@ func (s *store) setAlbumPeople(albums []string, author *string, models []string)
 		return err
 	}
 	defer tx.Rollback()
+	if err := setAlbumPeopleTx(tx, albums, author, models); err != nil {
+		return err
+	}
+	return s.commitPeople(tx)
+}
+
+func setAlbumPeopleTx(tx *sql.Tx, albums []string, author *string, models []string) error {
 	var authorIDs []int64
 	if author != nil && *author != "" {
 		id, err := personID(tx, roleAuthor, *author)
@@ -151,7 +169,7 @@ func (s *store) setAlbumPeople(albums []string, author *string, models []string)
 			}
 		}
 	}
-	return s.commitPeople(tx)
+	return nil
 }
 
 // albumPeopleMap returns the people of every album that has any, including
@@ -162,8 +180,16 @@ func (s *store) albumPeopleMap() (map[string]albumPeople, error) {
 	})
 }
 
+type peopleReader interface {
+	Query(string, ...any) (*sql.Rows, error)
+}
+
 func (s *store) loadAlbumPeople() (map[string]albumPeople, error) {
-	rows, err := s.db.Query(`SELECT ap.album, p.id, p.role, p.name FROM album_people ap
+	return loadAlbumPeopleFrom(s.db)
+}
+
+func loadAlbumPeopleFrom(db peopleReader) (map[string]albumPeople, error) {
+	rows, err := db.Query(`SELECT ap.album, p.id, p.role, p.name FROM album_people ap
 	  JOIN people p ON p.id = ap.person_id ORDER BY ap.album, ap.position, p.id`)
 	if err != nil {
 		return nil, err
@@ -188,7 +214,11 @@ func (s *store) loadAlbumPeople() (map[string]albumPeople, error) {
 }
 
 func (s *store) listPeople() ([]personRow, error) {
-	rows, err := s.db.Query(`SELECT id, role, name FROM people ORDER BY name, id`)
+	return listPeopleFrom(s.db)
+}
+
+func listPeopleFrom(db peopleReader) ([]personRow, error) {
+	rows, err := db.Query(`SELECT id, role, name FROM people ORDER BY name, id`)
 	if err != nil {
 		return nil, err
 	}
@@ -213,8 +243,19 @@ func (s *store) renamePerson(id int64, name string) (personRef, bool, error) {
 		return personRef{}, false, err
 	}
 	defer tx.Rollback()
+	ref, merged, err := renamePersonTx(tx, id, name)
+	if err != nil {
+		return personRef{}, false, err
+	}
+	if err := s.commitPeople(tx); err != nil {
+		return personRef{}, false, err
+	}
+	return ref, merged, nil
+}
+
+func renamePersonTx(tx *sql.Tx, id int64, name string) (personRef, bool, error) {
 	var role string
-	err = tx.QueryRow(`SELECT role FROM people WHERE id = ?`, id).Scan(&role)
+	err := tx.QueryRow(`SELECT role FROM people WHERE id = ?`, id).Scan(&role)
 	if err == sql.ErrNoRows {
 		return personRef{}, false, errPersonNotFound
 	}
@@ -241,9 +282,6 @@ func (s *store) renamePerson(id int64, name string) (personRef, bool, error) {
 	if _, err := tx.Exec(`UPDATE people SET name = ? WHERE id = ?`, name, target); err != nil {
 		return personRef{}, false, err
 	}
-	if err := s.commitPeople(tx); err != nil {
-		return personRef{}, false, err
-	}
 	return personRef{ID: target, Name: name}, merged, nil
 }
 
@@ -254,6 +292,13 @@ func (s *store) deletePerson(id int64) error {
 		return err
 	}
 	defer tx.Rollback()
+	if err := deletePersonTx(tx, id); err != nil {
+		return err
+	}
+	return s.commitPeople(tx)
+}
+
+func deletePersonTx(tx *sql.Tx, id int64) error {
 	if _, err := tx.Exec(`DELETE FROM album_people WHERE person_id = ?`, id); err != nil {
 		return err
 	}
@@ -264,7 +309,7 @@ func (s *store) deletePerson(id int64) error {
 	if n, _ := res.RowsAffected(); n == 0 {
 		return errPersonNotFound
 	}
-	return s.commitPeople(tx)
+	return nil
 }
 
 // deleteAlbumPeople removes every entry of the given albums.
@@ -274,12 +319,19 @@ func (s *store) deleteAlbumPeople(albums []string) error {
 		return err
 	}
 	defer tx.Rollback()
+	if err := deleteAlbumPeopleTx(tx, albums); err != nil {
+		return err
+	}
+	return s.commitPeople(tx)
+}
+
+func deleteAlbumPeopleTx(tx *sql.Tx, albums []string) error {
 	for _, album := range albums {
 		if _, err := tx.Exec(`DELETE FROM album_people WHERE album = ?`, album); err != nil {
 			return err
 		}
 	}
-	return s.commitPeople(tx)
+	return nil
 }
 
 func (s *store) commitPeople(tx *sql.Tx) error {
@@ -305,6 +357,8 @@ type organizeAPI struct {
 }
 
 func (a *organizeAPI) routes(mux *http.ServeMux, gate *authGate) {
+	mux.Handle("POST /api/organize", gate.protect(http.HandlerFunc(a.change)))
+	mux.Handle("GET /api/organize/receipts/{operation}", gate.protect(http.HandlerFunc(a.receipt)))
 	mux.Handle("GET /api/people", gate.protect(http.HandlerFunc(a.people)))
 	mux.Handle("PUT /api/album-people", gate.protect(http.HandlerFunc(a.assign)))
 	mux.Handle("DELETE /api/album-people/stale", gate.protect(http.HandlerFunc(a.cleanStale)))
@@ -347,29 +401,7 @@ func (a *organizeAPI) view(current map[string]bool) (peopleView, error) {
 	if err != nil {
 		return peopleView{}, err
 	}
-	v := peopleView{Authors: []personView{}, Models: []personView{}}
-	uses := make(map[int64]int)
-	for album, ap := range links {
-		if !current[album] {
-			v.Stale++
-			continue
-		}
-		if ap.Author != nil {
-			uses[ap.Author.ID]++
-		}
-		for _, m := range ap.Models {
-			uses[m.ID]++
-		}
-	}
-	for _, p := range people {
-		pv := personView{personRef: p.personRef, Albums: uses[p.ID]}
-		if p.role == roleAuthor {
-			v.Authors = append(v.Authors, pv)
-		} else {
-			v.Models = append(v.Models, pv)
-		}
-	}
-	return v, nil
+	return peopleViewOf(people, links, current), nil
 }
 
 // respond answers a request with the refreshed name lists added.
@@ -417,62 +449,15 @@ func (a *organizeAPI) assign(w http.ResponseWriter, r *http.Request) {
 	if !decodeOrganize(w, r, &in, 1<<20) {
 		return
 	}
-	if in.Author == nil && in.Models == nil {
-		writeOrganizeError(w, invalid("没有要修改的作者或模特"))
-		return
-	}
-	if len(in.Albums) == 0 || len(in.Albums) > maxAlbumsPerRequest {
-		writeOrganizeError(w, invalid("一次可以修改 1–%d 本相册", maxAlbumsPerRequest))
-		return
-	}
 	current, err := a.currentAlbums()
 	if err != nil {
 		writeOrganizeError(w, err)
 		return
 	}
-	albums := make([]string, 0, len(in.Albums))
-	seen := make(map[string]bool)
-	for _, raw := range in.Albums {
-		id, ok := validAlbumID(raw)
-		if !ok || !current[id] {
-			writeOrganizeError(w, invalid("相册不存在或已改名，请刷新页面"))
-			return
-		}
-		if !seen[id] {
-			seen[id] = true
-			albums = append(albums, id)
-		}
-	}
-	var author *string
-	if in.Author != nil {
-		name := ""
-		if strings.TrimSpace(*in.Author) != "" {
-			if name, err = cleanPersonName(*in.Author); err != nil {
-				writeOrganizeError(w, err)
-				return
-			}
-		}
-		author = &name
-	}
-	var models []string
-	if in.Models != nil {
-		models = []string{}
-		keys := make(map[string]bool)
-		for _, raw := range *in.Models {
-			name, err := cleanPersonName(raw)
-			if err != nil {
-				writeOrganizeError(w, err)
-				return
-			}
-			if key := nameKey(name); !keys[key] {
-				keys[key] = true
-				models = append(models, name)
-			}
-		}
-		if len(models) > maxModelsPerAlbum {
-			writeOrganizeError(w, invalid("每本相册最多 %d 位模特", maxModelsPerAlbum))
-			return
-		}
+	albums, author, models, err := normalizeAlbumAssignment(in, current)
+	if err != nil {
+		writeOrganizeError(w, err)
+		return
 	}
 	if err := a.store.setAlbumPeople(albums, author, models); err != nil {
 		writeOrganizeError(w, err)

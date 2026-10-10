@@ -30,18 +30,20 @@ type uploadInput struct {
 }
 
 type uploadTask struct {
-	ID        string `json:"id"`
-	Target    string `json:"target"`
-	Path      string `json:"path"`
-	Phase     string `json:"phase"`
-	Message   string `json:"message,omitempty"`
-	Saved     bool   `json:"saved"`
-	Retryable bool   `json:"retryable"`
-	size      int64
-	kind      string
-	key       string
-	src       *s3PhotoSource
-	created   time.Time
+	ID                string `json:"id"`
+	Target            string `json:"target"`
+	Path              string `json:"path"`
+	Phase             string `json:"phase"`
+	Message           string `json:"message,omitempty"`
+	Saved             bool   `json:"saved"`
+	Retryable         bool   `json:"retryable"`
+	TransferRetryable bool   `json:"transferRetryable"`
+	Code              string `json:"code,omitempty"`
+	size              int64
+	kind              string
+	key               string
+	src               *s3PhotoSource
+	created           time.Time
 }
 
 type uploadAPI struct {
@@ -63,6 +65,7 @@ func (a *uploadAPI) routes(mux *http.ServeMux, gate *authGate) {
 	mux.Handle("GET /api/uploads/{id}", gate.protect(http.HandlerFunc(a.status)))
 	mux.Handle("PUT /api/uploads/{id}/local", gate.protect(http.HandlerFunc(a.local)))
 	mux.Handle("POST /api/uploads/{id}/complete", gate.protect(http.HandlerFunc(a.complete)))
+	mux.Handle("POST /api/uploads/{id}/verify", gate.protect(http.HandlerFunc(a.verify)))
 	mux.Handle("POST /api/uploads/{id}/retry", gate.protect(http.HandlerFunc(a.retry)))
 }
 
@@ -158,7 +161,7 @@ func (a *uploadAPI) prepare(w http.ResponseWriter, r *http.Request) {
 		writeStorageError(w, err)
 		return
 	}
-	t := &uploadTask{Target: in.Target, Path: rel, Phase: "waiting", Retryable: true, size: in.Size, kind: kind, created: time.Now()}
+	t := &uploadTask{Target: in.Target, Path: rel, Phase: "waiting", Retryable: true, TransferRetryable: true, size: in.Size, kind: kind, created: time.Now()}
 	var random [16]byte
 	if _, err := rand.Read(random[:]); err != nil {
 		writeStorageError(w, err)
@@ -299,6 +302,18 @@ func (a *uploadAPI) fail(t *uploadTask, message string, retryable bool) {
 	a.mu.Unlock()
 }
 
+// A failed local transfer cannot reuse its consumed PUT. It may prepare a new
+// task; this is separate from retrying processing of an already saved original.
+func (a *uploadAPI) failTransfer(t *uploadTask, message string, retryable bool) {
+	a.mu.Lock()
+	t.Phase, t.Message, t.Retryable, t.TransferRetryable = "error", message, false, retryable
+	t.Code = "transfer_failed"
+	if !retryable {
+		t.Code = "invalid_file"
+	}
+	a.mu.Unlock()
+}
+
 func (a *uploadAPI) status(w http.ResponseWriter, r *http.Request) {
 	if t := a.find(w, r); t != nil {
 		a.reply(w, t)
@@ -321,55 +336,55 @@ func (a *uploadAPI) local(w http.ResponseWriter, r *http.Request) {
 	}
 	t.Phase = "uploading"
 	a.mu.Unlock()
-	fail := func(code int, message string) {
-		a.fail(t, message, false)
+	fail := func(code int, message string, retryable bool) {
+		a.failTransfer(t, message, retryable)
 		writeJSON(w, code, map[string]string{"error": message})
 	}
 	if r.ContentLength != t.size {
-		fail(http.StatusBadRequest, "图片大小与准备上传时不一致")
+		fail(http.StatusBadRequest, "图片大小与准备上传时不一致", false)
 		return
 	}
 	root, err := os.OpenRoot(a.scanner.cfg.PhotosDir)
 	if err != nil {
-		fail(http.StatusInternalServerError, "本地照片目录不可写")
+		fail(http.StatusInternalServerError, "本地照片目录不可写", true)
 		return
 	}
 	defer root.Close()
 	dir := path.Dir(t.Path)
 	if dir != "." {
 		if err := uploadLocalParents(root, t.Path); err != nil {
-			fail(http.StatusBadRequest, err.Error())
+			fail(http.StatusBadRequest, err.Error(), false)
 			return
 		}
 		if err := root.MkdirAll(dir, 0755); err != nil {
-			fail(http.StatusInternalServerError, "无法创建本地目录，请检查写入权限")
+			fail(http.StatusInternalServerError, "无法创建本地目录，请检查写入权限", true)
 			return
 		}
 	}
 	tmp := ".bijin-upload-" + t.ID
 	f, err := root.OpenFile(tmp, os.O_CREATE|os.O_EXCL|os.O_RDWR, 0600)
 	if err != nil {
-		fail(http.StatusInternalServerError, "无法写入本地目录，请检查只读挂载和目录权限")
+		fail(http.StatusInternalServerError, "无法写入本地目录，请检查只读挂载和目录权限", true)
 		return
 	}
 	defer root.Remove(tmp)
 	defer f.Close()
 	n, err := io.Copy(f, http.MaxBytesReader(w, r.Body, t.size+1))
 	if err != nil || n != t.size {
-		fail(http.StatusBadRequest, "图片没有完整传输，请重新上传")
+		fail(http.StatusBadRequest, "图片没有完整传输，请重新上传", true)
 		return
 	}
 	if _, err := f.Seek(0, io.SeekStart); err != nil {
-		fail(http.StatusInternalServerError, "无法校验上传图片")
+		fail(http.StatusInternalServerError, "无法校验上传图片", true)
 		return
 	}
 	info, format, err := image.DecodeConfig(f)
 	if err != nil || "image/"+format != t.kind || info.Width < 1 || info.Height < 1 || int64(info.Height) > a.scanner.cfg.MaxPixels/int64(max(info.Width, 1)) {
-		fail(http.StatusBadRequest, "文件不是可显示的图片，或图片像素超过上限")
+		fail(http.StatusBadRequest, "文件不是可显示的图片，或图片像素超过上限", false)
 		return
 	}
 	if err := f.Sync(); err != nil {
-		fail(http.StatusInternalServerError, "图片写入失败，请检查可用磁盘空间")
+		fail(http.StatusInternalServerError, "图片写入失败，请检查可用磁盘空间", true)
 		return
 	}
 	// Linking the complete temporary file is atomic and refuses an existing
@@ -381,7 +396,7 @@ func (a *uploadAPI) local(w http.ResponseWriter, r *http.Request) {
 			a.mu.Unlock()
 			a.reply(w, t)
 		} else {
-			fail(http.StatusInternalServerError, "无法保存图片")
+			fail(http.StatusInternalServerError, "无法保存图片", true)
 		}
 		return
 	}
@@ -397,40 +412,90 @@ func (a *uploadAPI) complete(w http.ResponseWriter, r *http.Request) {
 	if t == nil {
 		return
 	}
-	current := a.snapshot(t)
-	if current.Saved || current.Phase == "skipped" {
-		a.reply(w, t)
-		return
-	}
-	if t.src == nil {
-		writeJSON(w, http.StatusConflict, map[string]string{"error": "本地图片尚未保存"})
-		return
-	}
-	client, err := t.src.conn(r.Context())
-	if err != nil {
-		writeStorageError(w, err)
-		return
-	}
-	key, _ := t.src.objectKey(t.Path)
-	object, err := client.StatObject(r.Context(), t.src.cfg.Bucket, key, minio.StatObjectOptions{})
+	state, err := a.verifySaved(r.Context(), t)
 	if err != nil {
 		writeJSON(w, http.StatusBadGateway, map[string]string{"error": "尚未确认对象保存成功：" + describeSourceError(err)})
 		return
 	}
+	if state == "absent" || state == "pending" {
+		code, message := http.StatusBadGateway, "尚未确认对象保存成功：对象尚不存在"
+		if t.src == nil {
+			code, message = http.StatusConflict, "本地图片尚未保存"
+		}
+		writeJSON(w, code, map[string]string{"error": message})
+		return
+	}
+	a.reply(w, t)
+}
+
+// Verification never equates a disconnected browser with an absent original.
+// S3 PUT is external to bijin, so a waiting memory task requires an object Stat.
+func (a *uploadAPI) verifySaved(ctx context.Context, t *uploadTask) (string, error) {
+	current := a.snapshot(t)
+	if current.Saved {
+		return "saved", nil
+	}
+	if current.Phase == "skipped" {
+		return "skipped", nil
+	}
+	if current.Code == "invalid_file" {
+		return "rejected", nil
+	}
+	if t.src == nil {
+		if current.Phase == "uploading" {
+			return "pending", nil
+		}
+		return "absent", nil
+	}
+	client, err := t.src.conn(ctx)
+	if err != nil {
+		return "", err
+	}
+	key, _ := t.src.objectKey(t.Path)
+	object, err := client.StatObject(ctx, t.src.cfg.Bucket, key, minio.StatObjectOptions{})
+	if err != nil {
+		if isNotFound(err) {
+			return "absent", nil
+		}
+		return "", err
+	}
 	if object.Metadata.Get("X-Amz-Meta-Bijin-Upload") != t.ID {
 		a.mu.Lock()
-		t.Phase, t.Message = "skipped", "已存在同名文件，已跳过"
+		if !t.Saved {
+			t.Phase, t.Message = "skipped", "已存在同名文件，已跳过"
+		}
 		a.mu.Unlock()
-		a.reply(w, t)
-		return
+		return "skipped", nil
 	}
 	if object.Size != t.size {
-		a.fail(t, "存储中的图片大小与上传记录不一致", false)
-		a.reply(w, t)
-		return
+		a.failTransfer(t, "存储中的图片大小与上传记录不一致", false)
+		return "rejected", nil
 	}
 	a.start(t)
-	a.reply(w, t)
+	return "saved", nil
+}
+
+func (a *uploadAPI) verify(w http.ResponseWriter, r *http.Request) {
+	if !uploadJSONOK(w, r) {
+		return
+	}
+	t := a.find(w, r)
+	if t == nil {
+		return
+	}
+	state, err := a.verifySaved(r.Context(), t)
+	if err != nil {
+		writeJSON(w, http.StatusBadGateway, map[string]string{"error": "尚未确认对象保存成功：" + describeSourceError(err)})
+		return
+	}
+	current := a.snapshot(t)
+	if current.Saved {
+		state = "saved"
+	}
+	if current.Phase == "skipped" {
+		state = "skipped"
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"state": state, "task": current})
 }
 
 func (a *uploadAPI) start(t *uploadTask) {
@@ -439,7 +504,7 @@ func (a *uploadAPI) start(t *uploadTask) {
 		a.mu.Unlock()
 		return
 	}
-	t.Saved, t.Phase, t.Message, t.Retryable = true, "processing", "", true
+	t.Saved, t.Phase, t.Message, t.Retryable, t.TransferRetryable, t.Code = true, "processing", "", true, false, ""
 	a.mu.Unlock()
 	go func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)

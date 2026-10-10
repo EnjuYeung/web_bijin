@@ -1,62 +1,57 @@
 # 最近一次测试记录
 
-2026-10-10：退出登录（issue #4）。
+2026-10-10 17:47:49 CST：整理相册保存与上传批次 module。实现基线 `a9f040a`；隔离验证、生产构建、部署及公网浏览器验收完成；推送后清理临时验收资料。
 
 ## 环境
 
-- 开发测试：在 netcup 上另建的副本目录 `/root/bijin-dev-logout`，不碰生产目录和数据；用 Docker 容器运行，限 3 核 / 4 GB，避免影响线上相册。Go 1.27.2（`golang:1.27-alpine`，race 另装 build-base）；前端与浏览器用 `mcr.microsoft.com/playwright:v1.63.0-noble`（Node 24.20.0、npm 11.19.0、Chromium 与 WebKit）；Docker 29.8.1。Go 构建/测试加 `-tags nodynamic`。
-- 测试数据：`go run genphotos.go` 生成的 58 张本地图片、临时 SQLite、独立 S3 HTTP fixture；只用测试账号，没有用生产数据。每次完整浏览器回归前清空并重新生成，因为上传测试会往测试图片目录里加图。
-- Apple WebKit 实验：本机 macOS 15.8.1（Safari 27.0），用 Swift 6.2.4 写的 WKWebView 小程序（磁盘上的独立数据目录），对一个只有 4 个路径的临时 Python 服务测试。实验程序和服务都在临时目录，不进仓库。
+- 本地 `/root/workspaces/web-bijin-organize`：Linux amd64、Go 1.27.2、Node 26.7.0、锁定依赖；Go 使用 `-tags nodynamic`、`GOMAXPROCS=3`、`-p 2` 和独立磁盘临时目录。
+- netcup 隔离副本 `/root/bijin-dev-upload`：Playwright 1.63.0 镜像、Node 24.20.0、Chromium / WebKit；测试与构建限 3 核 / 4 GB，浏览器共享内存 512 MiB。
+- 58 张生成图片、独立 SQLite 和仅监听测试容器本机的 S3 HTTP fixture；完整回归前重置数据。浏览器访问实际 Go 内嵌的静态导出页面。
 
 ## 方法与结果
 
-| 编号 | 功能 / 操作 | 预期 | 方法 | 结果与证据 |
-|---|---|---|---|---|
-| L01 | 退出接口：手机、电脑各登录一次，手机退出 | 303 到 `/login?out=1`，只删手机的 Cookie，`Clear-Site-Data` 只有 `"cache"`，`no-store`；电脑仍可用 | Go `TestLogoutSignsOnlyThisDeviceOut` | 通过 |
-| L02 | 未登录、Cookie 已过期时退出 | 同样回登录页，不报错 | Go `TestLogoutWhenAlreadySignedOut`；浏览器 logout 06 先删 Cookie 再点按钮 | 通过 |
-| L03 | 别的网站发起退出、GET 请求 | 跨站、外来 Origin、`Origin: null` 都 403 且不删 Cookie、不清缓存；GET 405；登录状态不变 | Go `TestLogoutRefusesOtherSitesAndGet`；浏览器 logout 06 从 `localhost:18092` 页面提交表单到 `127.0.0.1:18092/logout` | 通过，浏览器实际收到 403，之后接口仍 200 |
-| L04 | 新测试确实依赖功能 | 去掉 `POST /logout` 路由后 3 个新 Go 测试失败 | 临时副本删掉路由后运行 | 3 个均失败（404），已删除临时副本 |
-| L05 | 按钮位置 | 侧栏最下方、和五个入口隔开、在「家里的回忆」上方；收起时只剩图标且可读名称为「退出登录」；390 px 手机在屏幕内、无横向滚动 | 浏览器 logout 01（Chromium、WebKit）+ 截图 | 通过；截图 `output/logout-sidebar-desktop-*.png`、`logout-sidebar-mobile-*.png` 已人工查看 |
-| L06 | 点退出 | 等待时按钮显示「正在退出…」并禁用；到登录页显示「已退出登录。」；Cookie 消失、接口 401；返回键不回相册；再登录进「照片」首页；夜间模式偏好保留 | 浏览器 logout 02（退出响应人为延迟 1.5 秒，页面把按钮状态记进 sessionStorage 供下一页读取） | 通过；登录页截图 `output/logout-login-page-*.png` 已查看 |
-| L07 | 清掉缓存的缩略图 | 只删 Cookie 时缓存的缩略图仍能读到（对照）；退出后同一标签页和新标签页再取该缩略图都要回服务器，得到 401 | 浏览器 logout 03，用带磁盘缓存的真实浏览器配置 | Chromium 通过（对照 200，退出后 200→401）。Playwright 的 Linux WebKit 退出后仍从缓存给出 200，测试按实际行为断言并标注「known limitation」，见 L11 |
-| L08 | 同一浏览器的其他标签页 | 一个标签页退出后，开着的另一个标签页自动跳到登录页；重新登录后新开的标签页不受影响 | 浏览器 logout 04 | 通过 |
-| L09 | 上传中点退出 | 浏览器先问能否离开；选留下则不退出、按钮不卡在等待、上传继续、仍登录；选离开则退出 | 浏览器 logout 05，拦住上传正文使上传一直进行中 | 通过（两次都弹出 beforeunload 询问） |
-| L10 | 浏览器对 `Clear-Site-Data: "cache"` 的实际支持 | 分别看 303 跳转、直接页面、fetch 三种响应 | Playwright 1.63 的 Chromium 与 WebKit 对临时服务做 HTTP 和 HTTPS 实验 | Chromium：三种都清掉。Linux WebKit：HTTP 和 HTTPS、三种方式都不清 |
-| L11 | Apple WebKit（Safari 的内核）是否清缓存 | 同上，并在清理后用全新窗口再取一次，排除内存缓存 | 本机 WKWebView 实验，对 `http://127.0.0.1` | 三种方式都不清，新窗口也仍从缓存取。HTTPS 上的结果放到生产验证 |
-| L12 | Go 全量、并发与静态检查 | 全部通过 | `go test -tags nodynamic -json -count=1 .`；`go test -race -p 2 …`；`go vet`；`gofmt -l` | 130 个顶层测试通过、1 个跳过（需显式开启的 `TestQueryScale`），51.9 秒；race 同样 130 通过 1 跳过，113.3 秒；vet 通过；gofmt 无输出 |
-| L13 | 前端构建与类型检查 | 通过 | `npm ci`、`npm run build`、`npm run typecheck` | 通过 |
-| L14 | 浏览器完整回归 | 原有 23 项不受影响，新增 6 项在 Chromium 与 WebKit 各跑一遍 | 重新生成测试图片后 `npx playwright test` | 35 通过、0 失败、0 跳过、0 flaky，119.5 秒；logout 02 另在两种浏览器各重复 3 次全部通过 |
+| 编号 | 功能与实际操作 | 预期与验证方式 | 结果及证据 |
+|---|---|---|---|
+| O01 | 连续选模特 A、B、C，延迟真实保存响应 | 最新预览不回退，所有相关操作确认后才显示已保存；module interface、Chromium / WebKit、真实 SQLite | 通过；`saving 01`，15 项整理 module 测试 |
+| O02 | 批量、单行、改名 / 合并 / 删除交错；新名字确认时继续编辑 | 遵循同一操作顺序，后续引用更新身份，输入不丢失；真实请求顺序及最终关联 | 通过；`saving 02`、原整理测试、Go / module 行为测试 |
+| O03 | 已提交后响应丢失、请求未送达、拒绝长名字、回执过期 / 裁剪 | 按编号核对 / 重试一次；待确认阻止后续发送；拒绝保留较新修改；过期不重做 | 通过；`saving 03–05`、SQLite 重开 / 并发 / 回滚及受控 adapter |
+| O04 | 慢回执响应、旧读取晚到、待保存时切页 / 关闭 / 退出 | 回执响应释放 SQLite 连接，旧响应不覆盖新资料，离开前提醒 | 通过；Go 阻塞响应、module、`saving 06` 双浏览器 |
+| U01 | 本地单张 / 多张、文件夹 / 拖入、S3 直传 | 进入相册、缩略图可读、原图字节一致，同名不覆盖 | 通过；原 `upload 01–06`，真实 Go / HTTP S3 fixture |
+| U02 | 本地 PUT 已保存但丢失响应 | 原任务核对后完成，prepare / PUT / verify / complete 为 1 / 1 / 1 / 0，无重新准备 | 通过；`recovery 01` 双浏览器及 module，磁盘原图字节一致 |
+| U03 | S3 PUT 或 complete 响应丢失 | 核对原对象任务标记和大小；prepare / PUT / verify 各 1，已保存原图不重传 | 通过；两项 S3 recovery 双浏览器、Go verify，原图字节一致 |
+| U04 | 断网核对失败，另一张继续；手动继续确认仍失败 | 自动只核对一次，手动每次只核对一次，待确认不阻塞独立图片 | 通过；`recovery 04` 双浏览器、module 请求次数断言 |
+| U05 | 五张任务同时开始，停止四张活动任务；旧回调 / 目录读取晚到 | 立即取消，不发送第五张；结果未知保留，旧结果不能填入新批次；运行中固定位置 / 名单 | 通过；`recovery 05`、module 取消 / 位置 / 清空行为 |
+| U06 | 已保存但处理等待两分钟；明确处理失败 / 坏图；任务过期 | 不持续查询或自动重试，不重传已保存原图；手动续查 / 处理重试；失效保留 saved 事实 | 通过；受控时钟 / 响应 module、两项 expired 双浏览器、Go 坏图 / 传输恢复 |
+| U07 | 未上传 / 待确认时切页或退出；上传中留下 / 确认退出 | 提醒覆盖未完成项；留下保持上传，确认离开不再发 verify 或下一项 | 通过；`recovery 04–06`、`logout 05` 双浏览器、module hold / stop |
+| U08 | verify 的未登录、跨来源、非 JSON、失效、S3 查询故障 | 拒绝非法访问；404 明确失效；存储故障不误报原图不存在 | 通过；7 项新增 Go 顶层验收及既有输入检查 |
+| R01 | 原照片 / 相册 / 大图、公开壁纸、登录 / 两步验证 / 退出、整理及上传 | 原有功能保持；完整回归与静态构建 | 通过；43 Chromium + 26 WebKit，共 69 项 |
 
-过程中出现、已处理的问题：
+实测统计：
 
-- 第二次完整回归中原有 11 项失败：上一轮上传测试往测试图片目录加了 7 张图，导致预期的 58 张变成 65 张。重新生成测试图片后全部通过，没有改动这些测试。
-- WebKit 的 logout 02 曾报一条页面错误：测试打开照片页 25 毫秒后就离开，WebKit 把被取消的照片列表请求记成错误。相册代码本身已捕获该失败，用户看不到。测试改为在没有相册代码的页面上写偏好，并等照片页加载完再结束，之后两种浏览器重复 5 次全部通过。
-- 「正在退出…」的断言一开始取不到按钮：Playwright 在页面跳转等待期间不允许读取旧页面。改为让页面自己把按钮状态写进 sessionStorage，下一页再读出。
+- `npm run test:organizer`：15 / 15；`npm run test:upload`：21 / 21，本地及目标 Node 24 均通过。只通过 module 的 interface 观察结果与 adapter 请求。
+- `go test -tags nodynamic -p 2 -json -count=1 .`：144 个顶层测试通过，0 失败，52.477 秒；1 个既有可选 `TestQueryScale` 未显式启用。
+- `go test -race -tags nodynamic -p 2 -json -count=1 .`：144 通过，0 失败，同一可选测试跳过，111.539 秒。
+- `go vet -tags nodynamic .`、gofmt、`git diff --check`、类型检查、Node 24 静态导出、`CGO_ENABLED=0 go build -tags nodynamic -trimpath`：通过。
+- 最终 `npx playwright test`：69 通过、0 失败、0 跳过、0 flaky，214.765 秒；此前完整回归亦 69 通过。日志：`output/browser-test-final.log`、`output/frontend-final.log`、`output/upload-ui-results.json`；Go JSON：`output/upload-go-test.json`、`output/upload-go-race.json`。
 
-## 生产部署与验证
+## 修复与测试边界
 
-| 编号 | 操作 | 结果与证据 |
-|---|---|---|
-| P01 | 部署前备份 | 在线备份 SQLite（integrity_check=ok，3937 photos / 3982 wallpapers / 1 storage / 21 people / 78 album_people，与线上一致），复制 `.env`、`session.key`、Compose 到 `/root/bijin-backup-20261010-logout`（权限 700/600）；旧镜像另存为 `bijin:rollback-89b0be8` |
-| P02 | 构建与切换 | 生产目录 `git pull --ff-only` 到 `4e6258b`，按原 Dockerfile 构建 `bijin:local`（`sha256:8d7e0677…`，45,425,771 字节，revision 标签 `4e6258b`）；2026-10-10 00:14:13 CST `docker compose up -d --no-build --wait`，容器 healthy |
-| P03 | 启动与日志 | 启动扫描 3937 seen / 3937 ready / 0 failed / 0 removed / 0 sourceErrors；两步验证仍开启；10 分钟内 WARN/ERROR 日志 0 行；运行中进程与 `/app/bijin` SHA-256 一致，二进制内含新页面代码 |
-| P04 | 数据与登录密钥 | 部署后 integrity_check=ok，各表行数与部署前一致；`.env`、`session.key`、Compose 哈希不变，签名密钥未变，已登录设备不会被退出 |
-| P05 | 公网退出接口（curl，经 OpenResty） | 同源 `POST /logout`：303 到 `/login?out=1`，`clear-site-data: "cache"`，`cache-control: no-store`，`set-cookie: bijin=; Path=/; Max-Age=0; HttpOnly; SameSite=Lax`；外来 Origin 与跨站请求 403；GET 405 |
-| P06 | 公网访问保护 | 未登录 `/api/photos`、`/api/albums`、`/api/settings`、`/thumb/1`、`/original/1` 均 401，`/` 302 到登录页；`/login?out=1` 200；公开随机壁纸 302 正常 |
-| P07 | 公网 Chromium（真实 HTTPS、带磁盘缓存的配置，不登录） | 公开壁纸两次读取同一 Date（来自缓存）；在登录页提交退出后显示「已退出登录。」，同一标签页与新标签页再读都回服务器取到新 Date：缓存已清；无页面错误；390 px 手机无横向溢出；截图已查看 |
-| P08 | 公网 WebKit（Playwright Linux 版） | 退出与提示正常；缓存未清，与 L10 一致 |
-| P09 | 公网 Apple WebKit（本机 WKWebView，Safari 27 的内核，真实 HTTPS） | 两次实验都显示退出后同一窗口和新窗口仍从缓存取得壁纸：缓存未清。没有直接操作 Safari 这个 App |
+- 首轮浏览器回归为 63 通过、5 失败、1 项受串行失败阻断：四项失败来自把「查看相册」渲染控件错误定位成 link；改用其真实锚点定位。另一项是 WebKit 确认退出期间，传输中断触发核对，产生页面异常。保留页面异常断言，按生命周期暂缓新请求，加入「退出不再核对」及 hold / stop 行为验收后完整重跑通过。
+- 手动继续确认断网时最初会再次自动核对；增加有界确认行为及独立验收，最终版本重建并重新跑全部 69 项。
+- 浏览器响应丢失验收将选中的同一份 fixture 字节转发给真实 Go PUT 后丢弃回答；S3 complete 丢失先执行真实请求再断开。它验证保存与恢复事实，不冒充真实断网设备测试。已有旧版透明代理探针亦复现 HTTP 200 正文中断后的错误行为。
+- 本地 WebKit 缺少动态库，改用 netcup 既有 Playwright 镜像完成测试，未跳过 WebKit。Node 模块推断与颜色环境警告不影响验收；未发现未预期页面异常。
 
-没有用生产账号登录；需要登录才能看到的侧栏按钮与已登录退出流程由本地浏览器测试覆盖（L05–L09）。
+## 结论
 
-## 结论与限制
+约定的整理顺序 / 最新预览 / SQLite 短期回执，以及上传批次 / 四路执行 / 有界核对 / 停止 / 手动处理恢复 / 过期 / 离开提醒均已实现并有实际证据。上传任务仍在进程内，应用重启或过期后不会自动重建；确认离开后浏览器文件列表不保留。未在实体 Safari / iPhone 设备测试。生产部署及公网验收通过；临时验收资料将在推送后定向清理。
 
-本地与生产验收通过：只退当前设备、拒绝别的网站与 GET、其他标签页跟随、上传中先询问、返回键不回相册、偏好保留；生产数据、登录密钥和已登录设备不受部署影响。
 
-限制：
+## 生产部署与验收（2026-10-10 17:52:07 CST）
 
-- 清缓存只在 Chromium 内核的浏览器（Chrome、Edge 等）里生效，已在生产 HTTPS 上实测。Safari 的内核（Apple WebKit，本机 macOS 15.8.1）在生产 HTTPS 上实测不清；按此推断 iPhone 和 Mac 上的 Safari 退出后，看过的缩略图仍留在浏览器缓存里。退出登录本身照常生效：相册、接口和新的缩略图都要重新登录，留下的缓存只有知道完整地址或翻查缓存文件才能看到。
-- 原图直链在存储域名下，不归本站清，拿到后 24 小时内仍可打开。
-- 退出只删本设备的 Cookie。退出前被复制走的 Cookie 到期前仍然有效；要让所有设备退出，仍需改密码或用两步验证脚本。
-
-原始证据（测试副本内）：`output/go-tests.jsonl`、`output/go-race.jsonl`、`output/ui-run.log`、`output/ui-results.json` 和截图。
+- 按用户要求部署生产：新镜像 `sha256:2fdec186259ccc7aee415c0468722488f0ec4f8bf57c5f445b4bc9d43caba986`，`docker compose up -d --no-build bijin` 后 healthy；容器仍为 6 核 / 4 GiB，原挂载与端口保持。部署前生成的短时管理员验收会话在新容器继续有效，没有修改登录或两步验证配置。
+- 部署启动扫描：3,997 张照片，0 失败、3,997 ready；原五张业务表内容哈希完全相同（photos 3,997、wallpapers 4,042、people 23、album_people 80、storages 1），会话密钥、`.env` 和 Compose 哈希一致。新增整理回执表不改变原资料。
+- Chromium 通过公网 `https://csb.jgbman.cc` 验收：未登录私有接口返回 401；公开随机壁纸跳转和成品 SHA-256 与 URL 一致。
+- 独立临时目录下，本地 PUT 已保存后丢失响应、S3 complete 已保存后丢失响应均恢复完成；两者 prepare / PUT / verify 各 1，complete 分别 0 / 1，任务 saved=true、done，相册原图字节与选中文件逐字节一致，没有重新准备或重传。
+- 同一临时相册连续填写两个模特，暂扣真实 SQLite 回答；旧回答不回退最新选择，后续修改确认前保持保存中，最终两个选择均保存，原编号回执 committed；两次按序写入，页面异常 0。
+- 生产只增加两个有清单的临时原图和两个临时名字。当前推送完成后定向清理原图、人物、关联与操作回执，再核对业务表和配置；不按照片名称猜测或批量删除已有资料。
+- 证据：`output/production-smoke-result.json`、`output/production-data-check.json`、`output/deploy-build.log`。生产验收不冒充实体 Safari 测试。

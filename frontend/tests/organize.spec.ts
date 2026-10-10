@@ -35,7 +35,7 @@ function row(page: Page, name: string) {
   return page.locator(".organize-row").filter({ has: page.locator(".organize-album > strong", { hasText: name }) });
 }
 function saved(page: Page) {
-  return page.waitForResponse(response => new URL(response.url()).pathname === "/api/album-people" && response.request().method() === "PUT");
+  return page.waitForResponse(response => new URL(response.url()).pathname === "/api/organize" && response.request().method() === "POST");
 }
 async function choose(page: Page, trigger: Locator, option: string) {
   await trigger.click();

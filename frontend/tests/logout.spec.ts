@@ -178,6 +178,8 @@ test("logout 04 sends the other open tabs to the login page", async ({ page }) =
 });
 
 test("logout 05 during an upload asks first, and staying keeps the upload signed in", async ({ page }) => {
+  let recoveries = 0;
+  page.on("request", request => { if (new URL(request.url()).pathname.endsWith("/verify")) recoveries++; });
   // Hold the upload body so the upload stays in progress.
   await page.route("**/api/uploads/*/local", () => {});
   await page.goto("/?view=upload");
@@ -204,6 +206,7 @@ test("logout 05 during an upload asks first, and staying keeps the upload signed
   await expect(page).toHaveURL(base + "/login?out=1");
   expect(asked).toEqual(["beforeunload", "beforeunload"]);
   expect(await signedIn(page)).toBe(false);
+  expect(recoveries).toBe(0);
   await page.unrouteAll({ behavior: "ignoreErrors" });
 });
 

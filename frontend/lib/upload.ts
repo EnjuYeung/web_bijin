@@ -3,7 +3,7 @@ import { APIError, loginURL } from "@/lib/api";
 export interface SelectedPhoto { file: File; path: string }
 export interface Selection { items: SelectedPhoto[]; skippedFiles: number; skippedFolders: number }
 export interface UploadTarget { id: string; name: string; kind: "local" | "s3" }
-export interface UploadTask { id: string; target: string; path: string; phase: string; message?: string; saved: boolean; retryable: boolean }
+export interface UploadTask { id: string; target: string; path: string; phase: string; message?: string; saved: boolean; retryable: boolean; transferRetryable: boolean; code?: string }
 export interface PreparedUpload { task: UploadTask; url?: string; method?: string; headers?: Record<string, string> }
 
 export function photoSelection(files: Iterable<File>, folder = false): Selection {
@@ -83,13 +83,13 @@ export async function dropSelection(entries: FileSystemEntry[], files: File[]): 
   return result;
 }
 
-export function sendPhoto(prepared: PreparedUpload, file: File, signal: AbortSignal, progress: (value: number) => void): Promise<void> {
+export function sendPhoto(prepared: PreparedUpload, file: File, signal: AbortSignal, progress: (value: number) => void): Promise<UploadTask | undefined> {
   return new Promise((resolve, reject) => {
     const xhr = new XMLHttpRequest();
     const abort = () => xhr.abort();
-    const finish = (error?: Error) => {
+    const finish = (error?: Error, task?: UploadTask) => {
       signal.removeEventListener("abort", abort);
-      if (error) reject(error); else resolve();
+      if (error) reject(error); else resolve(task);
     };
     xhr.open("PUT", prepared.url!);
     for (const [name, value] of Object.entries(prepared.headers || {})) xhr.setRequestHeader(name, value);
@@ -102,7 +102,11 @@ export function sendPhoto(prepared: PreparedUpload, file: File, signal: AbortSig
       }
     };
     xhr.onload = () => {
-      if ((xhr.status >= 200 && xhr.status < 300) || xhr.status === 412) { progress(100); finish(); return; }
+      if ((xhr.status >= 200 && xhr.status < 300) || xhr.status === 412) {
+        let task: UploadTask | undefined;
+        if (prepared.url?.startsWith("/")) { try { task = JSON.parse(xhr.responseText).task; } catch {} }
+        progress(100); finish(undefined, task); return;
+      }
       if (xhr.status === 401 && prepared.url?.startsWith("/")) location.assign(loginURL());
       let message = "上传失败（" + xhr.status + "），请重试";
       try { message = JSON.parse(xhr.responseText).error || message; } catch {}

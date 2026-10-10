@@ -7,7 +7,9 @@
     "dev": "next dev --hostname 127.0.0.1",
     "build": "next build --webpack && node scripts/export.mjs",
     "typecheck": "tsc --noEmit",
-    "test:ui": "playwright test"
+    "test:ui": "playwright test",
+    "test:organizer": "node --test tests/album-organizer.test.mjs",
+    "test:upload": "node --test tests/upload-batch.test.mjs"
   },
   "dependencies": {
     "@base-ui/react": "1.8.0",

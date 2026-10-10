@@ -3,6 +3,7 @@ import { resolve } from "node:path";
 
 export default defineConfig({
   testDir: "./tests",
+  testIgnore: "**/*.test.mjs",
   fullyParallel: false,
   workers: 1,
   timeout: 45_000,
@@ -17,7 +18,7 @@ export default defineConfig({
   projects: [
     { name: "chromium", use: { browserName: "chromium", launchOptions: { args: ["--no-sandbox"] } } },
     // Safari's engine, for what logging out leaves behind on iPhones and Macs.
-    { name: "webkit", use: { browserName: "webkit" }, testMatch: /logout\.spec\.ts/ },
+    { name: "webkit", use: { browserName: "webkit" }, testMatch: /(logout|organize-saving|upload|upload-recovery)\.spec\.ts/ },
   ],
   webServer: [
     { command: "python3 tests/s3_fixture.py", port: 18093, reuseExistingServer: false },

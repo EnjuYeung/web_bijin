@@ -1,9 +1,11 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useState, useSyncExternalStore } from "react";
 import { Check, ChevronDown, ChevronUp, CircleAlert, Eraser, Pencil, RefreshCw, Trash2, UserRoundPen, Users, X } from "lucide-react";
-import { api, type Album, type AlbumPage, type AlbumPeople, type People, type Person } from "@/lib/api";
-import { albumNames, cleanName, defaultSort, emptyFilter, fillLabels, filtering, matchesFilter, nameCollator, nameKey, sortAlbums, type AlbumFilter, type FillState } from "@/lib/albums";
+import { type Album, type Person } from "@/lib/api";
+import { createAlbumOrganizer, type Change, type Message, type Role, type RowState } from "@/lib/album-organizer";
+import { organizeHTTP } from "@/lib/organize-http";
+import { albumNames, cleanName, emptyFilter, fillLabels, filtering, matchesFilter, nameCollator, nameKey, type AlbumFilter, type FillState } from "@/lib/albums";
 import { OptionSelect } from "@/components/option-select";
 import { PersonPicker } from "@/components/person-picker";
 import { Button } from "@/components/ui/button";
@@ -16,32 +18,18 @@ import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "@/
 import { Skeleton } from "@/components/ui/skeleton";
 import { Spinner } from "@/components/ui/spinner";
 
-type RowState = { kind: "saving" } | { kind: "saved" } | { kind: "error"; text: string };
-type Message = { text: string; kind: "ok" | "err" | "wait" };
-type Change = { author?: string; models?: string[] };
-interface Saved { albums: (AlbumPeople & { id: string })[]; people: People }
 const fillChoices = (Object.keys(fillLabels) as FillState[]).map(value => ({ value, label: fillLabels[value] }));
 
 function RowStatus({ state }: { state?: RowState }) {
   return <p className="organize-status" data-kind={state?.kind} role="status">
-    {state?.kind === "saving" ? <><Spinner aria-hidden="true" />保存中</> : state?.kind === "saved" ? <><Check aria-hidden="true" />已保存</> : state?.kind === "error" ? state.text : null}
+    {state?.kind === "saving" ? <><Spinner aria-hidden="true" />保存中</> : state?.kind === "saved" ? <><Check aria-hidden="true" />已保存</> : state?.kind === "uncertain" ? "待确认" : state?.kind === "waiting" ? "待保存（等待核对）" : state?.kind === "error" ? state.text : null}
   </p>;
 }
 
-// Shows a change at once; the server's answer then replaces it.
-function preview(album: Album, change: Change): Album {
-  const ref = (name: string) => ({ id: 0, name });
-  return {
-    ...album,
-    author: change.author === undefined ? album.author : change.author ? ref(change.author) : null,
-    models: change.models === undefined ? album.models : change.models.map(ref),
-  };
-}
-
 export default function OrganizePanel() {
-  const [albums, setAlbums] = useState<Album[] | null>(null);
-  const [people, setPeople] = useState<People | null>(null);
-  const [loadError, setLoadError] = useState("");
+  const [organizer] = useState(() => createAlbumOrganizer(organizeHTTP));
+  const state = useSyncExternalStore(organizer.subscribe, organizer.getSnapshot, organizer.getSnapshot);
+  const { albums, people, loadError, rows } = state;
   const [filter, setFilter] = useState("");
   const [fill, setFill] = useState<FillState>("all");
   const [peopleFilter, setPeopleFilter] = useState<AlbumFilter>(emptyFilter);
@@ -49,117 +37,58 @@ export default function OrganizePanel() {
   const [matching, setMatching] = useState<Set<string> | null>(null);
   const [peopleOpen, setPeopleOpen] = useState(false);
   const [selected, setSelected] = useState<string[]>([]);
-  const [rows, setRows] = useState<Record<string, RowState>>({});
   const [batchAuthor, setBatchAuthor] = useState<string[]>([]);
   const [batchModels, setBatchModels] = useState<string[]>([]);
-  const [batchMessage, setBatchMessage] = useState<Message | null>(null);
-  const [editing, setEditing] = useState<{ id: number; name: string } | null>(null);
-  const [listMessage, setListMessage] = useState<Message | null>(null);
-  const [pending, setPending] = useState(false);
-  const queues = useRef(new Map<string, Promise<void>>());
-  const alive = useRef(true);
-
-  const load = useCallback(async (signal?: AbortSignal) => {
-    try {
-      const [page, list] = await Promise.all([api<AlbumPage>("/api/albums", { signal }), api<People>("/api/people", { signal })]);
-      if (!alive.current) return;
-      setAlbums(sortAlbums(page.albums, defaultSort)); setPeople(list); setLoadError("");
-    } catch (err) {
-      if (!signal?.aborted && alive.current) setLoadError(err instanceof Error ? err.message : "无法读取相册，请重试。");
-    }
-  }, []);
+  const [batchError, setBatchError] = useState<Message | null>(null);
+  const batchMessage = batchError ?? state.batchMessage;
+  function setBatchMessage(message: Message | null) { setBatchError(message); organizer.clearMessage("batch"); }
+  const [editing, setEditing] = useState<{ role: Role; source: string; name: string } | null>(null);
+  const [listError, setListError] = useState<Message | null>(null);
+  const listMessage = listError ?? state.listMessage;
+  function setListMessage(message: Message | null) { setListError(message); organizer.clearMessage("list"); }
   useEffect(() => {
-    alive.current = true;
-    const controller = new AbortController();
-    void load(controller.signal);
-    return () => { alive.current = false; controller.abort(); };
-  }, [load]);
-
-  function applySaved(result: Saved) {
-    if (!alive.current) return;
-    const saved = new Map(result.albums.map(item => [item.id, item]));
-    setAlbums(previous => previous && previous.map(album => {
-      const next = saved.get(album.id);
-      return next ? { ...album, author: next.author, models: next.models } : album;
-    }));
-    setPeople(result.people);
-  }
-
-  // One album's saves run in order, so its last choice is what stays.
-  function saveRow(album: Album, change: Change) {
-    setAlbums(previous => previous && previous.map(item => item.id === album.id ? preview(item, change) : item));
-    setRows(previous => ({ ...previous, [album.id]: { kind: "saving" } }));
-    const run = async () => {
-      try {
-        applySaved(await api<Saved>("/api/album-people", { method: "PUT", body: JSON.stringify({ albums: [album.id], ...change }) }));
-        if (alive.current) setRows(previous => ({ ...previous, [album.id]: { kind: "saved" } }));
-      } catch (err) {
-        if (!alive.current) return;
-        setRows(previous => ({ ...previous, [album.id]: { kind: "error", text: err instanceof Error ? err.message : "保存失败，请重试" } }));
-        void load();
-      }
+    void organizer.load();
+    const beforeLeave = (event: BeforeUnloadEvent) => {
+      if (!organizer.getSnapshot().hasPending) return;
+      event.preventDefault(); event.returnValue = "";
     };
-    const next = (queues.current.get(album.id) ?? Promise.resolve()).then(run);
-    queues.current.set(album.id, next);
+    addEventListener("beforeunload", beforeLeave);
+    return () => { removeEventListener("beforeunload", beforeLeave); organizer.stop(); };
+  }, [organizer]);
+
+  function saveRow(album: Album, change: Change) {
+    organizer.submit({ kind: "assign", albums: [album.id], ...change });
   }
 
-  async function applyBatch() {
+  function applyBatch() {
     const change: Change = {};
     if (batchAuthor.length) change.author = batchAuthor[0];
     if (batchModels.length) change.models = batchModels;
     if (!selected.length || (!change.author && !change.models)) { setBatchMessage({ text: "先选择作者或模特。", kind: "err" }); return; }
-    setPending(true); setBatchMessage({ text: "正在保存…", kind: "wait" });
-    try {
-      applySaved(await api<Saved>("/api/album-people", { method: "PUT", body: JSON.stringify({ albums: selected, ...change }) }));
-      if (!alive.current) return;
-      setBatchMessage({ text: `已设置 ${selected.length} 本相册。`, kind: "ok" });
-      setSelected([]); setBatchAuthor([]); setBatchModels([]);
-    } catch (err) {
-      if (alive.current) setBatchMessage({ text: err instanceof Error ? err.message : "保存失败，请重试。", kind: "err" });
-    } finally { if (alive.current) setPending(false); }
+    setBatchError(null);
+    organizer.submit({ kind: "assign", albums: selected, batch: true, ...change });
+    setSelected([]); setBatchAuthor([]); setBatchModels([]);
   }
 
-  async function rename(person: Person, list: Person[]) {
+  function rename(person: Person, list: Person[], role: Role) {
     if (!editing) return;
     const name = cleanName(editing.name);
     if (!name) { setListMessage({ text: "名字不能为空。", kind: "err" }); return; }
     if (name === person.name) { setEditing(null); return; }
     const other = list.find(item => item.id !== person.id && nameKey(item.name) === nameKey(name));
     if (other && !confirm(`「${other.name}」已经在名单里。\n\n合并后，所有相册里的「${person.name}」都会改成「${name}」。继续？`)) return;
-    setPending(true);
-    try {
-      const result = await api<{ merged: boolean; people: People }>("/api/people/" + person.id, { method: "PUT", body: JSON.stringify({ name }) });
-      if (!alive.current) return;
-      setEditing(null);
-      setListMessage({ text: result.merged ? `已合并为「${name}」。` : `已改名为「${name}」。`, kind: "ok" });
-      await load();
-    } catch (err) {
-      if (alive.current) setListMessage({ text: err instanceof Error ? err.message : "改名失败，请重试。", kind: "err" });
-    } finally { if (alive.current) setPending(false); }
+    setListError(null); setEditing(null);
+    organizer.submit({ kind: "rename", role, personId: person.id, name });
   }
-  async function remove(person: Person) {
+  function remove(person: Person, role: Role) {
     if (!confirm(`删除「${person.name}」？\n\n会从 ${person.albums} 本相册中去掉这个名字，照片不受影响。`)) return;
-    setPending(true);
-    try {
-      await api("/api/people/" + person.id, { method: "DELETE" });
-      if (!alive.current) return;
-      setListMessage({ text: `已删除「${person.name}」。`, kind: "ok" });
-      await load();
-    } catch (err) {
-      if (alive.current) setListMessage({ text: err instanceof Error ? err.message : "删除失败，请重试。", kind: "err" });
-    } finally { if (alive.current) setPending(false); }
+    setListError(null);
+    organizer.submit({ kind: "remove", role, personId: person.id });
   }
-  async function cleanStale(count: number) {
+  function cleanStale(count: number) {
     if (!confirm(`清理 ${count} 本已不存在的相册的作者和模特记录？\n\n名单里的名字会保留。`)) return;
-    setPending(true);
-    try {
-      const result = await api<{ removed: number; people: People }>("/api/album-people/stale", { method: "DELETE" });
-      if (!alive.current) return;
-      setPeople(result.people);
-      setListMessage({ text: `已清理 ${result.removed} 本相册的失效记录。`, kind: "ok" });
-    } catch (err) {
-      if (alive.current) setListMessage({ text: err instanceof Error ? err.message : "清理失败，请重试。", kind: "err" });
-    } finally { if (alive.current) setPending(false); }
+    setListError(null);
+    organizer.submit({ kind: "cleanStale" });
   }
 
   const visible = useMemo(() => {
@@ -189,17 +118,17 @@ export default function OrganizePanel() {
       <h3 id={"people-" + role}>{title}<span>{list.length}</span></h3>
       {!list.length ? <p className="people-none">还没有{title}，在上面给相册填写后会出现在这里。</p> : <ul>
         {[...list].sort((a, b) => nameCollator.compare(a.name, b.name)).map(person => <li key={person.id}>
-          {editing?.id === person.id ? <form className="people-rename" onSubmit={event => { event.preventDefault(); void rename(person, list); }}>
-            <Input aria-label={`「${person.name}」的新名字`} value={editing.name} maxLength={40} autoFocus disabled={pending}
-              onChange={event => setEditing({ id: person.id, name: event.target.value })}
+          {editing?.role === role && editing.source === person.name ? <form className="people-rename" onSubmit={event => { event.preventDefault(); rename(person, list, role); }}>
+            <Input aria-label={`「${person.name}」的新名字`} value={editing.name} maxLength={40} autoFocus
+              onChange={event => setEditing({ role, source: person.name, name: event.target.value })}
               onKeyDown={event => { if (event.key === "Escape") { event.preventDefault(); setEditing(null); } }} />
-            <Button type="submit" size="icon" aria-label="保存新名字" title="保存" disabled={pending}><Check aria-hidden="true" /></Button>
+            <Button type="submit" size="icon" aria-label="保存新名字" title="保存"><Check aria-hidden="true" /></Button>
             <Button type="button" variant="ghost" size="icon" aria-label="取消改名" title="取消" onClick={() => setEditing(null)}><X aria-hidden="true" /></Button>
           </form> : <>
             <span className="people-name">{person.name}</span>
             <small>{person.albums} 本</small>
-            <Button variant="ghost" size="icon" aria-label={`改名「${person.name}」`} title="改名" disabled={pending} onClick={() => { setEditing({ id: person.id, name: person.name }); setListMessage(null); }}><Pencil aria-hidden="true" /></Button>
-            <Button variant="ghost" size="icon" aria-label={`删除「${person.name}」`} title="删除" disabled={pending} onClick={() => void remove(person)}><Trash2 aria-hidden="true" /></Button>
+            <Button variant="ghost" size="icon" aria-label={`改名「${person.name}」`} title="改名" onClick={() => { setEditing({ role, source: person.name, name: person.name }); setListMessage(null); }}><Pencil aria-hidden="true" /></Button>
+            <Button variant="ghost" size="icon" aria-label={`删除「${person.name}」`} title="删除" onClick={() => remove(person, role)}><Trash2 aria-hidden="true" /></Button>
           </>}
         </li>)}
       </ul>}
@@ -208,7 +137,13 @@ export default function OrganizePanel() {
 
   if (!albums && !loadError) return <div className="organize-shell" role="status" aria-label="正在读取相册"><Skeleton className="h-64" /><Skeleton className="h-48" /></div>;
   return <div id="organize" className="organize-shell">
-    {loadError && <Alert variant="destructive"><CircleAlert aria-hidden="true" /><AlertTitle>相册暂时读不出来</AlertTitle><AlertDescription>{loadError}<Button variant="outline" onClick={() => void load()}><RefreshCw data-icon="inline-start" aria-hidden="true" />重试</Button></AlertDescription></Alert>}
+    {loadError && <Alert variant="destructive"><CircleAlert aria-hidden="true" /><AlertTitle>相册暂时读不出来</AlertTitle><AlertDescription>{loadError}<Button variant="outline" onClick={() => void organizer.load()}><RefreshCw data-icon="inline-start" aria-hidden="true" />重试</Button></AlertDescription></Alert>}
+    {state.uncertain && <Alert id="organize-confirmation"><CircleAlert aria-hidden="true" /><AlertTitle>保存结果待确认</AlertTitle><AlertDescription>
+      <p>{state.uncertain.text}</p><p>可以继续填写；后续修改会等这次结果查清后再保存。</p>
+      <div className="form-actions"><Button id="organize-verify" variant="outline" disabled={state.uncertain.checking} onClick={() => void organizer.verify()}><RefreshCw data-icon="inline-start" aria-hidden="true" />{state.uncertain.checking ? "正在核对…" : "再次核对"}</Button>
+      {state.uncertain.canRetry && <Button id="organize-retry" onClick={() => organizer.retry()}>重试这次保存</Button>}</div>
+    </AlertDescription></Alert>}
+    {state.rejection && <Alert variant="destructive" id="organize-rejection"><CircleAlert aria-hidden="true" /><AlertTitle>有一项修改未保存</AlertTitle><AlertDescription>{state.rejection}。该项已恢复，后续填写仍保留。</AlertDescription></Alert>}
     {albums && people && <>
       <Card className="source-card">
         <CardHeader><CardTitle><h2><UserRoundPen aria-hidden="true" />整理相册</h2></CardTitle><CardDescription>给相册填写作者和模特：从下拉里选已有的名字，或输入新名字后按回车。修改会立即保存。</CardDescription></CardHeader>
@@ -232,8 +167,8 @@ export default function OrganizePanel() {
                 <PersonPicker id="batch-models" label="批量设置模特" placeholder="模特（可多位）" multiple people={people.models} value={batchModels} onChange={setBatchModels} />
               </div>
               <div className="form-actions">
-                <Button id="organize-apply" disabled={pending} onClick={() => void applyBatch()}>{pending && <Spinner data-icon="inline-start" aria-label="正在保存" />}应用到所选相册</Button>
-                <Button variant="ghost" disabled={pending} onClick={() => { setSelected([]); setBatchMessage(null); }}><X data-icon="inline-start" aria-hidden="true" />取消选择</Button>
+                <Button id="organize-apply" onClick={() => void applyBatch()}>应用到所选相册</Button>
+                <Button variant="ghost" onClick={() => { setSelected([]); setBatchMessage(null); }}><X data-icon="inline-start" aria-hidden="true" />取消选择</Button>
               </div>
             </div>}
             {batchMessage && <p id="organize-batch-message" className="form-message" data-kind={batchMessage.kind} role="status">{batchMessage.text}</p>}
@@ -258,7 +193,7 @@ export default function OrganizePanel() {
           <CardAction><Button id="people-toggle" variant="outline" aria-expanded={peopleOpen} aria-controls="people-content" onClick={() => setPeopleOpen(open => !open)}>{peopleOpen ? <ChevronUp data-icon="inline-start" aria-hidden="true" /> : <ChevronDown data-icon="inline-start" aria-hidden="true" />}{peopleOpen ? "收起名单" : "展开名单"}</Button></CardAction>
         </CardHeader>
         {peopleOpen && <CardContent id="people-content" className="organize-content">
-          {people.stale > 0 && <Alert id="organize-stale"><CircleAlert aria-hidden="true" /><AlertTitle>有 {people.stale} 本相册的文件夹已经不存在</AlertTitle><AlertDescription>文件夹可能被改名或删除了，它们的作者和模特记录还在，改回原名会自动恢复。确定不再需要时可以清理。<Button variant="outline" disabled={pending} onClick={() => void cleanStale(people.stale)}><Eraser data-icon="inline-start" aria-hidden="true" />清理失效记录</Button></AlertDescription></Alert>}
+          {people.stale > 0 && <Alert id="organize-stale"><CircleAlert aria-hidden="true" /><AlertTitle>有 {people.stale} 本相册的文件夹已经不存在</AlertTitle><AlertDescription>文件夹可能被改名或删除了，它们的作者和模特记录还在，改回原名会自动恢复。确定不再需要时可以清理。<Button variant="outline" onClick={() => void cleanStale(people.stale)}><Eraser data-icon="inline-start" aria-hidden="true" />清理失效记录</Button></AlertDescription></Alert>}
           <div className="people-columns">{nameList("作者", "author", people.authors)}{nameList("模特", "model", people.models)}</div>
           {listMessage && <p id="people-message" className="form-message" data-kind={listMessage.kind} role="status">{listMessage.text}</p>}
         </CardContent>}

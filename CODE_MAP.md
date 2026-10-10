@@ -38,6 +38,7 @@
 | `order.go` | 计算带 seed 的照片 rank、解析和生成 rank/id 游标，排序与分页由 query_photos.go 复用。 |
 | `album.go` | 定义直接父目录相册、根目录标识和相册显示名称，校验相册路径；数量、最早时间和最新封面由索引查询聚合。 |
 | `organize.go` | 相册作者与模特：`people`、`album_people` 两张表的建表与读写，名字规范化（空白、Unicode 合成、长度、控制字符），按相册设置、改名（同名合并）、删除、失效记录清理，以及 `/api/people`、`/api/album-people` 等整理接口（登录与同源 JSON）。 |
+| `organize_receipts.go` | 整理相册 Go adapter：统一修改、事务内结果与 SQLite 回执、固定编号去重、核对及有上限的清理水位；复用人物写入规则。 |
 | `genphotos.go` | 生成本地测试照片和异常文件，不参与正式程序构建。 |
 
 ## 前端
@@ -50,12 +51,16 @@
 | `frontend/components/photo-gallery.tsx` | 游标分页、虚拟瀑布流、hash 大图、键盘/触摸切换、焦点和滚动恢复。 |
 | `frontend/components/albums.tsx` | 文件夹相册封面、数量、「作者 · 模特」、作者 / 模特多选筛选（本次访问内保留）、排序工具（名称 / 作者 / 模特 / 添加日期与升降序）、空态与重试。 |
 | `frontend/components/option-select.tsx` | 基于 Base UI Select 的单选下拉，与名字下拉同一套弹层样式；用于相册排序、整理页的填写情况、设置页的寻址方式和上传页的保存位置；项目里不再使用原生下拉。 |
-| `frontend/components/organize-panel.tsx` | 整理页：相册清单与作者 / 模特即时保存；按相册名、填写情况、作者、模特筛选后批量设置；名单默认折叠，改名 / 合并 / 删除与失效记录清理。 |
+| `frontend/lib/album-organizer.ts` | 整理相册 deep module：已确认资料 + 未确认意图的最新预览、临时人物身份、页面内统一顺序、明确拒绝、待确认 / 核对 / 原编号重试与保存状态。 |
+| `frontend/lib/organize-http.ts` | 正式 HTTP adapter：读取资料、统一保存、回执核对与失败分类；验证返回的编号和资料格式。 |
+| `frontend/components/organize-panel.tsx` | 整理页的筛选、选中相册、名单编辑与展示；通过整理相册 module 的 interface 提交操作，展示最新预览及核对 / 重试入口，未完成时离开提醒。 |
 | `frontend/components/person-picker.tsx` | 基于 Base UI Combobox 的名字下拉：筛选、复用已有名字、输入新建（用作筛选时只选不建），作者单选、模特多选，可全程用键盘操作。 |
 | `frontend/lib/albums.ts` | 相册排序规则（中文排序器、没填的排最后）、作者 / 模特与填写情况筛选、名字规范化、按相册统计名单、排序与筛选偏好的读写和「作者 · 模特」文字。 |
 | `frontend/components/settings-panel.tsx` | 来源卡片、校验表单、添加/编辑/测试/删除对象存储、大图直连与浏览器访问地址、上传通知状态、随机壁纸卡片（数量与可复制的接口地址）；扫描中短时刷新。 |
-| `frontend/components/upload-panel.tsx` | 独立上传页：目标选择、文件/文件夹添加、拖放、多任务进度、处理状态、停止与重试；文件夹只取直属图片。 |
-| `frontend/lib/upload.ts` | 文件选择与非递归目录处理、格式/大小筛选、XHR 传输进度、取消和等待处理。 |
+| `frontend/components/upload-panel.tsx` | 上传页：读取保存位置、选择 / 拖入文件、显示批次与操作；离开提醒读取 module 的待完成事实。 |
+| `frontend/lib/upload-batch.ts` | 上传批次 module：名单与位置、四路执行、停止、保存核对、续查 / 处理重试、失效与旧回调隔离；`hold()` 协调浏览器离开决定，暂缓后续请求。 |
+| `frontend/lib/upload-http.ts` | 上传 HTTP / XHR adapter：协议验证、有界请求和保存核对，向批次提供外部事实。 |
+| `frontend/lib/upload.ts` | 非递归文件选择 / 拖入读取，XHR 进度、取消及本地保存回执，取消等待。 |
 | `frontend/components/login.tsx` | 登录表单（开启两步验证时显示动态码框）、错误与锁定提示、退出后的「已退出登录」提示并通知其他标签页、安全返回地址。 |
 | `frontend/components/ui/` | 官方 shadcn/ui Base UI 组件；统一语义颜色、按钮状态、表单与对话框。 |
 | `frontend/lib/api.ts`、`frontend/lib/preferences.ts` | 现有 Go API 的类型与请求、格式化、主题与侧栏偏好。 |
@@ -70,6 +75,9 @@
 |---|---|
 | `album_test.go` | 测试文件夹相册的分组、命名、封面、添加日期和过滤。 |
 | `organize_test.go` | 作者 / 模特：名字规范化、替换 / 顺序 / 清空 / 大小写复用、重开数据库后仍在、改名合并与删除、登录 / 同源 / JSON 门禁、非法输入、失效记录与清理。 |
+| `organize_receipts_test.go` | 回执与资料原子提交、失败回滚、并发重复请求、重启、丢失 HTTP 响应后核对、名字 / 同源 / 登录校验、容量 / 时间上限及旧编号不重做。 |
+| `frontend/tests/album-organizer.test.mjs` | 受控响应 adapter，通过 module 的 interface 验证连续选择、三类操作顺序、名单投影、临时名字、失败恢复、读取交错、Unicode 身份及离开后停止发送；`npm run test:organizer`。 |
+| `frontend/tests/organize-saving.spec.ts` | Chromium / WebKit + 真实 Go / SQLite：延迟旧响应、批量 / 单行 / 名单交错、断线核对、原编号重试、明确拒绝、保存中的切页 / 关标签页 / 退出登录。 |
 | `frontend/tests/organize.spec.ts` | 整理页与相册页：新建与复用名字、填写情况 / 作者 / 模特筛选与批量设置、名单折叠与改名 / 合并 / 删除、行内错误、自绘排序下拉与刷新后保持、相册页筛选（打开相册返回后仍在、新标签页清空）、键盘操作、320–1470 px 双主题与已选项对勾同行。 |
 | `auth_test.go` | 测试登录、退出登录（只退当前设备、只清缓存、未登录可退、拒绝别的网站与 GET）、Cookie、访问保护和相关 HTTP 行为。 |
 | `two_step_test.go` | 测试 RFC 6238 官方样例、时间容差、密钥格式与拒绝启动、动态码单次使用、按 IP 锁定与解锁、旧登录失效、终端二维码逐点还原和开启确认流程。 |
@@ -79,6 +87,9 @@
 | `frontend/tests/album.spec.ts`、`frontend/playwright.config.ts` | Playwright 实际浏览器回归：登录、照片/相册、大图、设置表单（含大图直连：浏览器跟随 302 直接向存储取原图）、主题/品牌交互与响应式、随机壁纸卡片与复制、别的网站无 Cookie 引用壁纸、登录页背景为壁纸。 |
 | `frontend/tests/s3_fixture.py` | 仅监听本机的 S3 浏览器测试服务，使用生成的测试图片，接受预签名读写、条件写入与任务元数据，并按 `response-*` 参数返回响应头，不连接真实桶。 |
 | `upload_test.go` | 上传核心验收：保存/索引/缩略图/壁纸、身份与来源检查、非法路径/图片、传输中断、并发同名不覆盖、符号链接、S3 现有凭据与坏图误报回归。 |
+| `upload_verification_test.go` | 核对已保存原图、S3 内存与真实对象差异、不存在与故障、冲突、流式断传和鉴权。 |
+| `frontend/tests/upload-batch.test.mjs` | 通过批次 interface 与受控 adapter 验证执行顺序、传输次数、四路上限、停止 / 失效及恢复。 |
+| `frontend/tests/upload-recovery.spec.ts` | Chromium / WebKit 的真实 Go 本地 / S3 响应丢失、逐项恢复、停止、离开提醒与任务失效。 |
 | `frontend/tests/upload.spec.ts` | 单/多图、本地/S3、文件夹直属图片、多文件夹拖入不读取子目录、失败重试、同名跳过，以及两种主题与 320–1440 px 布局。 |
 | `scan_test.go` | 测试照片扫描、格式识别和异常文件处理。 |
 | `order_test.go` | 测试随机排序和游标分页。 |
