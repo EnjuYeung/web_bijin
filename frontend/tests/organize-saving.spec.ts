@@ -17,11 +17,16 @@ async function actualModels(page: Page) {
   const { albums } = await (await page.request.get("/api/albums")).json();
   return albums.find((album: { id: string }) => album.id === "misc").models.map((person: { name: string }) => person.name);
 }
+// Test data goes through the same save endpoint, one new operation number each.
+async function organize(page: Page, change: Omit<Wire, "operationId"> & { personId?: number }) {
+  const response = await page.request.post("/api/organize", { data: { operationId: `${Date.now()}-${crypto.randomUUID()}`, ...change } });
+  expect(response.status(), await response.text()).toBe(200);
+}
 async function reset(page: Page) {
   const { albums } = await (await page.request.get("/api/albums")).json();
-  expect((await page.request.put("/api/album-people", { data: { albums: albums.map((album: { id: string }) => album.id), author: "", models: [] } })).status()).toBe(200);
+  await organize(page, { kind: "assign", albums: albums.map((album: { id: string }) => album.id), author: "", models: [] });
   const people = await (await page.request.get("/api/people")).json();
-  for (const person of [...people.authors, ...people.models]) expect((await page.request.delete("/api/people/" + person.id)).status()).toBe(200);
+  for (const person of [...people.authors, ...people.models]) await organize(page, { kind: "remove", personId: person.id });
 }
 async function holdAnswers(page: Page) {
   const held: { wire: Wire; release: () => void; status: number }[] = [];
@@ -40,7 +45,7 @@ test.beforeEach(async ({ page }) => {
   (page as Page & { saveErrors: string[] }).saveErrors = errors;
   await mkdir("../output", { recursive: true });
   expect((await page.request.post("/api/login", { data: { user: "ui-test", pass: "fixture-password" } })).status()).toBe(200);
-  await expect.poll(async () => !(await (await page.request.get("/api/health")).json()).status.scanning, { timeout: 60_000 }).toBe(true);
+  await expect.poll(async () => !(await (await page.request.get("/api/photos?limit=1")).json()).status.scanning, { timeout: 60_000 }).toBe(true);
   await reset(page);
 });
 test.afterEach(async ({ page }) => {
@@ -158,7 +163,7 @@ test("saving 04 unsent request is retried with the same ID and content before ne
 });
 
 test("saving 05 explicit refusal restores the invalid item while a newer model remains", async ({ page }) => {
-  expect((await page.request.put("/api/album-people", { data: { albums: ["misc"], models: ["A"] } })).status()).toBe(200);
+  await organize(page, { kind: "assign", albums: ["misc"], models: ["A"] });
   const held = await holdAnswers(page);
   await page.goto("/?view=organize");
   await pick(page, "「misc」的模特", "名".repeat(41));

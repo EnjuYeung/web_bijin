@@ -138,8 +138,8 @@ S3 使用当前凭据签发 15 分钟有效的单对象 PUT 地址，浏览器�
 | `PHOTOS_DIR` | `./photos` | 宿主机上的照片目录 |
 | `DATA_DIR` | `./data` | 索引、缩略图和对象存储配置 |
 | `TZ` | `Asia/Shanghai` | 日志时间和日期显示 |
-| `AUTH_USER` | `juen` | 登录用户名，必须有 |
-| `AUTH_PASS` | `changeme` | 登录密码，必须有 |
+| `AUTH_USER` | （无，必填；示例 `juen`） | 登录用户名；没填时 `docker compose` 报错 |
+| `AUTH_PASS` | （无，必填） | 登录密码；没填时 `docker compose` 报错，不会用默认密码启动 |
 | `AUTH_TWO_STEP_SECRET` | 空 | 两步验证密钥，由 `scripts/two-step.sh` 写入；留空只用密码 |
 | `THUMB_WORKERS` | CPU 数的约三分之二 | 同时生成缩略图的张数；netcup 用 4 |
 | `EVENTS_LISTEN` | 空 | 上传通知端口，例如 `:5002`；留空则关闭 |

@@ -90,63 +90,6 @@ func TestScanFailureKeepsExistingIndex(t *testing.T) {
 	}
 }
 
-type migrationLocalSource struct {
-	unavailableSource
-	object sourceObject
-}
-
-func (s migrationLocalSource) Stat(context.Context, string) (sourceObject, error) {
-	return s.object, nil
-}
-
-func TestLocalMigrationReusesExistingMetadataAndThumb(t *testing.T) {
-	data := t.TempDir()
-	st, err := openStore(filepath.Join(data, "bijin.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer st.Close()
-	mtime := time.Now().Unix()
-	id, err := st.upsert(photo{
-		RelPath:   "existing.jpg",
-		Size:      10,
-		MtimeUnix: mtime,
-		Width:     100,
-		Height:    80,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	object := sourceObject{
-		Key:     "existing.jpg",
-		RelPath: "existing.jpg",
-		Size:    10,
-		Mtime:   time.Unix(mtime, 0),
-		Version: "local:10:123",
-		Backend: "local",
-	}
-	source := migrationLocalSource{object: object}
-	thumbs := newThumbCache(filepath.Join(data, "thumbs"), filepath.Join(data, "wallpapers"), source, 1)
-	if err := os.MkdirAll(thumbs.dir, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(thumbs.dir, fmt.Sprintf("%d.jpg", id)), []byte("existing-thumb"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	scanner := newScanner(config{MaxPixels: 64_000_000}, st, thumbs, newSourceSet(source))
-	if err := scanner.photos.ApplyListed(context.Background(), object).Err; err != nil {
-		t.Fatal(err)
-	}
-	got, ok, err := st.getBySourceKey("existing.jpg")
-	if err != nil || !ok || got.SourceVersion != object.Version {
-		t.Fatalf("version not backfilled: %+v ok=%v err=%v", got, ok, err)
-	}
-	thumb, err := os.ReadFile(thumbs.path(got))
-	if err != nil || string(thumb) != "existing-thumb" {
-		t.Fatalf("existing thumb changed: %q err=%v", thumb, err)
-	}
-}
-
 // memSource is an in-memory photo source whose listing can be made to fail.
 type memSource struct {
 	mu    sync.Mutex
@@ -185,7 +128,7 @@ func (m *memSource) Walk(_ context.Context, visit func(sourceObject) error) erro
 	}
 	objects := make([]sourceObject, 0, len(m.files))
 	for rel, data := range m.files {
-		objects = append(objects, sourceObject{Key: rel, RelPath: rel, Size: int64(len(data)), Mtime: time.Unix(1700000000, 0), Version: fmt.Sprintf("mem:%d:%x", len(data), data[len(data)-8:]), Backend: "s3"})
+		objects = append(objects, sourceObject{Key: rel, RelPath: rel, Size: int64(len(data)), Mtime: time.Unix(1700000000, 0), Version: fmt.Sprintf("mem:%d:%x", len(data), data[len(data)-8:])})
 	}
 	m.mu.Unlock()
 	for _, o := range objects {

@@ -3,7 +3,8 @@
 import { useEffect, useMemo, useState } from "react";
 import { ArrowDownWideNarrow, ArrowUpNarrowWide, FolderHeart, RefreshCw, SearchX, X } from "lucide-react";
 import { api, type AlbumPage, type Person } from "@/lib/api";
-import { albumNames, defaultSort, directionLabel, emptyFilter, filtering, matchesFilter, nameKey, peopleText, readAlbumFilter, readAlbumSort, sortAlbums, sortFor, sortLabels, writeAlbumFilter, writeAlbumSort, type AlbumFilter, type AlbumSort, type AlbumSortKey } from "@/lib/albums";
+import { albumNames, defaultSort, directionLabel, emptyFilter, filtering, matchesFilter, peopleText, readAlbumFilter, readAlbumSort, sortAlbums, sortFor, sortLabels, writeAlbumFilter, writeAlbumSort, type AlbumFilter, type AlbumSort, type AlbumSortKey } from "@/lib/albums";
+import { nameIdentity } from "@/lib/names";
 import { GallerySkeleton } from "@/components/gallery-skeleton";
 import { OptionSelect } from "@/components/option-select";
 import { PersonPicker } from "@/components/person-picker";
@@ -13,7 +14,7 @@ import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "@/
 
 const sortChoices = (Object.keys(sortLabels) as AlbumSortKey[]).map(key => ({ value: key, label: sortLabels[key] }));
 // A remembered filter forgets names that are no longer used by any album.
-const known = (chosen: string[], list: Person[]) => chosen.filter(name => list.some(person => nameKey(person.name) === nameKey(name)));
+const known = (chosen: string[], list: Person[]) => chosen.filter(name => list.some(person => nameIdentity(person.name) === nameIdentity(name)));
 
 export function Albums({ onCount }: { onCount: (count: number) => void }) {
   const [data, setData] = useState<AlbumPage | null>(null);

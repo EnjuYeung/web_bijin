@@ -16,6 +16,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode"
 )
 
 const (
@@ -26,6 +27,10 @@ const (
 	// loginLockout; the count also resets after loginLockout without a miss.
 	maxLoginFails = 5
 	loginLockout  = 15 * time.Minute
+
+	// loginBodyLimit bounds what a stranger can make the login read; the body
+	// is read before the lockout check.
+	loginBodyLimit = 16 << 10
 )
 
 type authGate struct {
@@ -174,13 +179,20 @@ func clientIP(r *http.Request) string {
 	return host
 }
 
-func (g *authGate) setSession(w http.ResponseWriter) {
+// secureRequest reports whether the browser reached the site over HTTPS.
+// OpenResty ends TLS and says so in X-Forwarded-Proto; local tests use HTTP.
+func secureRequest(r *http.Request) bool {
+	return r.TLS != nil || strings.EqualFold(r.Header.Get("X-Forwarded-Proto"), "https")
+}
+
+func (g *authGate) setSession(w http.ResponseWriter, r *http.Request) {
 	exp := time.Now().Add(sessionTTL).Unix()
 	http.SetCookie(w, &http.Cookie{
 		Name:     sessionCookie,
 		Value:    g.sign(exp),
 		Path:     "/",
 		HttpOnly: true,
+		Secure:   secureRequest(r),
 		SameSite: http.SameSiteLaxMode,
 		MaxAge:   int(sessionTTL.Seconds()),
 	})
@@ -189,15 +201,13 @@ func (g *authGate) setSession(w http.ResponseWriter) {
 // handleLogout signs this device out: its cookie goes, and the browser drops
 // what it cached for the site, such as thumbnails. Other devices keep their
 // own cookies, which stay valid until they expire. It works when already
-// signed out too, and only from this site's own pages.
+// signed out too; the router only lets this site's own pages call it.
 func handleLogout(w http.ResponseWriter, r *http.Request) {
-	if !sameOriginOK(w, r, "请在相册页面里退出登录") {
-		return
-	}
 	http.SetCookie(w, &http.Cookie{
 		Name:     sessionCookie,
 		Path:     "/",
 		HttpOnly: true,
+		Secure:   secureRequest(r),
 		SameSite: http.SameSiteLaxMode,
 		MaxAge:   -1,
 	})
@@ -230,19 +240,20 @@ func wantsAPIError(r *http.Request) bool {
 	return strings.Contains(r.Header.Get("Accept"), "application/json")
 }
 
+// safeNext keeps a return address on this site. Browsers read "\" as "/" and
+// drop tabs and line breaks, so "/\evil.example" would leave the site.
 func safeNext(v string) string {
-	if v == "" || !strings.HasPrefix(v, "/") || strings.HasPrefix(v, "//") {
-		return "/"
-	}
-	if strings.HasPrefix(v, "/login") {
+	if !strings.HasPrefix(v, "/") || strings.HasPrefix(v, "//") || strings.HasPrefix(v, "/login") ||
+		strings.ContainsRune(v, '\\') || strings.IndexFunc(v, unicode.IsControl) >= 0 {
 		return "/"
 	}
 	return v
 }
 
+// readLogin reads the page's JSON, or the plain form the login page posts
+// when its script has not loaded yet. Credentials never come from the URL.
 func readLogin(r *http.Request) (user, pass, code string) {
-	ct := r.Header.Get("Content-Type")
-	if strings.HasPrefix(ct, "application/json") {
+	if strings.HasPrefix(r.Header.Get("Content-Type"), "application/json") {
 		var body struct {
 			User string `json:"user"`
 			Pass string `json:"pass"`
@@ -251,12 +262,8 @@ func readLogin(r *http.Request) (user, pass, code string) {
 		_ = json.NewDecoder(r.Body).Decode(&body)
 		return body.User, body.Pass, body.Code
 	}
-	if strings.HasPrefix(ct, "multipart/form-data") {
-		_ = r.ParseMultipartForm(1 << 20)
-	} else {
-		_ = r.ParseForm()
-	}
-	return r.FormValue("user"), r.FormValue("pass"), r.FormValue("code")
+	_ = r.ParseForm()
+	return r.PostForm.Get("user"), r.PostForm.Get("pass"), r.PostForm.Get("code")
 }
 
 // handleLoginOptions tells the login page whether to ask for a code.
@@ -266,6 +273,7 @@ func (g *authGate) handleLoginOptions(w http.ResponseWriter, r *http.Request) {
 }
 
 func (g *authGate) handleLogin(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, loginBodyLimit)
 	asJSON := strings.HasPrefix(r.Header.Get("Content-Type"), "application/json") || strings.Contains(r.Header.Get("Accept"), "application/json")
 	user, pass, code := readLogin(r)
 	ip := clientIP(r)
@@ -286,12 +294,9 @@ func (g *authGate) handleLogin(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, "/login?err=1", http.StatusFound)
 		return
 	}
-	g.setSession(w)
+	g.setSession(w, r)
 	_ = r.ParseForm()
-	next := safeNext(r.FormValue("next"))
-	if q := r.URL.Query().Get("next"); q != "" {
-		next = safeNext(q)
-	}
+	next := safeNext(r.Form.Get("next"))
 	if asJSON {
 		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "next": next})
 		return

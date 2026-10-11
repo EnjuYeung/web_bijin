@@ -8,7 +8,7 @@ const imagePath = resolve(photos, "batch/01.jpg");
 const prefix = () => "upload-ui-" + Date.now() + "-" + Math.random().toString(16).slice(2, 7);
 async function login(page: Page) {
   expect((await page.request.post("/api/login", { data: { user: "ui-test", pass: "fixture-password" } })).status()).toBe(200);
-  await expect.poll(async () => (await (await page.request.get("/api/health")).json()).status.scanning, { timeout: 90_000 }).toBe(false);
+  await expect.poll(async () => (await (await page.request.get("/api/photos?limit=1")).json()).status.scanning, { timeout: 90_000 }).toBe(false);
 }
 async function openLocal(page: Page, directory: string) {
   await page.goto("/?view=upload");

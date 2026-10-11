@@ -213,6 +213,12 @@ func TestHealthAndLoginBgPublic(t *testing.T) {
 	if res.StatusCode != http.StatusOK {
 		t.Fatalf("health %d", res.StatusCode)
 	}
+	// Scan progress and its error text name internal hosts and files; the
+	// public check only says the app is up and which time zone it uses.
+	var health map[string]any
+	if err := json.NewDecoder(res.Body).Decode(&health); err != nil || len(health) != 2 || health["ok"] != true || health["tz"] != "Asia/Shanghai" {
+		t.Fatalf("public health = %v %v", health, err)
+	}
 	// Nothing was scanned, so there is no wallpaper yet: the background is
 	// missing rather than sent to the login page. TestLoginBackgroundUsesWallpapers
 	// covers the rest.
@@ -310,14 +316,36 @@ func TestIndexHTMLNotServedPublic(t *testing.T) {
 }
 
 func TestSafeNext(t *testing.T) {
-	if safeNext("") != "/" || safeNext("//evil") != "/" || safeNext("https://x") != "/" {
-		t.Fatal("rejected next should be /")
+	// Browsers read "\" as "/" and drop tabs and line breaks, so each of
+	// these would send a signed-in browser to another website.
+	for _, bad := range []string{"", "//evil", "https://x", "evil.example", "/login", "/login?next=/",
+		`/\evil.example`, "/\t/evil.example", "/\n/evil.example", "/\r/evil.example", "/\x00/x"} {
+		if got := safeNext(bad); got != "/" {
+			t.Fatalf("safeNext(%q) = %q", bad, got)
+		}
 	}
-	if safeNext("/login") != "/" {
-		t.Fatal("login next loops")
+	for _, good := range []string{"/", "/#p/1", "/?view=albums", "/?album=2026%2F%E6%97%85%E8%A1%8C#p/3"} {
+		if got := safeNext(good); got != good {
+			t.Fatalf("safeNext(%q) = %q", good, got)
+		}
 	}
-	if safeNext("/#p/1") != "/#p/1" {
-		t.Fatal("hash next")
+}
+
+// A signed-in browser opening a crafted login link must stay on the site.
+func TestSignedInLoginLinkStaysOnSite(t *testing.T) {
+	srv, _, _ := testApp(t)
+	c := loginCookie(t, srv, "juen", "secret")
+	for next, want := range map[string]string{"/%5Cevil.example": "/", "/%09/evil.example": "/", "/?view=albums": "/?view=albums"} {
+		req, _ := http.NewRequest(http.MethodGet, srv.URL+"/login?next="+next, nil)
+		req.AddCookie(c)
+		res, err := noRedirect.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		res.Body.Close()
+		if res.StatusCode != http.StatusFound || res.Header.Get("Location") != want {
+			t.Fatalf("next=%s -> %d %q, want %q", next, res.StatusCode, res.Header.Get("Location"), want)
+		}
 	}
 }
 
@@ -345,6 +373,79 @@ func TestFormLogin(t *testing.T) {
 	defer res.Body.Close()
 	if res.StatusCode != http.StatusOK {
 		t.Fatalf("form login follow %d", res.StatusCode)
+	}
+	// The login page posts this form itself when its script has not loaded;
+	// the return address is checked the same way.
+	for next, want := range map[string]string{"/?view=albums": "/?view=albums", `/\evil.example`: "/"} {
+		res, err := noRedirect.PostForm(srv.URL+"/api/login", url.Values{"user": {"juen"}, "pass": {"secret"}, "next": {next}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		res.Body.Close()
+		if res.StatusCode != http.StatusFound || res.Header.Get("Location") != want || len(res.Cookies()) != 1 {
+			t.Fatalf("form next=%q -> %d %q", next, res.StatusCode, res.Header.Get("Location"))
+		}
+	}
+}
+
+func TestLoginReadsLittleAndNeverURLCredentials(t *testing.T) {
+	srv, _, _ := testApp(t)
+	// Right credentials after a large padding: the body is cut off at the
+	// limit instead of being read into memory, so this is refused.
+	body := `{"pad":"` + strings.Repeat("a", loginBodyLimit) + `","user":"juen","pass":"secret"}`
+	res, err := http.Post(srv.URL+"/api/login", "application/json", strings.NewReader(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	res.Body.Close()
+	if res.StatusCode != http.StatusUnauthorized || len(res.Cookies()) != 0 {
+		t.Fatalf("oversized login = %d cookies=%d", res.StatusCode, len(res.Cookies()))
+	}
+	// Credentials in the address end up in history and access logs.
+	res, err = noRedirect.Post(srv.URL+"/api/login?user=juen&pass=secret", "application/x-www-form-urlencoded", strings.NewReader(""))
+	if err != nil {
+		t.Fatal(err)
+	}
+	res.Body.Close()
+	if res.StatusCode != http.StatusFound || res.Header.Get("Location") != "/login?err=1" || len(res.Cookies()) != 0 {
+		t.Fatalf("URL credentials = %d %q", res.StatusCode, res.Header.Get("Location"))
+	}
+	if c := loginCookie(t, srv, "juen", "secret"); c == nil {
+		t.Fatal("normal login after refused ones")
+	}
+}
+
+// Behind OpenResty the browser speaks HTTPS: the cookie is then HTTPS-only
+// and the browser is told to stay on HTTPS. Plain local HTTP keeps working.
+func TestHTTPSOnlyCookieAndHSTS(t *testing.T) {
+	srv, _, _ := testApp(t)
+	send := func(path, proto string, body string) *http.Response {
+		req, _ := http.NewRequest(http.MethodPost, srv.URL+path, strings.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		if proto != "" {
+			req.Header.Set("X-Forwarded-Proto", proto)
+		}
+		res, err := noRedirect.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		res.Body.Close()
+		return res
+	}
+	creds := `{"user":"juen","pass":"secret"}`
+	for _, c := range []struct {
+		proto  string
+		secure bool
+	}{{"https", true}, {"", false}, {"http", false}} {
+		for _, res := range []*http.Response{send("/api/login", c.proto, creds), send("/logout", c.proto, "")} {
+			cookies := res.Cookies()
+			if len(cookies) != 1 || cookies[0].Secure != c.secure {
+				t.Fatalf("proto %q %s cookie %+v", c.proto, res.Request.URL.Path, cookies)
+			}
+			if hsts := res.Header.Get("Strict-Transport-Security"); (hsts != "") != c.secure {
+				t.Fatalf("proto %q %s HSTS %q", c.proto, res.Request.URL.Path, hsts)
+			}
+		}
 	}
 }
 

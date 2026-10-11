@@ -9,6 +9,17 @@ import { Field, FieldGroup, FieldLabel } from "@/components/ui/field";
 import { Spinner } from "@/components/ui/spinner";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 
+// The address to return to after signing in, only ever on this site. Browsers
+// read "/\host" and "/<tab>/host" as another site, so the check is the
+// browser's own URL parsing rather than a look at the text.
+function returnAddress() {
+  try {
+    const url = new URL(new URLSearchParams(location.search).get("next") || "/", location.origin);
+    if (url.origin === location.origin && !url.pathname.startsWith("/login")) return url.pathname + url.search + url.hash;
+  } catch { /* Not an address: go to the photos. */ }
+  return "/";
+}
+
 export function Login() {
   const [error, setError] = useState<"" | "wrong" | "locked" | "offline">("");
   const [busy, setBusy] = useState(false);
@@ -37,14 +48,15 @@ export function Login() {
     const form = new FormData(event.currentTarget);
     try {
       await api("/api/login", { method: "POST", body: JSON.stringify({ user: form.get("user"), pass: form.get("pass"), code: form.get("code") ?? "" }) });
-      const next = new URLSearchParams(location.search).get("next") || "/";
-      const safe = next.startsWith("/") && !next.startsWith("//") && !next.startsWith("/login") ? next : "/";
-      location.assign(safe + (safe.includes("#") ? "" : location.hash));
+      const next = returnAddress();
+      location.assign(next + (next.includes("#") ? "" : location.hash));
     } catch (err) { setError(err instanceof APIError && err.status === 429 ? "locked" : err instanceof Error && err.message === "unauthorized" ? "wrong" : "offline"); }
     finally { setBusy(false); }
   }
   return <main className="gate-page">
-    <form id="gate" className="gate" onSubmit={submit} aria-busy={busy}>
+    {/* Before the page script runs, the browser posts the form itself:
+        method and action keep the password out of the address bar. */}
+    <form id="gate" className="gate" method="post" action="/api/login" onSubmit={submit} aria-busy={busy}>
       <h1>Juen&apos;s</h1><p className="gate-intro">把家里的回忆，留在这里。</p>
       <FieldGroup>
         <Field><FieldLabel htmlFor="login-user">用户名</FieldLabel><Input id="login-user" name="user" required autoFocus autoComplete="username" spellCheck={false} disabled={busy} aria-invalid={!!error} /></Field>

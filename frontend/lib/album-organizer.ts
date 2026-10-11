@@ -1,4 +1,5 @@
 import type { Album, AlbumPeople, People, Person, PersonRef } from "./api";
+import { cleanName, nameIdentity } from "./names.ts";
 
 export type Role = "author" | "model";
 export type Change = { author?: string; models?: string[] };
@@ -32,13 +33,11 @@ export interface OrganizeSnapshot {
   rejection: string;
 }
 
-// Match Go and SQLite NOCASE exactly for identity; display/filter collation is
+// Identity follows the server (names.ts); display/filter collation is
 // deliberately separate. IDs survive renames; newly typed names use local IDs
 // until a confirmed answer binds them to persisted people.
-const clean = (name: string) => name.normalize("NFC").replace(/\p{White_Space}+/gu, " ").replace(/^ +| +$/g, "");
-const key = (name: string) => clean(name).replace(/[A-Z]/g, letter => letter.toLowerCase());
 const group = (role: Role) => role === "author" ? "authors" : "models";
-const aliasKey = (role: Role, name: string) => role + ":" + key(name);
+const aliasKey = (role: Role, name: string) => role + ":" + nameIdentity(name);
 const invalidName = (name: string) => !name || [...name].length > 40 || /\p{Cc}/u.test(name);
 type Assignment = { kind: "assign"; albums: string[]; author?: PersonRef | null; models?: PersonRef[]; batch?: boolean };
 type Operation = {
@@ -95,8 +94,8 @@ export function createAlbumOrganizer(adapter: OrganizeAdapter, newID = () => `${
         const list = state.people[group(intent.role)];
         const source = list.find(person => person.id === intent.personId);
         if (!source) continue;
-        const target = intent.kind === "rename" ? list.find(person => person.id !== source.id && key(person.name) === key(intent.name)) : null;
-        const replacement = intent.kind === "rename" ? { ...(target ?? source), name: clean(intent.name) } : null;
+        const target = intent.kind === "rename" ? list.find(person => person.id !== source.id && nameIdentity(person.name) === nameIdentity(intent.name)) : null;
+        const replacement = intent.kind === "rename" ? { ...(target ?? source), name: cleanName(intent.name) } : null;
         state.aliases.set(aliasKey(intent.role, source.name), replacement?.id ?? null);
         for (const [name, id] of state.aliases) if (id === source.id) state.aliases.set(name, replacement?.id ?? null);
         if (replacement) {
@@ -153,7 +152,7 @@ export function createAlbumOrganizer(adapter: OrganizeAdapter, newID = () => `${
     if (intent.kind === "assign") {
       for (const [role, refs] of [["author", intent.author ? [intent.author] : []], ["model", intent.models ?? []]] as const) {
         for (const ref of refs) if (ref.id < 0) {
-          const saved = result.people[group(role)].find(person => key(person.name) === key(ref.name));
+          const saved = result.people[group(role)].find(person => nameIdentity(person.name) === nameIdentity(ref.name));
           if (saved) remap(ref.id, saved.id);
         }
       }
@@ -267,8 +266,8 @@ export function createAlbumOrganizer(adapter: OrganizeAdapter, newID = () => `${
     if (input.kind === "assign") {
       const local = new Map<string, PersonRef>();
       const ref = (role: Role, raw: string): PersonRef | null => {
-        const name = clean(raw);
-        const existing = state.people[group(role)].find(person => key(person.name) === key(name));
+        const name = cleanName(raw);
+        const existing = state.people[group(role)].find(person => nameIdentity(person.name) === nameIdentity(name));
         if (existing) return { id: existing.id, name: existing.name };
         const aliased = state.aliases.get(aliasKey(role, name));
         if (aliased !== undefined) {
@@ -289,7 +288,7 @@ export function createAlbumOrganizer(adapter: OrganizeAdapter, newID = () => `${
       else {
         label = state.people[group(input.role)].find(person => person.id === input.personId)?.name;
         affected = state.albums.filter(album => input.role === "author" ? album.author?.id === input.personId : album.models.some(person => person.id === input.personId)).map(album => album.id);
-        if (intent.kind === "rename") intent.name = clean(intent.name);
+        if (intent.kind === "rename") intent.name = cleanName(intent.name);
       }
     }
     const channel = input.kind === "assign" ? input.batch ? "batch" : undefined : "list";

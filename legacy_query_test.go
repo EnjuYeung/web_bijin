@@ -1,7 +1,6 @@
 package main
 
 import (
-	"math/rand/v2"
 	"sort"
 	"strings"
 )
@@ -104,22 +103,6 @@ func pageAfter(photos []photo, seed int64, afterRank uint64, afterID int64, limi
 		end = len(photos)
 	}
 	return photos[start:end]
-}
-
-func pickWallpaper(rows []wallpaper) (wallpaper, bool) {
-	if len(rows) == 0 {
-		return wallpaper{}, false
-	}
-	var order []int64
-	byPhoto := map[int64][]wallpaper{}
-	for _, r := range rows {
-		if _, ok := byPhoto[r.PhotoID]; !ok {
-			order = append(order, r.PhotoID)
-		}
-		byPhoto[r.PhotoID] = append(byPhoto[r.PhotoID], r)
-	}
-	group := byPhoto[order[rand.IntN(len(order))]]
-	return group[rand.IntN(len(group))], true
 }
 
 func (s *store) wallpaperCandidates(f wallFilter) ([]wallpaper, error) {

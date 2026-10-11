@@ -68,9 +68,6 @@ func receiptExpired(tx *sql.Tx, issued int64, now time.Time) (bool, error) {
 }
 
 func (a *organizeAPI) change(w http.ResponseWriter, r *http.Request) {
-	if !sameOriginJSON(w, r, organizeOriginError) {
-		return
-	}
 	var in organizeChange
 	if !decodeOrganize(w, r, &in, 1<<20) {
 		return
@@ -176,7 +173,7 @@ func (s *store) applyOrganize(in organizeChange, current map[string]bool, now ti
 	out := organizeResult{OperationID: in.OperationID}
 	switch in.Kind {
 	case "assign":
-		albums, author, models, err := normalizeAlbumAssignment(albumPeopleInput{Albums: in.Albums, Author: in.Author, Models: in.Models}, current)
+		albums, author, models, err := normalizeAlbumAssignment(in, current)
 		if err != nil {
 			return nil, err
 		}
@@ -286,7 +283,9 @@ func pruneOrganizeReceipts(tx *sql.Tx, now time.Time) error {
 	return err
 }
 
-func normalizeAlbumAssignment(in albumPeopleInput, current map[string]bool) ([]string, *string, []string, error) {
+// normalizeAlbumAssignment checks an assignment: current albums only, clean
+// names, and at most maxModelsPerAlbum distinct models.
+func normalizeAlbumAssignment(in organizeChange, current map[string]bool) ([]string, *string, []string, error) {
 	if in.Author == nil && in.Models == nil {
 		return nil, nil, nil, invalid("没有要修改的作者或模特")
 	}

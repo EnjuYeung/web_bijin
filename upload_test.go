@@ -146,6 +146,14 @@ func TestUploadLocalFeedsExistingPhotoAndWallpaperWorkflow(t *testing.T) {
 	if err != nil || !bytes.Equal(saved, data) {
 		t.Fatalf("saved file mismatch: %v", err)
 	}
+	// Readable like photos copied into the folder, not private to the app.
+	info, err := os.Stat(filepath.Join(a.cfg.PhotosDir, "旅行", "海边 日落.jpg"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Mode().Perm() != 0o644 {
+		t.Fatalf("saved file mode %v", info.Mode())
+	}
 	p, ok, err := a.store.getBySourceKey("旅行/海边 日落.jpg")
 	if err != nil || !ok || p.Broken || p.Width != 64 {
 		t.Fatalf("indexed photo: %+v %v", p, err)

@@ -201,11 +201,20 @@ func (s *scanner) walk(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	removed := 0
+	// One photo that cannot be checked now stays for the next scan; the
+	// others are still removed.
+	removed, kept := 0, 0
+	var lastKept error
 	for _, candidate := range gone {
 		deleted, err := s.photos.RemoveIfUnchanged(ctx, candidate)
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
 		if err != nil {
-			return err
+			kept++
+			lastKept = err
+			slog.Warn("remove", "path", candidate.RelPath, "err", err)
+			continue
 		}
 		if deleted {
 			removed++
@@ -214,16 +223,17 @@ func (s *scanner) walk(ctx context.Context) error {
 
 	s.mu.Lock()
 	s.state.Seen = seen
-	s.state.Failed = failures
+	s.state.Failed = failures + kept
 	s.mu.Unlock()
-	slog.Info("scan done", "files", seen, "removed", removed, "failed", failures, "sourceErrors", len(walkErrs))
-	if len(walkErrs) > 0 {
-		return errors.Join(walkErrs...)
-	}
+	slog.Info("scan done", "files", seen, "removed", removed, "failed", failures, "notRemoved", kept, "sourceErrors", len(walkErrs))
+	errs := walkErrs
 	if failures > 0 {
-		return fmt.Errorf("%d image(s) failed: %w", failures, lastFailure)
+		errs = append(errs, fmt.Errorf("%d image(s) failed: %w", failures, lastFailure))
 	}
-	return nil
+	if kept > 0 {
+		errs = append(errs, fmt.Errorf("%d missing image(s) not removed yet: %w", kept, lastKept))
+	}
+	return errors.Join(errs...)
 }
 
 func isImageName(name string) bool {

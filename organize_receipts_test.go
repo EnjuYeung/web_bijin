@@ -53,9 +53,7 @@ func TestOrganizeReceiptsConfirmOnceAcrossRestartAndLaterChanges(t *testing.T) {
 		t.Fatalf("rename %+v", renamed)
 	}
 	// A subsequent edit must not be overwritten by a retried, earlier rename.
-	if _, _, err := st.renamePerson(aID, "Latest"); err != nil {
-		t.Fatal(err)
-	}
+	organizeNow(t, st, organizeChange{Kind: "rename", PersonID: aID, Name: "Latest"})
 	if err := st.Close(); err != nil {
 		t.Fatal(err)
 	}
@@ -74,16 +72,16 @@ func TestOrganizeReceiptsConfirmOnceAcrossRestartAndLaterChanges(t *testing.T) {
 	}
 	remove := organizeChange{OperationID: organizeTestID(now, 3), Kind: "remove", PersonID: aID}
 	applyOrganizeForTest(t, st, remove, current, now)
-	if err := st.setAlbumPeople([]string{"b"}, nil, []string{"Latest"}); err != nil {
-		t.Fatal(err)
-	}
+	assignNow(t, st, []string{"b"}, nil, []string{"Latest"})
 	applyOrganizeForTest(t, st, remove, current, now)
 	links, err = st.albumPeopleMap()
 	if err != nil || strings.Join(modelNames(links["b"]), "|") != "Latest" {
 		t.Fatalf("delete retried against a later name: %+v %v", links, err)
 	}
+	// One receipt per operation; the retries added none.
 	var count int
-	if err := st.db.QueryRow(`SELECT count(*) FROM organize_receipts`).Scan(&count); err != nil || count != 3 {
+	if err := st.db.QueryRow(`SELECT count(*) FROM organize_receipts WHERE operation_id IN (?, ?, ?)`,
+		assign.OperationID, rename.OperationID, remove.OperationID).Scan(&count); err != nil || count != 3 {
 		t.Fatalf("receipts = %d %v", count, err)
 	}
 }
@@ -94,9 +92,7 @@ func TestOrganizeReceiptsMergeAndConcurrentDuplicates(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer st.Close()
-	if err := st.setAlbumPeople([]string{"a"}, nil, []string{"Source", "Middle", "Target"}); err != nil {
-		t.Fatal(err)
-	}
+	assignNow(t, st, []string{"a"}, nil, []string{"Source", "Middle", "Target"})
 	ids := peopleIDs(t, st)
 	now := time.Now()
 	in := organizeChange{OperationID: organizeTestID(now, 1), Kind: "rename", PersonID: ids["model:Source"], Name: "target"}
@@ -134,7 +130,7 @@ func TestOrganizeReceiptsMergeAndConcurrentDuplicates(t *testing.T) {
 		t.Fatalf("merge positions %+v %v", links, err)
 	}
 	var count int
-	_ = st.db.QueryRow(`SELECT count(*) FROM organize_receipts`).Scan(&count)
+	_ = st.db.QueryRow(`SELECT count(*) FROM organize_receipts WHERE operation_id = ?`, in.OperationID).Scan(&count)
 	if count != 1 {
 		t.Fatalf("%d receipts for one operation", count)
 	}
@@ -244,9 +240,8 @@ func TestOrganizeReceiptsValidateInputsAndCleanStale(t *testing.T) {
 	if people, _ := h.st.listPeople(); len(people) != 0 {
 		t.Fatalf("bad requests wrote names %+v", people)
 	}
-	if err := h.st.setAlbumPeople([]string{"gone"}, strp("Unused"), nil); err != nil {
-		t.Fatal(err)
-	}
+	// An album that existed when it was filled in and is gone now.
+	assignNow(t, h.st, []string{"gone"}, strp("Unused"), nil)
 	code, out := h.send(t, "POST", "/api/organize", organizeChange{OperationID: organizeTestID(now, 10), Kind: "cleanStale"}, nil)
 	if code != http.StatusOK || out["removed"] != float64(1) || out["people"].(map[string]any)["stale"] != float64(0) {
 		t.Fatalf("cleanup %d %+v", code, out)
@@ -337,7 +332,10 @@ func TestOrganizeReceiptSlowReaderDoesNotBlockLaterSaves(t *testing.T) {
 	go func() { (&organizeAPI{store: st}).receipt(w, r); close(finished) }()
 	<-w.started
 	saved := make(chan error, 1)
-	go func() { saved <- st.setAlbumPeople([]string{"a"}, strp("Later"), nil) }()
+	go func() {
+		_, err := tryOrganize(st, organizeChange{Kind: "assign", Albums: []string{"a"}, Author: strp("Later")})
+		saved <- err
+	}()
 	select {
 	case err := <-saved:
 		if err != nil {

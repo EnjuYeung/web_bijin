@@ -243,7 +243,7 @@ type slowSource struct {
 
 func (s *slowSource) Walk(_ context.Context, visit func(sourceObject) error) error {
 	for _, f := range s.files {
-		if err := visit(sourceObject{Key: f, RelPath: f, Size: int64(len(s.data)), Mtime: time.Unix(1700000000, 0), Version: "v1", Backend: "s3"}); err != nil {
+		if err := visit(sourceObject{Key: f, RelPath: f, Size: int64(len(s.data)), Mtime: time.Unix(1700000000, 0), Version: "v1"}); err != nil {
 			return err
 		}
 	}

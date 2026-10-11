@@ -7,7 +7,9 @@ import (
 	"net/http"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
+	"time"
 )
 
 func strp(s string) *string { return &s }
@@ -53,19 +55,59 @@ func TestCleanPersonName(t *testing.T) {
 	}
 }
 
+// organizeSerial keeps helper operation IDs unique across a test run, in a
+// range apart from the small serials tests give their own operations.
+var organizeSerial atomic.Int64
+
+func nextOrganizeID() string {
+	return organizeTestID(time.Now(), int(1<<40+organizeSerial.Add(1)))
+}
+
+// tryOrganize runs one change through applyOrganize, the only write path for
+// album people, as a new operation. The albums it assigns count as current.
+func tryOrganize(st *store, in organizeChange) (organizeResult, error) {
+	current := map[string]bool{}
+	for _, album := range in.Albums {
+		current[album] = true
+	}
+	in.OperationID = nextOrganizeID()
+	raw, err := st.applyOrganize(in, current, time.Now())
+	if err != nil {
+		return organizeResult{}, err
+	}
+	var out organizeResult
+	err = json.Unmarshal(raw, &out)
+	return out, err
+}
+
+func organizeNow(t *testing.T, st *store, in organizeChange) organizeResult {
+	t.Helper()
+	out, err := tryOrganize(st, in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return out
+}
+
+// assignNow sets people like the organize page: nil leaves a field alone.
+func assignNow(t *testing.T, st *store, albums []string, author *string, models []string) {
+	t.Helper()
+	in := organizeChange{Kind: "assign", Albums: albums, Author: author}
+	if models != nil {
+		in.Models = &models
+	}
+	organizeNow(t, st, in)
+}
+
 func TestAlbumPeopleAssignReplaceClearAndPersist(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "bijin.db")
 	st, err := openStore(path)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := st.setAlbumPeople([]string{"a", "b"}, strp("LEEHEE EXPRESS"), []string{"G.su", "Min.E (민이)"}); err != nil {
-		t.Fatal(err)
-	}
+	assignNow(t, st, []string{"a", "b"}, strp("LEEHEE EXPRESS"), []string{"G.su", "Min.E (민이)"})
 	// Names differing only in English letter case are the same person.
-	if err := st.setAlbumPeople([]string{"c"}, strp("leehee express"), []string{"g.SU"}); err != nil {
-		t.Fatal(err)
-	}
+	assignNow(t, st, []string{"c"}, strp("leehee express"), []string{"g.SU"})
 	links, err := st.albumPeopleMap()
 	if err != nil {
 		t.Fatal(err)
@@ -82,21 +124,15 @@ func TestAlbumPeopleAssignReplaceClearAndPersist(t *testing.T) {
 	}
 
 	// A new author keeps the models; nil leaves a field as it is.
-	if err := st.setAlbumPeople([]string{"a"}, strp("Pure Media"), nil); err != nil {
-		t.Fatal(err)
-	}
+	assignNow(t, st, []string{"a"}, strp("Pure Media"), nil)
 	// The given model order is kept.
-	if err := st.setAlbumPeople([]string{"a"}, nil, []string{"Min.E (민이)", "G.su"}); err != nil {
-		t.Fatal(err)
-	}
+	assignNow(t, st, []string{"a"}, nil, []string{"Min.E (민이)", "G.su"})
 	links, _ = st.albumPeopleMap()
 	if a := links["a"]; a.Author.Name != "Pure Media" || strings.Join(modelNames(a), "|") != "Min.E (민이)|G.su" {
 		t.Fatalf("album a after replace %+v", a)
 	}
 	// Empty values clear; other albums keep their people.
-	if err := st.setAlbumPeople([]string{"a"}, strp(""), []string{}); err != nil {
-		t.Fatal(err)
-	}
+	assignNow(t, st, []string{"a"}, strp(""), []string{})
 	links, _ = st.albumPeopleMap()
 	if _, ok := links["a"]; ok {
 		t.Fatalf("album a should have no people: %+v", links["a"])
@@ -124,24 +160,20 @@ func TestRenameMergeAndDeletePeople(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer st.Close()
-	if err := st.setAlbumPeople([]string{"x"}, strp("Woo Studio"), []string{"G.su", "Gsu"}); err != nil {
-		t.Fatal(err)
-	}
-	if err := st.setAlbumPeople([]string{"y"}, nil, []string{"Gsu", "Woo"}); err != nil {
-		t.Fatal(err)
-	}
+	assignNow(t, st, []string{"x"}, strp("Woo Studio"), []string{"G.su", "Gsu"})
+	assignNow(t, st, []string{"y"}, nil, []string{"Gsu", "Woo"})
 	ids := peopleIDs(t, st)
 
 	// A plain rename, including a case-only change, keeps the person.
-	ref, merged, err := st.renamePerson(ids["model:Woo"], "WOO")
-	if err != nil || merged || ref.ID != ids["model:Woo"] || ref.Name != "WOO" {
-		t.Fatalf("rename = %+v %v %v", ref, merged, err)
+	out := organizeNow(t, st, organizeChange{Kind: "rename", PersonID: ids["model:Woo"], Name: "WOO"})
+	if out.Merged || out.Person == nil || out.Person.ID != ids["model:Woo"] || out.Person.Name != "WOO" {
+		t.Fatalf("rename = %+v", out)
 	}
 	// An author and a model may share a name; renaming a model to an existing
 	// model's name merges them, and the merged person takes the new spelling.
-	ref, merged, err = st.renamePerson(ids["model:Gsu"], "g.su")
-	if err != nil || !merged || ref.ID != ids["model:G.su"] || ref.Name != "g.su" {
-		t.Fatalf("merge = %+v %v %v", ref, merged, err)
+	out = organizeNow(t, st, organizeChange{Kind: "rename", PersonID: ids["model:Gsu"], Name: "g.su"})
+	if !out.Merged || out.Person == nil || out.Person.ID != ids["model:G.su"] || out.Person.Name != "g.su" {
+		t.Fatalf("merge = %+v", out)
 	}
 	links, _ := st.albumPeopleMap()
 	if got := strings.Join(modelNames(links["x"]), "|"); got != "g.su" {
@@ -155,17 +187,15 @@ func TestRenameMergeAndDeletePeople(t *testing.T) {
 	}
 
 	// Deleting a person removes it from every album.
-	if err := st.deletePerson(ids["model:Woo"]); err != nil {
-		t.Fatal(err)
-	}
+	organizeNow(t, st, organizeChange{Kind: "remove", PersonID: ids["model:Woo"]})
 	links, _ = st.albumPeopleMap()
 	if got := strings.Join(modelNames(links["y"]), "|"); got != "g.su" {
 		t.Fatalf("y after delete %q", got)
 	}
-	if err := st.deletePerson(ids["model:Woo"]); !errors.Is(err, errPersonNotFound) {
+	if _, err := tryOrganize(st, organizeChange{Kind: "remove", PersonID: ids["model:Woo"]}); !errors.Is(err, errPersonNotFound) {
 		t.Fatalf("delete twice: %v", err)
 	}
-	if _, _, err := st.renamePerson(9999, "x"); !errors.Is(err, errPersonNotFound) {
+	if _, err := tryOrganize(st, organizeChange{Kind: "rename", PersonID: 9999, Name: "x"}); !errors.Is(err, errPersonNotFound) {
 		t.Fatalf("rename missing: %v", err)
 	}
 }
@@ -212,29 +242,42 @@ func (h *settingsHarness) send(t *testing.T, method, path string, body any, head
 	return res.StatusCode, out
 }
 
+// organize sends one change from the organize page, as a new operation.
+func (h *settingsHarness) organize(t *testing.T, change map[string]any) (int, map[string]any) {
+	t.Helper()
+	change["operationId"] = nextOrganizeID()
+	return h.send(t, "POST", "/api/organize", change, nil)
+}
+
 func TestOrganizeAPIRequiresLoginSameOriginAndJSON(t *testing.T) {
 	h := organizeHarness(t)
-	routes := [][2]string{{"GET", "/api/people"}, {"PUT", "/api/album-people"}, {"DELETE", "/api/album-people/stale"}, {"PUT", "/api/people/1"}, {"DELETE", "/api/people/1"}}
+	id := nextOrganizeID()
+	routes := [][2]string{{"GET", "/api/people"}, {"POST", "/api/organize"}, {"GET", "/api/organize/receipts/" + id}}
 	for _, r := range routes {
 		if code, _ := h.do(t, r[0], r[1], "application/json", "{}", false); code != http.StatusUnauthorized {
 			t.Fatalf("%s %s without login = %d", r[0], r[1], code)
 		}
 	}
-	body := `{"albums":["a"],"author":"x"}`
-	if code, raw := h.do(t, "PUT", "/api/album-people", "text/plain", body, true); code != http.StatusUnsupportedMediaType {
-		t.Fatalf("plain text body = %d %s", code, raw)
+	body := map[string]any{"operationId": id, "kind": "assign", "albums": []string{"a"}, "author": "x"}
+	raw, _ := json.Marshal(body)
+	if code, out := h.do(t, "POST", "/api/organize", "text/plain", string(raw), true); code != http.StatusUnsupportedMediaType {
+		t.Fatalf("plain text body = %d %s", code, out)
 	}
 	for _, header := range []map[string]string{{"Sec-Fetch-Site": "cross-site"}, {"Origin": "https://evil.example"}, {"Origin": "null"}} {
-		for _, r := range routes[1:] {
-			code, out := h.send(t, r[0], r[1], map[string]any{"albums": []string{"a"}, "author": "x"}, header)
-			if code != http.StatusForbidden || out["error"] != organizeOriginError {
-				t.Fatalf("%s %s with %v = %d %v", r[0], r[1], header, code, out)
-			}
+		code, out := h.send(t, "POST", "/api/organize", body, header)
+		if code != http.StatusForbidden || out["error"] != organizeOriginError {
+			t.Fatalf("with %v = %d %v", header, code, out)
 		}
 	}
 	// The same origin and same-site requests are fine.
-	if code, out := h.send(t, "PUT", "/api/album-people", map[string]any{"albums": []string{"a"}, "author": "x"}, map[string]string{"Origin": h.srv.URL, "Sec-Fetch-Site": "same-origin"}); code != http.StatusOK {
+	if code, out := h.send(t, "POST", "/api/organize", body, map[string]string{"Origin": h.srv.URL, "Sec-Fetch-Site": "same-origin"}); code != http.StatusOK {
 		t.Fatalf("same origin = %d %v", code, out)
+	}
+	// The per-action endpoints of the first organize page are gone.
+	for _, r := range [][2]string{{"PUT", "/api/album-people"}, {"DELETE", "/api/album-people/stale"}, {"PUT", "/api/people/1"}, {"DELETE", "/api/people/1"}} {
+		if code, _ := h.send(t, r[0], r[1], map[string]any{"albums": []string{"a"}, "author": "x", "name": "x"}, nil); code != http.StatusNotFound {
+			t.Fatalf("retired %s %s = %d", r[0], r[1], code)
+		}
 	}
 }
 
@@ -250,7 +293,7 @@ func TestOrganizeAPIRejectsBadInput(t *testing.T) {
 	}
 	for _, c := range []struct {
 		name string
-		body any
+		body map[string]any
 		want string
 	}{
 		{"nothing to change", map[string]any{"albums": []string{"a"}}, "没有要修改"},
@@ -265,23 +308,19 @@ func TestOrganizeAPIRejectsBadInput(t *testing.T) {
 		{"unknown field", map[string]any{"albums": []string{"a"}, "author": "x", "tag": "y"}, "格式"},
 		{"wrong type", map[string]any{"albums": "a", "author": "x"}, "格式"},
 	} {
-		code, out := h.send(t, "PUT", "/api/album-people", c.body, nil)
+		c.body["kind"] = "assign"
+		code, out := h.organize(t, c.body)
 		if code != http.StatusBadRequest || !strings.Contains(fmt.Sprint(out["error"]), c.want) {
 			t.Fatalf("%s = %d %v", c.name, code, out)
 		}
 	}
-	for _, c := range []struct {
-		method, path string
-		body         any
-		code         int
-	}{
-		{"PUT", "/api/people/abc", map[string]any{"name": "x"}, http.StatusNotFound},
-		{"PUT", "/api/people/0", map[string]any{"name": "x"}, http.StatusNotFound},
-		{"PUT", "/api/people/77", map[string]any{"name": "x"}, http.StatusNotFound},
-		{"DELETE", "/api/people/77", nil, http.StatusNotFound},
+	for _, c := range []map[string]any{
+		{"kind": "rename", "personId": 0, "name": "x"},
+		{"kind": "rename", "personId": 77, "name": "x"},
+		{"kind": "remove", "personId": 77},
 	} {
-		if code, out := h.send(t, c.method, c.path, c.body, nil); code != c.code {
-			t.Fatalf("%s %s = %d %v", c.method, c.path, code, out)
+		if code, out := h.organize(t, c); code != http.StatusNotFound {
+			t.Fatalf("%v = %d %v", c, code, out)
 		}
 	}
 	// Nothing was written by the rejected requests.
@@ -314,26 +353,42 @@ func names(list any) string {
 	return strings.Join(out, "|")
 }
 
+// savedAlbum finds an album in an /api/organize answer, which lists every
+// current album with its people.
+func savedAlbum(t *testing.T, out map[string]any, id string) map[string]any {
+	t.Helper()
+	for _, item := range out["albums"].([]any) {
+		if album := item.(map[string]any); album["id"] == id {
+			return album
+		}
+	}
+	t.Fatalf("album %q missing from answer %v", id, out)
+	return nil
+}
+
 func TestOrganizeAPIAssignRenameDeleteAndStale(t *testing.T) {
 	h := organizeHarness(t)
-	code, out := h.send(t, "PUT", "/api/album-people", map[string]any{
-		"albums": []string{"a", "b", "a"}, "author": " LEEHEE  EXPRESS ", "models": []string{"G.su", "g.SU", "Min.E (민이)"},
-	}, nil)
+	code, out := h.organize(t, map[string]any{
+		"kind": "assign", "albums": []string{"a", "b", "a"}, "author": " LEEHEE  EXPRESS ", "models": []string{"G.su", "g.SU", "Min.E (민이)"},
+	})
 	if code != http.StatusOK {
 		t.Fatalf("assign = %d %v", code, out)
 	}
-	saved := out["albums"].([]any)
-	if len(saved) != 2 {
-		t.Fatalf("duplicate album ids should be saved once: %v", saved)
-	}
-	first := saved[0].(map[string]any)
-	if first["id"] != "a" || first["author"].(map[string]any)["name"] != "LEEHEE EXPRESS" || names(first["models"]) != "G.su|Min.E (민이)" {
+	first := savedAlbum(t, out, "a")
+	if first["author"].(map[string]any)["name"] != "LEEHEE EXPRESS" || names(first["models"]) != "G.su|Min.E (민이)" {
 		t.Fatalf("saved album %v", first)
+	}
+	if b := savedAlbum(t, out, "b"); b["author"].(map[string]any)["name"] != "LEEHEE EXPRESS" {
+		t.Fatalf("saved album b %v", b)
+	}
+	if cd := savedAlbum(t, out, "c d"); cd["author"] != nil || len(cd["models"].([]any)) != 0 {
+		t.Fatalf("untouched album %v", cd)
 	}
 	people := out["people"].(map[string]any)
 	if names(people["authors"]) != "LEEHEE EXPRESS" || names(people["models"]) != "G.su|Min.E (민이)" {
 		t.Fatalf("people %v", people)
 	}
+	// The repeated album id counts once.
 	if people["authors"].([]any)[0].(map[string]any)["albums"] != float64(2) {
 		t.Fatalf("author should be used by 2 albums: %v", people)
 	}
@@ -349,7 +404,7 @@ func TestOrganizeAPIAssignRenameDeleteAndStale(t *testing.T) {
 	}
 
 	// Clearing only the models of b leaves its author.
-	if code, out := h.send(t, "PUT", "/api/album-people", map[string]any{"albums": []string{"b"}, "models": []string{}}, nil); code != http.StatusOK {
+	if code, out := h.organize(t, map[string]any{"kind": "assign", "albums": []string{"b"}, "models": []string{}}); code != http.StatusOK {
 		t.Fatalf("clear models = %d %v", code, out)
 	}
 	if b := albumByID(t, h, "b"); b["author"] == nil || len(b["models"].([]any)) != 0 {
@@ -358,19 +413,19 @@ func TestOrganizeAPIAssignRenameDeleteAndStale(t *testing.T) {
 
 	// Renaming Min.E to g.su merges into G.su: album a keeps a single entry.
 	ids := peopleIDs(t, h.st)
-	code, out = h.send(t, "PUT", fmt.Sprintf("/api/people/%d", ids["model:Min.E (민이)"]), map[string]any{"name": " g.su "}, nil)
+	code, out = h.organize(t, map[string]any{"kind": "rename", "personId": ids["model:Min.E (민이)"], "name": " g.su "})
 	if code != http.StatusOK || out["merged"] != true || out["person"].(map[string]any)["name"] != "g.su" {
 		t.Fatalf("merge = %d %v", code, out)
 	}
 	if got := names(albumByID(t, h, "a")["models"]); got != "g.su" {
 		t.Fatalf("models after merge %q", got)
 	}
-	if code, out := h.send(t, "PUT", fmt.Sprintf("/api/people/%d", ids["author:LEEHEE EXPRESS"]), map[string]any{"name": ""}, nil); code != http.StatusBadRequest {
+	if code, out := h.organize(t, map[string]any{"kind": "rename", "personId": ids["author:LEEHEE EXPRESS"], "name": ""}); code != http.StatusBadRequest {
 		t.Fatalf("empty rename = %d %v", code, out)
 	}
 
 	// Deleting the author removes it from both albums.
-	if code, out := h.send(t, "DELETE", fmt.Sprintf("/api/people/%d", ids["author:LEEHEE EXPRESS"]), nil, nil); code != http.StatusOK || len(out["people"].(map[string]any)["authors"].([]any)) != 0 {
+	if code, out := h.organize(t, map[string]any{"kind": "remove", "personId": ids["author:LEEHEE EXPRESS"]}); code != http.StatusOK || len(out["people"].(map[string]any)["authors"].([]any)) != 0 {
 		t.Fatalf("delete = %d %v", code, out)
 	}
 	if a := albumByID(t, h, "a"); a["author"] != nil {
@@ -392,10 +447,10 @@ func TestOrganizeAPIAssignRenameDeleteAndStale(t *testing.T) {
 	if code != http.StatusOK || out["stale"] != float64(1) || out["models"].([]any)[0].(map[string]any)["albums"] != float64(0) {
 		t.Fatalf("stale view = %d %v", code, out)
 	}
-	if code, out := h.send(t, "PUT", "/api/album-people", map[string]any{"albums": []string{"a"}, "author": "x"}, nil); code != http.StatusBadRequest {
+	if code, out := h.organize(t, map[string]any{"kind": "assign", "albums": []string{"a"}, "author": "x"}); code != http.StatusBadRequest {
 		t.Fatalf("writing to a removed album = %d %v", code, out)
 	}
-	code, out = h.send(t, "DELETE", "/api/album-people/stale", nil, nil)
+	code, out = h.organize(t, map[string]any{"kind": "cleanStale"})
 	if code != http.StatusOK || out["removed"] != float64(1) || out["people"].(map[string]any)["stale"] != float64(0) {
 		t.Fatalf("clean stale = %d %v", code, out)
 	}

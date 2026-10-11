@@ -1,4 +1,5 @@
 import type { Album, AlbumPeople, Person } from "@/lib/api";
+import { nameIdentity } from "@/lib/names";
 
 export type AlbumSortKey = "name" | "author" | "model" | "added";
 export type SortDirection = "asc" | "desc";
@@ -51,15 +52,6 @@ export function peopleText(album: AlbumPeople) {
   return [album.author?.name, album.models.map(model => model.name).join("、")].filter(Boolean).join(" · ");
 }
 
-// The server's rule: trimmed, single inner spaces, composed Unicode.
-export function cleanName(value: string) {
-  return value.trim().split(/\s+/).filter(Boolean).join(" ").normalize("NFC");
-}
-// Matching ignores letter case; the server folds English letters.
-export function nameKey(value: string) {
-  return cleanName(value).toLocaleLowerCase("en-US");
-}
-
 // Album filters: any of the chosen authors, and any of the chosen models.
 export interface AlbumFilter { authors: string[]; models: string[] }
 export const emptyFilter: AlbumFilter = { authors: [], models: [] };
@@ -74,9 +66,9 @@ export function matchesFilter(album: Album, filter: AlbumFilter, state: FillStat
   if (state === "empty" && (album.author || album.models.length)) return false;
   if (state === "noAuthor" && album.author) return false;
   if (state === "noModel" && album.models.length) return false;
-  const authors = new Set(filter.authors.map(nameKey)), models = new Set(filter.models.map(nameKey));
-  if (authors.size && !(album.author && authors.has(nameKey(album.author.name)))) return false;
-  if (models.size && !album.models.some(model => models.has(nameKey(model.name)))) return false;
+  const authors = new Set(filter.authors.map(nameIdentity)), models = new Set(filter.models.map(nameIdentity));
+  if (authors.size && !(album.author && authors.has(nameIdentity(album.author.name)))) return false;
+  if (models.size && !album.models.some(model => models.has(nameIdentity(model.name)))) return false;
   return true;
 }
 
@@ -85,9 +77,9 @@ export function albumNames(albums: Album[]): { authors: Person[]; models: Person
   const count = (names: string[]) => {
     const found = new Map<string, Person>();
     for (const name of names) {
-      const person = found.get(nameKey(name)) ?? { id: found.size + 1, name, albums: 0 };
+      const person = found.get(nameIdentity(name)) ?? { id: found.size + 1, name, albums: 0 };
       person.albums++;
-      found.set(nameKey(name), person);
+      found.set(nameIdentity(name), person);
     }
     return [...found.values()].sort((a, b) => nameCollator.compare(a.name, b.name));
   };

@@ -9,7 +9,7 @@ async function signIn(page: Page) {
 async function waitForScan(page: Page) {
   // A scan now also encodes every photo's wallpapers, which takes longer.
   await expect.poll(async () => {
-    const response = await page.request.get("/api/health");
+    const response = await page.request.get("/api/photos?limit=1");
     const data = await response.json();
     return !data.status.scanning && !data.status.queued;
   }, { timeout: 60_000 }).toBe(true);

@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"image"
 	"io"
@@ -59,14 +60,18 @@ func newUploadAPI(st *store, sc *scanner, sources *sourceSet) *uploadAPI {
 	return &uploadAPI{store: st, scanner: sc, sources: sources, tasks: make(map[string]*uploadTask)}
 }
 
+const uploadOriginError = "只能从相册网站上传"
+
+// Writes use the existing session and same-origin browser requests, and never
+// take a filesystem root or S3 credentials from the client.
 func (a *uploadAPI) routes(mux *http.ServeMux, gate *authGate) {
 	mux.Handle("GET /api/upload-targets", gate.protect(http.HandlerFunc(a.targets)))
-	mux.Handle("POST /api/uploads", gate.protect(http.HandlerFunc(a.prepare)))
+	mux.Handle("POST /api/uploads", gate.protectWrite(uploadOriginError, true, a.prepare))
 	mux.Handle("GET /api/uploads/{id}", gate.protect(http.HandlerFunc(a.status)))
-	mux.Handle("PUT /api/uploads/{id}/local", gate.protect(http.HandlerFunc(a.local)))
-	mux.Handle("POST /api/uploads/{id}/complete", gate.protect(http.HandlerFunc(a.complete)))
-	mux.Handle("POST /api/uploads/{id}/verify", gate.protect(http.HandlerFunc(a.verify)))
-	mux.Handle("POST /api/uploads/{id}/retry", gate.protect(http.HandlerFunc(a.retry)))
+	mux.Handle("PUT /api/uploads/{id}/local", gate.protectWrite(uploadOriginError, false, a.local))
+	mux.Handle("POST /api/uploads/{id}/complete", gate.protectWrite(uploadOriginError, true, a.complete))
+	mux.Handle("POST /api/uploads/{id}/verify", gate.protectWrite(uploadOriginError, true, a.verify))
+	mux.Handle("POST /api/uploads/{id}/retry", gate.protectWrite(uploadOriginError, true, a.retry))
 }
 
 func (a *uploadAPI) targets(w http.ResponseWriter, r *http.Request) {
@@ -75,16 +80,6 @@ func (a *uploadAPI) targets(w http.ResponseWriter, r *http.Request) {
 		targets = append(targets, map[string]string{"id": src.ID, "name": src.Name, "kind": "s3"})
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"targets": targets, "maxBytes": uploadMaxBytes, "maxFiles": 10000})
-}
-
-// New write endpoints use the existing session, accept same-origin browser
-// requests, and never take a filesystem root or S3 credentials from the client.
-func uploadOriginOK(w http.ResponseWriter, r *http.Request) bool {
-	return sameOriginOK(w, r, "只能从相册网站上传")
-}
-
-func uploadJSONOK(w http.ResponseWriter, r *http.Request) bool {
-	return sameOriginJSON(w, r, "只能从相册网站上传")
 }
 
 func uploadPath(in uploadInput) (string, string, error) {
@@ -146,9 +141,6 @@ func uploadLocalParents(root *os.Root, rel string) error {
 }
 
 func (a *uploadAPI) prepare(w http.ResponseWriter, r *http.Request) {
-	if !uploadJSONOK(w, r) {
-		return
-	}
 	var in uploadInput
 	dec := json.NewDecoder(http.MaxBytesReader(w, r.Body, 16<<10))
 	dec.DisallowUnknownFields()
@@ -240,12 +232,7 @@ func (a *uploadAPI) prepare(w http.ResponseWriter, r *http.Request) {
 	if t.src != nil {
 		// Resolve the region using the existing reader. Signing uses the public
 		// address and the very same configured access/secret key.
-		if _, err := t.src.conn(r.Context()); err != nil {
-			a.fail(t, describeSourceError(err), false)
-			a.reply(w, t)
-			return
-		}
-		client, err := t.src.newPublicClient()
+		client, err := t.src.publicClient(r.Context())
 		if err != nil {
 			a.fail(t, describeSourceError(err), false)
 			a.reply(w, t)
@@ -321,9 +308,6 @@ func (a *uploadAPI) status(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *uploadAPI) local(w http.ResponseWriter, r *http.Request) {
-	if !uploadOriginOK(w, r) {
-		return
-	}
 	t := a.find(w, r)
 	if t == nil {
 		return
@@ -387,6 +371,12 @@ func (a *uploadAPI) local(w http.ResponseWriter, r *http.Request) {
 		fail(http.StatusInternalServerError, "图片写入失败，请检查可用磁盘空间", true)
 		return
 	}
+	// The temporary file is private while it is written; the photo is then
+	// readable like the photos placed in the folder by other means.
+	if err := f.Chmod(0o644); err != nil {
+		fail(http.StatusInternalServerError, "图片写入失败，请检查目录权限", true)
+		return
+	}
 	// Linking the complete temporary file is atomic and refuses an existing
 	// destination. Rename would silently overwrite on Linux.
 	if err := root.Link(tmp, t.Path); err != nil {
@@ -405,9 +395,6 @@ func (a *uploadAPI) local(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *uploadAPI) complete(w http.ResponseWriter, r *http.Request) {
-	if !uploadJSONOK(w, r) {
-		return
-	}
 	t := a.find(w, r)
 	if t == nil {
 		return
@@ -476,9 +463,6 @@ func (a *uploadAPI) verifySaved(ctx context.Context, t *uploadTask) (string, err
 }
 
 func (a *uploadAPI) verify(w http.ResponseWriter, r *http.Request) {
-	if !uploadJSONOK(w, r) {
-		return
-	}
 	t := a.find(w, r)
 	if t == nil {
 		return
@@ -507,10 +491,14 @@ func (a *uploadAPI) start(t *uploadTask) {
 	t.Saved, t.Phase, t.Message, t.Retryable, t.TransferRetryable, t.Code = true, "processing", "", true, false, ""
 	a.mu.Unlock()
 	go func() {
-		ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
-		defer cancel()
-		result := a.scanner.photos.SyncKey(ctx, t.key)
+		// No overall deadline: waiting for a generation slot behind a scan or
+		// a burst of storage events is not a failure, and each read, decode
+		// and encode inside has its own limit.
+		result := a.scanner.photos.SyncKey(context.Background(), t.key)
 		err := result.Err
+		if errors.Is(err, context.DeadlineExceeded) {
+			err = errors.New("读取或处理这张图片超时，可以重试")
+		}
 		if err == nil && (!result.AlbumUsable || !result.WallpapersReady) {
 			switch {
 			case result.Invalid:
@@ -533,9 +521,6 @@ func (a *uploadAPI) start(t *uploadTask) {
 }
 
 func (a *uploadAPI) retry(w http.ResponseWriter, r *http.Request) {
-	if !uploadJSONOK(w, r) {
-		return
-	}
 	if t := a.find(w, r); t != nil {
 		current := a.snapshot(t)
 		if current.Phase != "error" || !current.Saved || !current.Retryable {

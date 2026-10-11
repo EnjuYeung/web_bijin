@@ -204,6 +204,29 @@ func TestSettingsAPIRequiresLogin(t *testing.T) {
 	}
 }
 
+// Storage settings hold credentials and choose what the server connects to,
+// so like every other write they only accept this site's own pages.
+func TestSettingsWritesRefuseOtherSites(t *testing.T) {
+	h := newSettingsHarness(t)
+	body := map[string]any{"name": "x", "endpoint": "http://127.0.0.1:1", "bucket": "photos", "accessKey": "k", "secretKey": "s", "region": "us-east-1"}
+	routes := [][2]string{{"POST", "/api/storages"}, {"PUT", "/api/storages/1"}, {"DELETE", "/api/storages/1"}, {"POST", "/api/storages/test"}}
+	for _, header := range []map[string]string{{"Sec-Fetch-Site": "cross-site"}, {"Origin": "https://evil.example"}, {"Origin": "null"}} {
+		for _, r := range routes {
+			code, out := h.send(t, r[0], r[1], body, header)
+			if code != http.StatusForbidden || out["error"] != settingsOriginError {
+				t.Fatalf("%s %s with %v = %d %v", r[0], r[1], header, code, out)
+			}
+		}
+	}
+	if list, err := h.st.listStorages(); err != nil || len(list) != 0 {
+		t.Fatalf("a refused request saved a storage: %+v %v", list, err)
+	}
+	// The site's own page is fine.
+	if code, out := h.send(t, "POST", "/api/storages", body, map[string]string{"Origin": h.srv.URL, "Sec-Fetch-Site": "same-origin"}); code != http.StatusCreated {
+		t.Fatalf("same origin = %d %v", code, out)
+	}
+}
+
 func TestSettingsAPIStorageLifecycle(t *testing.T) {
 	h := newSettingsHarness(t)
 	f := newFakeS3(t, "photos")

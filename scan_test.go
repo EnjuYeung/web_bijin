@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"image"
 	"image/color"
 	"image/gif"
@@ -113,5 +114,47 @@ func TestScanRecursiveAndFilters(t *testing.T) {
 	n, _ = st.countOK()
 	if n != 3 {
 		t.Fatalf("after delete want 3, got %d", n)
+	}
+}
+
+// emptyListingSource lists nothing; Stat answers per key, so one vanished
+// photo can be confirmed gone while another cannot be checked right now.
+type emptyListingSource struct{ stat map[string]error }
+
+func (emptyListingSource) Walk(context.Context, func(sourceObject) error) error { return nil }
+func (s emptyListingSource) Stat(_ context.Context, rel string) (sourceObject, error) {
+	return sourceObject{}, s.stat[rel]
+}
+func (emptyListingSource) Open(context.Context, string) (readSeekCloser, error) {
+	return nil, os.ErrNotExist
+}
+
+func TestScanCleanupContinuesPastAPhotoItCannotCheck(t *testing.T) {
+	data := t.TempDir()
+	st, err := openStore(filepath.Join(data, "bijin.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	for _, rel := range []string{"a.jpg", "b.jpg", "c.jpg"} {
+		if _, err := st.upsert(photo{RelPath: rel, Size: 1, MtimeUnix: 1, Width: 10, Height: 10, SourceVersion: "v1"}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// a.jpg is checked first and its storage times out; b and c are gone.
+	source := emptyListingSource{stat: map[string]error{"a.jpg": errors.New("storage timeout"), "b.jpg": os.ErrNotExist, "c.jpg": os.ErrNotExist}}
+	thumbs := newThumbCache(filepath.Join(data, "thumbs"), filepath.Join(data, "wallpapers"), source, 1)
+	sc := newScanner(config{MaxPixels: 64_000_000}, st, thumbs, newSourceSet(source))
+	err = sc.walk(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "not removed") || !strings.Contains(err.Error(), "storage timeout") {
+		t.Fatalf("walk error = %v", err)
+	}
+	for rel, want := range map[string]bool{"a.jpg": true, "b.jpg": false, "c.jpg": false} {
+		if _, ok, err := st.getBySourceKey(rel); err != nil || ok != want {
+			t.Fatalf("%s indexed=%v want %v (%v)", rel, ok, want, err)
+		}
+	}
+	if state := sc.snapshot(); state.Failed != 1 || state.Seen != 0 {
+		t.Fatalf("scan state %+v", state)
 	}
 }

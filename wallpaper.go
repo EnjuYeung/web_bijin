@@ -108,15 +108,15 @@ func wallFile(p photo, profile string) string {
 }
 
 // wallpapersReady reports whether a photo version has all its wallpapers.
-func (s *photoProcessor) wallpapersReady(p photo) (bool, error) {
-	if p.Broken || !wantsWallpaper(p.RelPath) {
+func (p *photoProcessor) wallpapersReady(target photo) (bool, error) {
+	if target.Broken || !wantsWallpaper(target.RelPath) {
 		return true, nil
 	}
-	rows, err := s.store.wallpapersOf(p.ID)
+	rows, err := p.store.wallpapersOf(target.ID)
 	if err != nil {
 		return false, err
 	}
-	want := wallProfilesFor(p.Width, p.Height)
+	want := wallProfilesFor(target.Width, target.Height)
 	if len(rows) != len(want) {
 		return false, nil
 	}
@@ -126,10 +126,10 @@ func (s *photoProcessor) wallpapersReady(p photo) (bool, error) {
 	}
 	for _, prof := range want {
 		r, ok := have[prof.Name]
-		if !ok || r.SourceVersion != p.SourceVersion || r.File != wallFile(p, prof.Name) {
+		if !ok || r.SourceVersion != target.SourceVersion || r.File != wallFile(target, prof.Name) {
 			return false, nil
 		}
-		if info, err := os.Stat(filepath.Join(s.thumbs.wallDir, r.File)); err != nil || !info.Mode().IsRegular() {
+		if info, err := os.Stat(filepath.Join(p.thumbs.wallDir, r.File)); err != nil || !info.Mode().IsRegular() {
 			return false, nil
 		}
 	}
@@ -139,13 +139,13 @@ func (s *photoProcessor) wallpapersReady(p photo) (bool, error) {
 // saveWallpapers encodes the wallpapers of a committed photo version from its
 // decoded image and replaces the photo's rows; files of earlier versions go
 // afterwards. Caller holds the photo's key lock and a generation slot.
-func (s *photoProcessor) saveWallpapers(ctx context.Context, p photo, img image.Image) error {
-	if !wantsWallpaper(p.RelPath) {
+func (p *photoProcessor) saveWallpapers(ctx context.Context, target photo, img image.Image) error {
+	if !wantsWallpaper(target.RelPath) {
 		return nil
 	}
 	ctx, cancel := context.WithTimeout(ctx, imageReadTimeout)
 	defer cancel()
-	dir := s.thumbs.wallDir
+	dir := p.thumbs.wallDir
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return err
 	}
@@ -171,26 +171,26 @@ func (s *photoProcessor) saveWallpapers(ctx context.Context, p photo, img image.
 			px := imaging.Resize(out, 1, 1, imaging.Box).Pix
 			color = fmt.Sprintf("#%02x%02x%02x", px[0], px[1], px[2])
 		}
-		file := wallFile(p, prof.Name)
+		file := wallFile(target, prof.Name)
 		if err := writeFileAtomic(filepath.Join(dir, file), buf.Bytes()); err != nil {
 			return err
 		}
 		keep[file] = true
 		sum := sha256.Sum256(buf.Bytes())
-		rows = append(rows, wallpaper{PhotoID: p.ID, Profile: prof.Name, SourceVersion: p.SourceVersion, Orientation: orientation,
+		rows = append(rows, wallpaper{PhotoID: target.ID, Profile: prof.Name, SourceVersion: target.SourceVersion, Orientation: orientation,
 			Width: ww, Height: wh, Bytes: int64(buf.Len()), SHA256: hex.EncodeToString(sum[:]), Color: color, File: file})
 	}
 	// Encoding cannot be interrupted, so a late finish is caught here.
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	if err := s.validate(ctx, sourceObject{Key: p.sourceKey(), Version: p.SourceVersion}); err != nil {
+	if err := p.validate(ctx, sourceObject{Key: target.sourceKey(), Version: target.SourceVersion}); err != nil {
 		return err
 	}
-	if err := s.store.replaceWallpapers(p.ID, rows); err != nil {
+	if err := p.store.replaceWallpapers(target.ID, rows); err != nil {
 		return err
 	}
-	old, _ := filepath.Glob(filepath.Join(dir, fmt.Sprintf("%d-*.webp", p.ID)))
+	old, _ := filepath.Glob(filepath.Join(dir, fmt.Sprintf("%d-*.webp", target.ID)))
 	for _, f := range old {
 		if !keep[filepath.Base(f)] {
 			_ = os.Remove(f)
@@ -237,15 +237,15 @@ func parseWallQuery(q url.Values) (f wallFilter, format string, err error) {
 		}
 		return values[0], nil
 	}
-	size := func(name string) (int, error) {
-		v, err := one(name, func(v string) bool {
-			n, err := strconv.Atoi(v)
-			return wallNumber.MatchString(v) && err == nil && n >= 1 && n <= 100_000
+	size := func(name string) (n int, err error) {
+		_, err = one(name, func(v string) bool {
+			n, _ = strconv.Atoi(v)
+			return wallNumber.MatchString(v) && n >= 1 && n <= 100_000
 		})
-		if v == "" || err != nil {
+		if err != nil {
 			return 0, err
 		}
-		return strconv.Atoi(v)
+		return n, nil
 	}
 	if f.orientation, err = one("orientation", func(v string) bool { return wallOrients[v] }); err != nil {
 		return

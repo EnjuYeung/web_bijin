@@ -191,14 +191,14 @@ export default function SettingsPanel() {
     {loadError && <Alert variant="destructive"><CircleAlert aria-hidden="true" /><AlertTitle>设置暂时读不出来</AlertTitle><AlertDescription>{loadError}<Button variant="outline" onClick={load}><RefreshCw data-icon="inline-start" aria-hidden="true" />重试</Button></AlertDescription></Alert>}
     {settings && <>
       <Card className="source-card">
-        <CardHeader><CardTitle><h2><FolderHeart aria-hidden="true" />本地图库</h2></CardTitle><CardDescription>家里的照片，按文件夹整理成相册。</CardDescription><CardAction><Badge variant="outline">只读目录</Badge></CardAction></CardHeader>
+        <CardHeader><CardTitle><h2><FolderHeart aria-hidden="true" />本地图库</h2></CardTitle><CardDescription>家里的照片，按文件夹整理成相册。</CardDescription><CardAction><Badge variant="outline">可上传</Badge></CardAction></CardHeader>
         <CardContent><dl className="source-facts">
           <div><dt>照片</dt><dd id="local-count"><Count photos={settings.local.photos} broken={settings.local.broken} /></dd></div>
           <div><dt>宿主机目录</dt><dd id="local-host">{settings.local.hostDir || "未提供，见服务器 PHOTOS_DIR 配置"}</dd></div>
           <div><dt>容器内目录</dt><dd id="local-container">{settings.local.containerDir || "/photos"}</dd></div>
           <div><dt>最近扫描</dt><dd id="local-scan"><SourceState status={settings.local.status} /></dd></div>
         </dl></CardContent>
-        <CardFooter><details className="source-guide"><summary>修改本地照片目录</summary><div className="source-guide-body"><p>在服务器项目目录的 <code>.env</code> 中修改 <code>PHOTOS_DIR</code>，再执行 <code>docker compose up -d</code>。</p><p>支持 jpg、jpeg、png、webp、gif；以点开头的文件和文件夹会跳过。上传页可将图片保存到这个目录，已有同名文件会跳过。</p><p>每 {settings.scanEvery % 60 === 0 ? settings.scanEvery / 60 + " 分钟" : settings.scanEvery + " 秒"}自动扫描一次。</p></div></details></CardFooter>
+        <CardFooter><details className="source-guide"><summary>修改本地照片目录</summary><div className="source-guide-body"><p>在服务器项目目录的 <code>.env</code> 中修改 <code>PHOTOS_DIR</code>，再执行 <code>docker compose up -d</code>。</p><p>支持 jpg、jpeg、png、webp、gif；以点开头的文件和文件夹会跳过。上传页可将图片保存到这个目录，已有同名文件会跳过。</p><p>每 {scanInterval(settings.scanEvery)}自动扫描一次。</p></div></details></CardFooter>
       </Card>
       <Card className="source-card">
         <CardHeader><CardTitle><h2><Cloud aria-hidden="true" />对象存储</h2></CardTitle><CardDescription>云端照片与本地一起展示，同名文件夹合并为相册。</CardDescription><CardAction>{editing === undefined && <Button ref={addButton} id="s3-add" onClick={event => openEditor(null, event.currentTarget)} disabled={!!pending}><Plus data-icon="inline-start" aria-hidden="true" />添加对象存储</Button>}</CardAction></CardHeader>

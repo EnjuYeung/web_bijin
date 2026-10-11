@@ -59,7 +59,6 @@ func (t *thumbCache) exists(p photo) bool {
 // remove deletes every cached file of a photo: thumbnails and wallpapers.
 func (t *thumbCache) remove(id int64) {
 	paths, _ := filepath.Glob(filepath.Join(t.dir, fmt.Sprintf("%d-*.jpg", id)))
-	paths = append(paths, filepath.Join(t.dir, fmt.Sprintf("%d.jpg", id)))
 	walls, _ := filepath.Glob(filepath.Join(t.wallDir, fmt.Sprintf("%d-*.webp", id)))
 	for _, path := range append(paths, walls...) {
 		_ = os.Remove(path)
@@ -72,7 +71,6 @@ func (t *thumbCache) removeOld(p, previous photo) {
 	if t.path(previous) != t.path(p) {
 		_ = os.Remove(t.path(previous))
 	}
-	_ = os.Remove(filepath.Join(t.dir, fmt.Sprintf("%d.jpg", p.ID)))
 }
 
 // decoded is one fully read, valid and upright source image with its

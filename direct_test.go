@@ -109,6 +109,22 @@ func TestOriginalStreamsWhenDirectIsOff(t *testing.T) {
 	}
 }
 
+// A storage that is down is not a missing photo: the browser gets 502 and the
+// log says why, while a photo whose object is gone is 404.
+func TestOriginalTellsMissingFromUnavailable(t *testing.T) {
+	f, st, _, srv, cookie := originalHarness(t, nil)
+	p, _, _ := st.getBySourceKey(storageKeyPrefix(1) + "旅行/a b.jpg")
+	f.setDown(true)
+	if res, _ := getOriginal(t, srv, cookie, p.ID); res.StatusCode != http.StatusBadGateway {
+		t.Fatalf("storage down = %d", res.StatusCode)
+	}
+	f.setDown(false)
+	f.del("旅行/a b.jpg")
+	if res, _ := getOriginal(t, srv, cookie, p.ID); res.StatusCode != http.StatusNotFound {
+		t.Fatalf("object gone = %d", res.StatusCode)
+	}
+}
+
 func TestStorageDirectOriginalFields(t *testing.T) {
 	c := s3Config{Endpoint: "http://1Panel-rustfs:9000", Bucket: "jan", AccessKey: "a", SecretKey: "s", PublicEndpoint: " s3.example.com/ ", DirectOriginal: true}
 	n, err := c.normalize()

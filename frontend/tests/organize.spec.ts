@@ -11,7 +11,7 @@ async function signIn(page: Page) {
 }
 async function waitForScan(page: Page) {
   await expect.poll(async () => {
-    const data = await (await page.request.get("/api/health")).json();
+    const data = await (await page.request.get("/api/photos?limit=1")).json();
     return !data.status.scanning && !data.status.queued;
   }, { timeout: 60_000 }).toBe(true);
 }
@@ -21,15 +21,19 @@ async function noOverflow(page: Page) {
 async function albums(page: Page): Promise<ApiAlbum[]> {
   return (await (await page.request.get("/api/albums")).json()).albums;
 }
-async function setPeople(page: Page, albumIds: string[], data: { author?: string; models?: string[] }) {
-  const response = await page.request.put("/api/album-people", { data: { albums: albumIds, ...data } });
+// Test data goes through the page's own save endpoint, one new operation number each.
+async function organize(page: Page, change: Record<string, unknown>) {
+  const response = await page.request.post("/api/organize", { data: { operationId: `${Date.now()}-${crypto.randomUUID()}`, ...change } });
   expect(response.status(), await response.text()).toBe(200);
+}
+async function setPeople(page: Page, albumIds: string[], data: { author?: string; models?: string[] }) {
+  await organize(page, { kind: "assign", albums: albumIds, ...data });
 }
 // Every test starts and ends with no names and no album people.
 async function resetPeople(page: Page) {
   await setPeople(page, (await albums(page)).map(album => album.id), { author: "", models: [] });
   const people = await (await page.request.get("/api/people")).json() as { authors: ApiPerson[]; models: ApiPerson[] };
-  for (const person of [...people.authors, ...people.models]) expect((await page.request.delete("/api/people/" + person.id)).status()).toBe(200);
+  for (const person of [...people.authors, ...people.models]) await organize(page, { kind: "remove", personId: person.id });
 }
 function row(page: Page, name: string) {
   return page.locator(".organize-row").filter({ has: page.locator(".organize-album > strong", { hasText: name }) });

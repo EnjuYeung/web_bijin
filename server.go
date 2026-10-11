@@ -31,12 +31,10 @@ func newRouter(st *store, sc *scanner, thumbs *thumbCache, sources *sourceSet, t
 	mux := http.NewServeMux()
 	newUploadAPI(st, sc, sources).routes(mux, gate)
 	(&organizeAPI{store: st}).routes(mux, gate)
+	// Public for Compose and the page's time zone only. Scan progress and its
+	// errors name internal hosts and files, so they stay behind login.
 	mux.Handle("GET /api/health", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		writeJSON(w, http.StatusOK, map[string]any{
-			"ok":     true,
-			"tz":     tz,
-			"status": sc.snapshot(),
-		})
+		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "tz": tz})
 	}))
 	mux.Handle("GET /api/login-bg", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		handleLoginBg(w, r, st)
@@ -53,7 +51,7 @@ func newRouter(st *store, sc *scanner, thumbs *thumbCache, sources *sourceSet, t
 	mux.Handle("OPTIONS /media/sha256/{prefix}/{name}", http.HandlerFunc(handleWallpaperPreflight))
 	mux.Handle("POST /api/login", http.HandlerFunc(gate.handleLogin))
 	mux.Handle("GET /api/login-options", http.HandlerFunc(gate.handleLoginOptions))
-	mux.Handle("POST /logout", http.HandlerFunc(handleLogout))
+	mux.Handle("POST /logout", sameOrigin("请在相册页面里退出登录", false, http.HandlerFunc(handleLogout)))
 	mux.Handle("GET /login", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if gate.signedIn(r) {
 			http.Redirect(w, r, safeNext(r.URL.Query().Get("next")), http.StatusFound)
@@ -97,15 +95,26 @@ func newRouter(st *store, sc *scanner, thumbs *thumbCache, sources *sourceSet, t
 	})))
 	settings := &settingsAPI{store: st, scanner: sc, sources: sources}
 	mux.Handle("GET /api/settings", gate.protect(http.HandlerFunc(settings.get)))
-	mux.Handle("POST /api/storages", gate.protect(http.HandlerFunc(settings.create)))
-	mux.Handle("PUT /api/storages/{id}", gate.protect(http.HandlerFunc(settings.update)))
-	mux.Handle("DELETE /api/storages/{id}", gate.protect(http.HandlerFunc(settings.remove)))
-	mux.Handle("POST /api/storages/test", gate.protect(http.HandlerFunc(settings.test)))
+	mux.Handle("POST /api/storages", gate.protectWrite(settingsOriginError, true, settings.create))
+	mux.Handle("PUT /api/storages/{id}", gate.protectWrite(settingsOriginError, true, settings.update))
+	mux.Handle("DELETE /api/storages/{id}", gate.protectWrite(settingsOriginError, false, settings.remove))
+	mux.Handle("POST /api/storages/test", gate.protectWrite(settingsOriginError, true, settings.test))
 	mux.Handle("GET /{$}", gate.protect(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Cache-Control", "no-store")
 		http.ServeFileFS(w, r, webFS, "index.html")
 	})))
-	return withLog(mux)
+	return withLog(withHSTS(mux))
+}
+
+// withHSTS tells a browser that reached the site over HTTPS to use only
+// HTTPS from then on, so a typed http:// address never carries the cookie.
+func withHSTS(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if secureRequest(r) {
+			w.Header().Set("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
+		}
+		next.ServeHTTP(w, r)
+	})
 }
 
 func acceptsGzip(header string) bool {
@@ -327,8 +336,16 @@ func handleOriginal(w http.ResponseWriter, r *http.Request, st *store, source im
 		}
 	}
 	f, err := source.Open(r.Context(), p.sourceKey())
-	if err != nil {
+	if isNotFound(err) || errors.Is(err, errSourceNotConfigured) {
 		http.NotFound(w, r)
+		return
+	}
+	if err != nil {
+		// A storage that is down is not a missing photo.
+		if r.Context().Err() == nil {
+			slog.Warn("open original", "id", p.ID, "err", err)
+		}
+		http.Error(w, "original unavailable", http.StatusBadGateway)
 		return
 	}
 	defer f.Close()
@@ -362,31 +379,40 @@ func writeJSON(w http.ResponseWriter, code int, v any) {
 	_ = json.NewEncoder(w).Encode(v)
 }
 
-// sameOriginOK refuses write requests that a browser sends from another
-// website; for these endpoints the session cookie alone is not enough.
-func sameOriginOK(w http.ResponseWriter, r *http.Request, message string) bool {
+const settingsOriginError = "只能从相册网站修改设置"
+
+// sameOrigin guards every route that changes something: it refuses requests
+// a browser sends from another website, where the session cookie alone is not
+// enough. With jsonBody it also needs a JSON body, which a plain form cannot
+// send. Routes are registered through it, so a handler cannot forget it.
+func sameOrigin(message string, jsonBody bool, next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !fromThisSite(r) {
+			writeJSON(w, http.StatusForbidden, map[string]string{"error": message})
+			return
+		}
+		if jsonBody && strings.TrimSpace(strings.Split(r.Header.Get("Content-Type"), ";")[0]) != "application/json" {
+			writeJSON(w, http.StatusUnsupportedMediaType, map[string]string{"error": "请使用 JSON 请求"})
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+// protectWrite is a signed-in write from this site's own pages.
+func (g *authGate) protectWrite(message string, jsonBody bool, h http.HandlerFunc) http.Handler {
+	return g.protect(sameOrigin(message, jsonBody, h))
+}
+
+func fromThisSite(r *http.Request) bool {
 	if r.Header.Get("Sec-Fetch-Site") == "cross-site" {
-		writeJSON(w, http.StatusForbidden, map[string]string{"error": message})
 		return false
 	}
 	if raw := r.Header.Get("Origin"); raw != "" {
 		u, err := url.Parse(raw)
 		if err != nil || u.Host != r.Host || (u.Scheme != "http" && u.Scheme != "https") {
-			writeJSON(w, http.StatusForbidden, map[string]string{"error": message})
 			return false
 		}
-	}
-	return true
-}
-
-// sameOriginJSON also requires a JSON body, which a plain form cannot send.
-func sameOriginJSON(w http.ResponseWriter, r *http.Request, message string) bool {
-	if !sameOriginOK(w, r, message) {
-		return false
-	}
-	if strings.Split(r.Header.Get("Content-Type"), ";")[0] != "application/json" {
-		writeJSON(w, http.StatusUnsupportedMediaType, map[string]string{"error": "请使用 JSON 请求"})
-		return false
 	}
 	return true
 }

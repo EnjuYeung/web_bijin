@@ -19,6 +19,8 @@ type settingsAPI struct {
 	mu      sync.Mutex
 }
 
+// storageInput is s3Config as the settings page sends it: unlike the stored
+// config, it reads secretKey from JSON.
 type storageInput struct {
 	ID             int64  `json:"id"`
 	Name           string `json:"name"`
@@ -32,12 +34,6 @@ type storageInput struct {
 	ListV1         bool   `json:"listV1"`
 	DirectOriginal bool   `json:"directOriginal"`
 	PublicEndpoint string `json:"publicEndpoint"`
-}
-
-func (in storageInput) config() s3Config {
-	return s3Config{ID: in.ID, Name: in.Name, Endpoint: in.Endpoint, Region: in.Region, Bucket: in.Bucket, Prefix: in.Prefix,
-		AccessKey: in.AccessKey, SecretKey: in.SecretKey, Addressing: in.Addressing, ListV1: in.ListV1,
-		DirectOriginal: in.DirectOriginal, PublicEndpoint: in.PublicEndpoint}
 }
 
 type storageView struct {
@@ -99,7 +95,7 @@ func (a *settingsAPI) create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	in.ID = 0
-	a.save(w, in.config(), http.StatusCreated)
+	a.save(w, s3Config(in), http.StatusCreated)
 }
 
 func (a *settingsAPI) update(w http.ResponseWriter, r *http.Request) {
@@ -116,7 +112,7 @@ func (a *settingsAPI) update(w http.ResponseWriter, r *http.Request) {
 		writeStorageError(w, err)
 		return
 	}
-	c := in.config()
+	c := s3Config(in)
 	c.ID = id
 	if strings.TrimSpace(c.SecretKey) == "" {
 		c.SecretKey = existing.SecretKey
@@ -169,7 +165,7 @@ func (a *settingsAPI) test(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	c := in.config()
+	c := s3Config(in)
 	if strings.TrimSpace(c.SecretKey) == "" && c.ID > 0 {
 		existing, err := a.store.getStorage(c.ID)
 		if err != nil {
@@ -224,11 +220,6 @@ func checkClient(c s3Config) error {
 
 func readStorageInput(w http.ResponseWriter, r *http.Request) (storageInput, bool) {
 	var in storageInput
-	// A JSON body cannot be sent by a plain cross-site form.
-	if !strings.HasPrefix(r.Header.Get("Content-Type"), "application/json") {
-		writeJSON(w, http.StatusUnsupportedMediaType, map[string]any{"error": "请求需要 JSON"})
-		return in, false
-	}
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 16<<10)).Decode(&in); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "请求格式不正确"})
 		return in, false

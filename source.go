@@ -29,7 +29,6 @@ type sourceObject struct {
 	Size    int64
 	Mtime   time.Time
 	Version string
-	Backend string
 	ETag    string // source metadata for conditional S3 reads; not persisted
 }
 
@@ -297,7 +296,6 @@ func (s *localPhotoSource) Walk(ctx context.Context, visit func(sourceObject) er
 			Size:    info.Size(),
 			Mtime:   info.ModTime(),
 			Version: fmt.Sprintf("local:%d:%d", info.Size(), info.ModTime().UnixNano()),
-			Backend: "local",
 		})
 	})
 }
@@ -312,7 +310,7 @@ func (s *localPhotoSource) Open(_ context.Context, rel string) (readSeekCloser, 
 
 func localObject(rel string, info os.FileInfo) sourceObject {
 	return sourceObject{Key: rel, RelPath: rel, Size: info.Size(), Mtime: info.ModTime(),
-		Version: fmt.Sprintf("local:%d:%d", info.Size(), info.ModTime().UnixNano()), Backend: "local"}
+		Version: fmt.Sprintf("local:%d:%d", info.Size(), info.ModTime().UnixNano())}
 }
 
 func (s *localPhotoSource) Stat(ctx context.Context, rel string) (sourceObject, error) {
@@ -510,7 +508,7 @@ func s3Object(rel, etag string, size int64, mtime time.Time) sourceObject {
 	if version == "" {
 		version = fmt.Sprintf("%d:%d", size, mtime.UnixNano())
 	}
-	return sourceObject{Key: rel, RelPath: rel, Size: size, Mtime: mtime, Version: "s3:" + version, Backend: "s3", ETag: strings.Trim(etag, `"`)}
+	return sourceObject{Key: rel, RelPath: rel, Size: size, Mtime: mtime, Version: "s3:" + version, ETag: strings.Trim(etag, `"`)}
 }
 
 // Stat reads the current state of one object; a notification only names it.
@@ -535,6 +533,25 @@ func isNotFound(err error) bool {
 	return errors.Is(err, os.ErrNotExist) || errors.As(err, &resp) && (resp.StatusCode == http.StatusNotFound || resp.Code == "NoSuchKey")
 }
 
+// publicClient signs URLs for browsers: presigned originals and uploads. It
+// needs the region, which conn detects when none is configured, and is made
+// once per source.
+func (s *s3PhotoSource) publicClient(ctx context.Context) (*minio.Client, error) {
+	if _, err := s.conn(ctx); err != nil {
+		return nil, err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.presigner == nil {
+		client, err := s.newPublicClient()
+		if err != nil {
+			return nil, err
+		}
+		s.presigner = client
+	}
+	return s.presigner, nil
+}
+
 // Presign returns a browser URL for the original of one object version. The
 // same URL is reused for presignReuse, and the response tells the browser to
 // keep it that long; a new version gets a new URL, so nothing stale is shown.
@@ -543,7 +560,8 @@ func (s *s3PhotoSource) Presign(ctx context.Context, rel, version string) (strin
 	if err != nil {
 		return "", err
 	}
-	if _, err := s.conn(ctx); err != nil {
+	presigner, err := s.publicClient(ctx)
+	if err != nil {
 		return "", err
 	}
 	s.mu.Lock()
@@ -553,16 +571,11 @@ func (s *s3PhotoSource) Presign(ctx context.Context, rel, version string) (strin
 	if l, ok := s.links[id]; ok && l.expires.Sub(now) > presignTTL-presignReuse {
 		return l.url, nil
 	}
-	if s.presigner == nil {
-		if s.presigner, err = s.newPublicClient(); err != nil {
-			return "", err
-		}
-	}
 	params := url.Values{"response-cache-control": {fmt.Sprintf("private, max-age=%d, immutable", int(presignReuse/time.Second))}}
 	if kind := mime.TypeByExtension(strings.ToLower(path.Ext(rel))); kind != "" {
 		params.Set("response-content-type", kind)
 	}
-	u, err := s.presigner.PresignedGetObject(ctx, s.cfg.Bucket, key, presignTTL, params)
+	u, err := presigner.PresignedGetObject(ctx, s.cfg.Bucket, key, presignTTL, params)
 	if err != nil {
 		return "", err
 	}
@@ -597,17 +610,17 @@ func (s *s3PhotoSource) open(ctx context.Context, rel, version, etag string) (re
 	if err != nil {
 		return nil, err
 	}
-	ctx, cancel := context.WithTimeout(ctx, imageReadTimeout)
 	options := minio.GetObjectOptions{}
 	if etag != "" {
 		if err := options.SetMatchETag(etag); err != nil {
-			cancel()
 			return nil, err
 		}
 	}
+	// No deadline of its own: processing sets one, while a browser streaming
+	// an original may need as long as its connection takes, and stops the
+	// read by going away.
 	object, err := client.GetObject(ctx, s.cfg.Bucket, key, options)
 	if err != nil {
-		cancel()
 		return nil, err
 	}
 	info, err := object.Stat()
@@ -616,10 +629,9 @@ func (s *s3PhotoSource) open(ctx context.Context, rel, version, etag string) (re
 	}
 	if err != nil {
 		_ = object.Close()
-		cancel()
 		return nil, err
 	}
-	return &cancelReader{readSeekCloser: object, cancel: cancel}, nil
+	return object, nil
 }
 
 type probeResult struct {
@@ -744,13 +756,6 @@ func describeSourceError(err error) string {
 	}
 	return msg
 }
-
-type cancelReader struct {
-	readSeekCloser
-	cancel context.CancelFunc
-}
-
-func (r *cancelReader) Close() error { r.cancel(); return r.readSeekCloser.Close() }
 
 func safeRelPath(root, rel string) (string, error) {
 	if rel == "" || filepath.IsAbs(rel) {

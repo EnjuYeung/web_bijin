@@ -7,7 +7,7 @@ const base = "http://127.0.0.1:18092";
 
 async function signIn(page: Page) {
   expect((await page.request.post("/api/login", { data: { user: "ui-test", pass: "fixture-password" } })).status()).toBe(200);
-  await expect.poll(async () => (await (await page.request.get("/api/health")).json()).status.scanning, { timeout: 90_000 }).toBe(false);
+  await expect.poll(async () => (await (await page.request.get("/api/photos?limit=1")).json()).status.scanning, { timeout: 90_000 }).toBe(false);
 }
 async function signedIn(page: Page) {
   return (await page.context().cookies()).some(cookie => cookie.name === "bijin");

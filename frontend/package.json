@@ -9,7 +9,8 @@
     "typecheck": "tsc --noEmit",
     "test:ui": "playwright test",
     "test:organizer": "node --test tests/album-organizer.test.mjs",
-    "test:upload": "node --test tests/upload-batch.test.mjs"
+    "test:upload": "node --test tests/upload-batch.test.mjs",
+    "test:names": "node --test tests/names.test.mjs"
   },
   "dependencies": {
     "@base-ui/react": "1.8.0",

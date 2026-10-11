@@ -17,12 +17,10 @@ type albumSummary struct {
 	Added int64
 }
 
+// photoAlbumID is the photo's directory; a photo at the root gets ".",
+// which is rootAlbumID.
 func photoAlbumID(rel string) string {
-	dir := path.Dir(path.Clean(rel))
-	if dir == "" {
-		return rootAlbumID
-	}
-	return dir
+	return path.Dir(path.Clean(rel))
 }
 
 func albumDisplayName(id string) string {

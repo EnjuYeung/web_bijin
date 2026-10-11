@@ -212,17 +212,13 @@ func TestQueryAlbumSummaryAndPeopleInvalidation(t *testing.T) {
 		t.Fatal("unchanged albums rebuilt")
 	}
 	author := "摄影师"
-	if err := st.setAlbumPeople([]string{"a"}, &author, []string{"模特"}); err != nil {
-		t.Fatal(err)
-	}
+	assignNow(t, st, []string{"a"}, &author, []string{"模特"})
 	links, err := st.albumPeopleMap()
 	if err != nil || links["a"].Author == nil || links["a"].Author.Name != author {
 		t.Fatal("assignment not visible")
 	}
 	id := links["a"].Author.ID
-	if _, _, err := st.renamePerson(id, "新名字"); err != nil {
-		t.Fatal(err)
-	}
+	organizeNow(t, st, organizeChange{Kind: "rename", PersonID: id, Name: "新名字"})
 	links, _ = st.albumPeopleMap()
 	if links["a"].Author.Name != "新名字" {
 		t.Fatal("name cache not invalidated")
@@ -239,9 +235,7 @@ func TestQueryAlbumSummaryAndPeopleInvalidation(t *testing.T) {
 			t.Fatal("cover/count did not update")
 		}
 	}
-	if err := st.deletePerson(id); err != nil {
-		t.Fatal(err)
-	}
+	organizeNow(t, st, organizeChange{Kind: "remove", PersonID: id})
 	links, _ = st.albumPeopleMap()
 	if links["a"].Author != nil {
 		t.Fatal("deleted author remained cached")

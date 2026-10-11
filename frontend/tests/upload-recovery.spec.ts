@@ -7,7 +7,7 @@ const prefix = () => "upload-recovery-" + Date.now() + "-" + Math.random().toStr
 const image = () => readFile(resolve(photos, "batch/01.jpg"));
 async function open(page: Page, directory: string) {
   expect((await page.request.post("/api/login", { data: { user: "ui-test", pass: "fixture-password" } })).status()).toBe(200);
-  await expect.poll(async () => (await (await page.request.get("/api/health")).json()).status.scanning, { timeout: 90_000 }).toBe(false);
+  await expect.poll(async () => (await (await page.request.get("/api/photos?limit=1")).json()).status.scanning, { timeout: 90_000 }).toBe(false);
   await page.goto("/?view=upload"); await page.locator("#upload-target").click();
   await page.getByRole("option", { name: "本地 · 本地照片目录", exact: true }).click();
   await page.locator("#upload-directory").fill(directory);

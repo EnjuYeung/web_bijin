@@ -6,7 +6,6 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
-	"strconv"
 	"strings"
 	"unicode"
 	"unicode/utf8"
@@ -114,21 +113,9 @@ func personID(tx *sql.Tx, role, name string) (int64, error) {
 	return res.LastInsertId()
 }
 
-// setAlbumPeople replaces the author and/or the models of the albums in one
-// transaction. A nil author or nil models leaves that field as it is; an empty
-// author or an empty model list clears it. Missing names are created.
-func (s *store) setAlbumPeople(albums []string, author *string, models []string) error {
-	tx, err := s.db.Begin()
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback()
-	if err := setAlbumPeopleTx(tx, albums, author, models); err != nil {
-		return err
-	}
-	return s.commitPeople(tx)
-}
-
+// setAlbumPeopleTx replaces the author and/or the models of the albums. A nil
+// author or nil models leaves that field as it is; an empty author or an empty
+// model list clears it. Missing names are created.
 func setAlbumPeopleTx(tx *sql.Tx, albums []string, author *string, models []string) error {
 	var authorIDs []int64
 	if author != nil && *author != "" {
@@ -234,25 +221,9 @@ func listPeopleFrom(db peopleReader) ([]personRow, error) {
 	return out, rows.Err()
 }
 
-// renamePerson renames a person. When another person of the same role already
-// has that name, the two are merged into it and it takes the new spelling;
-// an album that had both keeps one entry.
-func (s *store) renamePerson(id int64, name string) (personRef, bool, error) {
-	tx, err := s.db.Begin()
-	if err != nil {
-		return personRef{}, false, err
-	}
-	defer tx.Rollback()
-	ref, merged, err := renamePersonTx(tx, id, name)
-	if err != nil {
-		return personRef{}, false, err
-	}
-	if err := s.commitPeople(tx); err != nil {
-		return personRef{}, false, err
-	}
-	return ref, merged, nil
-}
-
+// renamePersonTx renames a person. When another person of the same role
+// already has that name, the two are merged into it and it takes the new
+// spelling; an album that had both keeps one entry.
 func renamePersonTx(tx *sql.Tx, id int64, name string) (personRef, bool, error) {
 	var role string
 	err := tx.QueryRow(`SELECT role FROM people WHERE id = ?`, id).Scan(&role)
@@ -285,19 +256,7 @@ func renamePersonTx(tx *sql.Tx, id int64, name string) (personRef, bool, error) 
 	return personRef{ID: target, Name: name}, merged, nil
 }
 
-// deletePerson removes a name from the list and from every album.
-func (s *store) deletePerson(id int64) error {
-	tx, err := s.db.Begin()
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback()
-	if err := deletePersonTx(tx, id); err != nil {
-		return err
-	}
-	return s.commitPeople(tx)
-}
-
+// deletePersonTx removes a name from the list and from every album.
 func deletePersonTx(tx *sql.Tx, id int64) error {
 	if _, err := tx.Exec(`DELETE FROM album_people WHERE person_id = ?`, id); err != nil {
 		return err
@@ -312,19 +271,7 @@ func deletePersonTx(tx *sql.Tx, id int64) error {
 	return nil
 }
 
-// deleteAlbumPeople removes every entry of the given albums.
-func (s *store) deleteAlbumPeople(albums []string) error {
-	tx, err := s.db.Begin()
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback()
-	if err := deleteAlbumPeopleTx(tx, albums); err != nil {
-		return err
-	}
-	return s.commitPeople(tx)
-}
-
+// deleteAlbumPeopleTx removes every entry of the given albums.
 func deleteAlbumPeopleTx(tx *sql.Tx, albums []string) error {
 	for _, album := range albums {
 		if _, err := tx.Exec(`DELETE FROM album_people WHERE album = ?`, album); err != nil {
@@ -357,13 +304,9 @@ type organizeAPI struct {
 }
 
 func (a *organizeAPI) routes(mux *http.ServeMux, gate *authGate) {
-	mux.Handle("POST /api/organize", gate.protect(http.HandlerFunc(a.change)))
+	mux.Handle("POST /api/organize", gate.protectWrite(organizeOriginError, true, a.change))
 	mux.Handle("GET /api/organize/receipts/{operation}", gate.protect(http.HandlerFunc(a.receipt)))
 	mux.Handle("GET /api/people", gate.protect(http.HandlerFunc(a.people)))
-	mux.Handle("PUT /api/album-people", gate.protect(http.HandlerFunc(a.assign)))
-	mux.Handle("DELETE /api/album-people/stale", gate.protect(http.HandlerFunc(a.cleanStale)))
-	mux.Handle("PUT /api/people/{id}", gate.protect(http.HandlerFunc(a.rename)))
-	mux.Handle("DELETE /api/people/{id}", gate.protect(http.HandlerFunc(a.remove)))
 }
 
 type personView struct {
@@ -404,22 +347,6 @@ func (a *organizeAPI) view(current map[string]bool) (peopleView, error) {
 	return peopleViewOf(people, links, current), nil
 }
 
-// respond answers a request with the refreshed name lists added.
-func (a *organizeAPI) respond(w http.ResponseWriter, body map[string]any) {
-	current, err := a.currentAlbums()
-	if err != nil {
-		writeOrganizeError(w, err)
-		return
-	}
-	v, err := a.view(current)
-	if err != nil {
-		writeOrganizeError(w, err)
-		return
-	}
-	body["people"] = v
-	writeJSON(w, http.StatusOK, body)
-}
-
 func (a *organizeAPI) people(w http.ResponseWriter, r *http.Request) {
 	current, err := a.currentAlbums()
 	if err != nil {
@@ -434,127 +361,6 @@ func (a *organizeAPI) people(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, v)
 }
 
-type albumPeopleInput struct {
-	Albums []string  `json:"albums"`
-	Author *string   `json:"author"`
-	Models *[]string `json:"models"`
-}
-
-// assign sets the author and/or the models of one or more current albums.
-func (a *organizeAPI) assign(w http.ResponseWriter, r *http.Request) {
-	if !sameOriginJSON(w, r, organizeOriginError) {
-		return
-	}
-	var in albumPeopleInput
-	if !decodeOrganize(w, r, &in, 1<<20) {
-		return
-	}
-	current, err := a.currentAlbums()
-	if err != nil {
-		writeOrganizeError(w, err)
-		return
-	}
-	albums, author, models, err := normalizeAlbumAssignment(in, current)
-	if err != nil {
-		writeOrganizeError(w, err)
-		return
-	}
-	if err := a.store.setAlbumPeople(albums, author, models); err != nil {
-		writeOrganizeError(w, err)
-		return
-	}
-	links, err := a.store.albumPeopleMap()
-	if err != nil {
-		writeOrganizeError(w, err)
-		return
-	}
-	type item struct {
-		ID string `json:"id"`
-		albumPeople
-	}
-	out := make([]item, 0, len(albums))
-	for _, id := range albums {
-		out = append(out, item{ID: id, albumPeople: withModels(links[id])})
-	}
-	slog.Info("album people saved", "albums", len(albums), "author", author != nil, "models", models != nil)
-	a.respond(w, map[string]any{"albums": out})
-}
-
-// rename renames a person, merging into an existing name of the same role.
-func (a *organizeAPI) rename(w http.ResponseWriter, r *http.Request) {
-	if !sameOriginJSON(w, r, organizeOriginError) {
-		return
-	}
-	id, ok := personIDFromPath(w, r)
-	if !ok {
-		return
-	}
-	var in struct {
-		Name string `json:"name"`
-	}
-	if !decodeOrganize(w, r, &in, 4<<10) {
-		return
-	}
-	name, err := cleanPersonName(in.Name)
-	if err != nil {
-		writeOrganizeError(w, err)
-		return
-	}
-	ref, merged, err := a.store.renamePerson(id, name)
-	if err != nil {
-		writeOrganizeError(w, err)
-		return
-	}
-	slog.Info("person renamed", "id", id, "into", ref.ID, "merged", merged)
-	a.respond(w, map[string]any{"person": ref, "merged": merged})
-}
-
-// remove deletes a person from the list and from every album; photos stay.
-func (a *organizeAPI) remove(w http.ResponseWriter, r *http.Request) {
-	if !sameOriginOK(w, r, organizeOriginError) {
-		return
-	}
-	id, ok := personIDFromPath(w, r)
-	if !ok {
-		return
-	}
-	if err := a.store.deletePerson(id); err != nil {
-		writeOrganizeError(w, err)
-		return
-	}
-	slog.Info("person deleted", "id", id)
-	a.respond(w, map[string]any{"ok": true})
-}
-
-// cleanStale drops the people of albums whose folder no longer exists.
-func (a *organizeAPI) cleanStale(w http.ResponseWriter, r *http.Request) {
-	if !sameOriginOK(w, r, organizeOriginError) {
-		return
-	}
-	current, err := a.currentAlbums()
-	if err != nil {
-		writeOrganizeError(w, err)
-		return
-	}
-	links, err := a.store.albumPeopleMap()
-	if err != nil {
-		writeOrganizeError(w, err)
-		return
-	}
-	var stale []string
-	for album := range links {
-		if !current[album] {
-			stale = append(stale, album)
-		}
-	}
-	if err := a.store.deleteAlbumPeople(stale); err != nil {
-		writeOrganizeError(w, err)
-		return
-	}
-	slog.Info("stale album people removed", "albums", len(stale))
-	a.respond(w, map[string]any{"removed": len(stale)})
-}
-
 func decodeOrganize(w http.ResponseWriter, r *http.Request, v any, limit int64) bool {
 	dec := json.NewDecoder(http.MaxBytesReader(w, r.Body, limit))
 	dec.DisallowUnknownFields()
@@ -563,15 +369,6 @@ func decodeOrganize(w http.ResponseWriter, r *http.Request, v any, limit int64) 
 		return false
 	}
 	return true
-}
-
-func personIDFromPath(w http.ResponseWriter, r *http.Request) (int64, bool) {
-	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
-	if err != nil || id <= 0 {
-		writeOrganizeError(w, errPersonNotFound)
-		return 0, false
-	}
-	return id, true
 }
 
 func writeOrganizeError(w http.ResponseWriter, err error) {

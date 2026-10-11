@@ -5,7 +5,8 @@ import { Check, ChevronDown, ChevronUp, CircleAlert, Eraser, Pencil, RefreshCw, 
 import { type Album, type Person } from "@/lib/api";
 import { createAlbumOrganizer, type Change, type Message, type Role, type RowState } from "@/lib/album-organizer";
 import { organizeHTTP } from "@/lib/organize-http";
-import { albumNames, cleanName, emptyFilter, fillLabels, filtering, matchesFilter, nameCollator, nameKey, type AlbumFilter, type FillState } from "@/lib/albums";
+import { albumNames, emptyFilter, fillLabels, filtering, matchesFilter, nameCollator, type AlbumFilter, type FillState } from "@/lib/albums";
+import { cleanName, nameIdentity, searchKey } from "@/lib/names";
 import { OptionSelect } from "@/components/option-select";
 import { PersonPicker } from "@/components/person-picker";
 import { Button } from "@/components/ui/button";
@@ -75,7 +76,7 @@ export default function OrganizePanel() {
     const name = cleanName(editing.name);
     if (!name) { setListMessage({ text: "名字不能为空。", kind: "err" }); return; }
     if (name === person.name) { setEditing(null); return; }
-    const other = list.find(item => item.id !== person.id && nameKey(item.name) === nameKey(name));
+    const other = list.find(item => item.id !== person.id && nameIdentity(item.name) === nameIdentity(name));
     if (other && !confirm(`「${other.name}」已经在名单里。\n\n合并后，所有相册里的「${person.name}」都会改成「${name}」。继续？`)) return;
     setListError(null); setEditing(null);
     organizer.submit({ kind: "rename", role, personId: person.id, name });
@@ -92,8 +93,8 @@ export default function OrganizePanel() {
   }
 
   const visible = useMemo(() => {
-    const wanted = nameKey(filter);
-    return (albums ?? []).filter(album => (!wanted || nameKey(album.name).includes(wanted) || nameKey(album.id).includes(wanted)) && (!matching || matching.has(album.id)));
+    const wanted = searchKey(filter);
+    return (albums ?? []).filter(album => (!wanted || searchKey(album.name).includes(wanted) || searchKey(album.id).includes(wanted)) && (!matching || matching.has(album.id)));
   }, [albums, filter, matching]);
   const names = useMemo(() => albumNames(albums ?? []), [albums]);
   const visibleIds = visible.map(album => album.id);

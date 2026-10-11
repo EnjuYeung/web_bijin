@@ -4,7 +4,7 @@ import { useMemo, useRef, useState, type KeyboardEvent } from "react";
 import { Combobox } from "@base-ui/react/combobox";
 import { Check, ChevronDown, Plus, X } from "lucide-react";
 import type { Person } from "@/lib/api";
-import { cleanName, nameKey } from "@/lib/albums";
+import { cleanName, nameIdentity, searchKey } from "@/lib/names";
 
 interface Option { name: string; albums?: number; create?: boolean }
 
@@ -18,27 +18,27 @@ export function PersonPicker({ id, label, placeholder, people, value, multiple =
   const [query, setQuery] = useState("");
   const highlighted = useRef<Option | undefined>(undefined);
   const options = useMemo<Option[]>(() => people.map(person => ({ name: person.name, albums: person.albums })), [people]);
-  const selected = useMemo(() => value.map(name => options.find(option => nameKey(option.name) === nameKey(name)) ?? { name }), [value, options]);
+  const selected = useMemo(() => value.map(name => options.find(option => nameIdentity(option.name) === nameIdentity(name)) ?? { name }), [value, options]);
   const typed = cleanName(query);
-  const known = !typed || [...options, ...selected].some(option => nameKey(option.name) === nameKey(typed));
+  const known = !typed || [...options, ...selected].some(option => nameIdentity(option.name) === nameIdentity(typed));
   const items: Option[] = known || !create ? options : [...options, { name: typed, create: true }];
-  const shown = !multiple && selected[0] ? nameKey(selected[0].name) : "";
+  const shown = !multiple && selected[0] ? selected[0].name : "";
 
   function choose(next: Option[]) {
     const names: string[] = [];
     for (const option of next) {
       const name = cleanName(option.name);
-      if (name && !names.some(other => nameKey(other) === nameKey(name))) names.push(name);
+      if (name && !names.some(other => nameIdentity(other) === nameIdentity(name))) names.push(name);
     }
     onChange(multiple ? names : names.slice(-1));
   }
   function onKeyDown(event: KeyboardEvent<HTMLInputElement>) {
     // Enter with no highlighted option takes the typed name, existing or new.
-    if (event.key !== "Enter" || highlighted.current || !typed || nameKey(typed) === shown) return;
-    const existing = options.find(item => nameKey(item.name) === nameKey(typed));
+    if (event.key !== "Enter" || highlighted.current || !typed || (shown && nameIdentity(typed) === nameIdentity(shown))) return;
+    const existing = options.find(item => nameIdentity(item.name) === nameIdentity(typed));
     if (!existing && !create) return;
     event.preventDefault();
-    if (multiple && selected.some(option => nameKey(option.name) === nameKey(typed))) { setQuery(""); return; }
+    if (multiple && selected.some(option => nameIdentity(option.name) === nameIdentity(typed))) { setQuery(""); return; }
     const option = existing ?? { name: typed };
     choose(multiple ? [...selected, option] : [option]);
     if (multiple) setQuery("");
@@ -49,11 +49,11 @@ export function PersonPicker({ id, label, placeholder, people, value, multiple =
     autoHighlight: true,
     // A chosen author's name stays in the input; the whole list shows then.
     filter: (option: Option, text: string) => {
-      const wanted = nameKey(text);
-      return !wanted || wanted === shown || !!option.create || nameKey(option.name).includes(wanted);
+      const wanted = searchKey(text);
+      return !wanted || (!!shown && wanted === searchKey(shown)) || !!option.create || searchKey(option.name).includes(wanted);
     },
     itemToStringLabel: (option: Option) => option.name,
-    isItemEqualToValue: (a: Option, b: Option) => nameKey(a.name) === nameKey(b.name),
+    isItemEqualToValue: (a: Option, b: Option) => nameIdentity(a.name) === nameIdentity(b.name),
     onItemHighlighted: (option: Option | undefined) => { highlighted.current = option; },
   };
   const popup = <Combobox.Portal>

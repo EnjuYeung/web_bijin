@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"path/filepath"
 	"sync"
 )
 
@@ -161,32 +160,6 @@ func (p *photoProcessor) process(ctx context.Context, object sourceObject, wallp
 			return fail(err)
 		}
 		if !wallpapers || result.WallpapersReady {
-			return result
-		}
-	}
-	// Preserve working thumbnails made by older local indexes. Wall backfill
-	// uses the normal path on the next pass, without rewriting this thumbnail.
-	if ok && object.Backend == "local" && existing.SourceVersion == "" &&
-		existing.Size == object.Size && existing.MtimeUnix == object.Mtime.Unix() &&
-		!existing.Broken && existing.Width > 0 && existing.Height > 0 {
-		legacy := filepath.Join(p.thumbs.dir, fmt.Sprintf("%d.jpg", existing.ID))
-		if _, err := os.Stat(legacy); err == nil {
-			if err := p.validate(ctx, object); err != nil {
-				return fail(err)
-			}
-			existing.SourceVersion = object.Version
-			if err := os.Rename(legacy, p.thumbs.path(existing)); err != nil {
-				return fail(err)
-			}
-			if _, err := p.store.upsert(existing); err != nil {
-				return fail(err)
-			}
-			result.AlbumUsable = true
-			result.WallpapersReady, err = p.wallpapersReady(existing)
-			if err != nil {
-				return fail(err)
-			}
-			result.Retryable = !result.WallpapersReady
 			return result
 		}
 	}
