@@ -42,3 +42,14 @@
 ## 结论
 
 审查列出的 R1–R14 已修复，其中 R1–R9、R11、R12 有修复前后的实际对比或新增用例证明；第一版整理写接口和旧缩略图迁移等旧代码已删除，原有功能的 Go、模块和双浏览器回归全部通过。测试结束后已删除 `bijin-fix` 容器、fixture 进程、隔离目录及本次拉取的 golang、node、Playwright 镜像，生产容器未改动。
+
+
+## 生产部署与验收（2026-10-12 00:03:27 CST）
+
+- 提交 `6c95d59` 推送 master；netcup 部署目录 `git pull --ff-only` 后 `docker compose build bijin`，新镜像 `sha256:a25fc56eb6b5…`。部署前用 SQLite 在线备份保存 `bijin.db`，并给旧镜像打回滚标签。
+- 切换前验收：新镜像另起容器，数据库为生产副本，缩略图 / 壁纸目录只读挂载，接真实 RustFS，测试账号。启动扫描 4,025 张、0 失败、无需重新生成；照片列表 4,025，缩略图 200，大图 302 到 `s3.jgbman.cc` 预签名地址，下载字节与索引一致且带 12 小时私有缓存头；相册 51、壁纸 4,025 / 4,025、作者 5 / 模特 19；构造的返回地址回到 `/`；跨站的设置与整理写入 403；日志无 WARN / ERROR。
+- `docker compose up -d --no-build bijin` 后 healthy：两步验证与上传通知照常开启，6 核 / 4 GiB 与挂载不变，启动扫描 4,025 张、0 失败；重启次数 0。会话密钥未变，已登录设备不需要重新登录。
+- 公网复测 `https://csb.jgbman.cc`：`/api/health` 只返回 `{"ok":true,"tz":"Asia/Shanghai"}`；`/`、`/login`、`/api/health`、`/favicon.svg` 均带 `Strict-Transport-Security`；登录表单 `method="post" action="/api/login"`；未登录访问照片列表与原图 401；未登录时打开构造链接只显示登录页；随机壁纸 302，成品 200 且 SHA-256 与地址一致；45 MB 未登录登录请求 0.05 秒返回 401，容器内存 13 MiB。
+- 数据核对：photos 4,025、wallpapers 4,070、people 24、album_people 81、storages 1，内容哈希与部署前备份完全相同。
+- 清理：删除验收容器与目录（含数据库副本）、部署前数据库备份、旧镜像 `bijin:rollback-fe7fd6a`、全部构建缓存与基础镜像、10-09 留下的 Go 测试缓存卷 `bijin-gocache` / `bijin-gomod`，实测回收 8,971,423,744 字节（8.36 GiB）。保留当前镜像与运行中的 bijin、RustFS、OpenResty。
+- 未做：用生产账号登录的人工浏览（不使用生产密码）；登录后的功能由上述生产副本验收覆盖。
