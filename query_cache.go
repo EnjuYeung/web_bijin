@@ -140,8 +140,10 @@ type queryCaches struct {
 	albumRevision  atomic.Uint64
 	wallRevision   atomic.Uint64
 	peopleRevision atomic.Uint64
+	shareRevision  atomic.Uint64
 
 	index       revisionCache[*photoIndex]
+	sharedIndex revisionCache[*photoIndex]
 	owners      revisionCache[map[string]ownerCount]
 	albums      revisionCache[[]albumSummary]
 	people      revisionCache[map[string]albumPeople]
@@ -158,6 +160,7 @@ func photoVisible(p photo) bool {
 // Call after each committed photo write, including partially completed
 // operations. Pending uploads do not change the visible ID set.
 func (s *store) photoChanged(before, after photo) {
+	s.cache.shareRevision.Add(1)
 	s.cache.sourceRevision.Add(1)
 	oldVisible, newVisible := photoVisible(before), photoVisible(after)
 	if oldVisible != newVisible || (oldVisible && newVisible && photoAlbumID(before.RelPath) != photoAlbumID(after.RelPath)) {

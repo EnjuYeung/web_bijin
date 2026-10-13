@@ -1,55 +1,50 @@
 # 最近一次测试记录
 
-2026-10-11 23:44:23 CST：代码审查问题修复（R1–R14）与旧代码删除。基线 `fe7fd6a` 加本次改动；全部测试在 netcup 隔离环境执行，本机不运行测试。以下为提交前的验证，生产部署与验收另见下文。
+2026-10-13：原图分享（图床）功能。基线 `2c55d26` 加本次改动，全部程序与浏览器验证在 netcup 隔离环境执行；未部署生产或推送仓库。
 
 ## 环境
 
-- netcup（AMD EPYC 9645、Debian 13）。工作目录 `/root/bijin-fix-20261011`，源码为本地工作区打包上传。
-- 前端：`node:24-alpine`（Node 24.21.0）执行 `npm ci`、类型检查、模块测试和静态导出。
-- Go：`golang:1.27-alpine`（Go 1.27.2，`-tags nodynamic`，3 核 / 3 GB，`GOMAXPROCS=3`）；race 检测加装 gcc / musl-dev。
-- 浏览器：`mcr.microsoft.com/playwright:v1.63.0-noble`（Node 24.20.0、Chromium、WebKit），按仓库 `playwright.config.ts` 启动测试二进制、两步验证实例和本地 S3 fixture；`genphotos.go` 生成的 63 个文件。
-- 复测实例：生产镜像 `bijin:local` 的运行环境 + 修复后的静态二进制，容器 `bijin-fix` 只监听 `127.0.0.1:5101`，测试账号、独立数据目录、2 核 / 2 GB；S3 为仓库 fixture 的副本，加一张 23,287,910 字节的噪点 JPEG，只监听本机。
+- netcup，Debian 13、AMD EPYC 9645。隔离源码目录 `/root/bijin-share-dev-20261013`；生产目录 `/opt/1panel/apps/web_bijin` 未改动。
+- 前端 `node:24-alpine`：Node 24.21.0，2 核 / 2 GiB；仓库锁定的 Next.js、TypeScript 与依赖。
+- Go `golang:1.27-alpine`：Go 1.27.2，3 核 / 3 GiB，固定 `-tags nodynamic`；竞态检测使用 gcc / musl-dev 与 `CGO_ENABLED=1`。
+- 浏览器 `mcr.microsoft.com/playwright:v1.63.0-noble`：Node 24.20.0、Chromium、WebKit，3 核 / 3 GiB，单 worker。原图库为 genphotos 与既有回归用例生成的图片；S3 为仓库 fixture。
+- 容器候选 `bijin-share:review-20261013`，镜像 ID `sha256:46af2e93aa280a6d092211f303f168030cfa35f9973103316667666835644113`；端口仅 `127.0.0.1:5019`，独立照片 / 数据目录、测试账号，6 核 / 4 GiB，只读根文件系统。验收容器已删除，候选镜像保留。
 
 ## 方法与结果
 
-| 编号 | 检查 | 方法 | 结果 |
-|---|---|---|---|
-| T01 | 前端类型与构建 | `npx tsc --noEmit`、`npm run build` | 通过；导出的 `login.html` 表单为 `action="/api/login" method="post"` |
-| T02 | 前端模块测试 | `test:organizer`、`test:upload`、新增 `test:names` | 15 / 21 / 3 全部通过 |
-| T03 | Go 静态检查 | `gofmt -l`、`go vet`、`staticcheck@master`、`deadcode` | 均无输出；审查时 staticcheck 的 3 条已消失 |
-| T04 | Go 测试 | `go test -count=1 -p 2 -v .` | 149 通过、0 失败、1 跳过（`TestQueryScale` 需显式开启），53.4 秒。较审查时新增 6 个、删除 1 个旧迁移测试 |
-| T05 | Go race | `go test -race -count=1 -p 2 -v .` | 149 通过、0 失败、无数据竞争，117.5 秒 |
-| T06 | 浏览器回归 | `npx playwright test`（整理、上传、退出等用例的准备 / 清理改走 `/api/organize`，等待扫描改读登录后的照片列表） | 69 通过、0 失败（Chromium 43、WebKit 26），3.5 分钟 |
-| V01 | 登录后跳外站（R1） | 已登录 curl `/login?next=/%5Cevil.example`、`/%09/evil.example`；Chromium / WebKit 从构造链接登录、已登录直接打开 | 修复前 `Location: /\evil.example`、浏览器落在外站；修复后均 `Location: /`，两种浏览器都停在本站相册，`next=/?view=albums` 仍正常 |
-| V02 | 未登录大请求体（R2） | 未登录 POST 45 MB JSON，读 cgroup 内存 | 修复前 1 个请求 +176 MiB、8 个并发峰值 952 MiB；修复后 401 用时 0.9 毫秒，8 个并发后峰值不变（294 MiB，为实例处理测试图后的既有用量） |
-| V03 | 脚本未加载时登录（R3） | 关闭 JavaScript 的 Chromium / WebKit 填表回车：错密码、正确密码 | 修复前 `GET /login?user=…&pass=…`；修复后错密码到 `/login?err=1`，正确密码登录进入 `/`，任何请求网址都不含密码 |
-| V04 | Cookie 与 HSTS（R4） | 带 / 不带 `X-Forwarded-Proto: https` 登录 | https：Cookie 带 `Secure`，响应带 `Strict-Transport-Security: max-age=31536000; includeSubDomains`；http：两者都没有，本机测试照常 |
-| V05 | 公开健康检查（R5） | 扫描出错后不带 Cookie 请求 `/api/health` | 修复前带 `lastErr` 等完整扫描状态；修复后只有 `{"ok":true,"tz":"Asia/Shanghai"}` |
-| V06 | 设置接口同源（R6） | 带 Cookie 与外站 `Origin`、`Sec-Fetch-Site: cross-site` | 修复前测试连接 200、新增 201；修复后测试连接、新增、删除均 403「只能从相册网站修改设置」 |
-| V07 | 慢网络看非直连原图（R7） | 23 MB 原图，curl 不限速与 `--limit-rate 300k` | 修复前 150 KB/s 只收到 13.4 MB 即断；修复后 300 KB/s 用时 75.8 秒完整收到，字节与源文件一致 |
-| V08 | 存储不可达（R8） | 停止 fixture 后请求原图 | 修复前 404 且无日志；修复后 502，日志 `open original … connection refused` |
-| V09 | 本地上传权限（R9） | API 准备 + PUT 一张本地图片 | 修复前 0600；修复后 `644 root:root`，与扫描来的照片一致 |
-| V10 | Compose 必填账号（R11） | 用 `.env.example` 复制的 `.env` 执行 `docker compose config -q` | 报错「required variable AUTH_PASS is missing a value: 请在 .env 填写 AUTH_PASS」；填写后通过 |
+| 编号 | 检查及方法 | 结果 |
+|---|---|---|
+| T01 | `npm ci`、`npm run build`、`npm run typecheck` | 通过；Next.js 静态资源与 Go 内嵌资源实际构建完成 |
+| T02 | `test:organizer`、`test:upload`、`test:names` | 15 / 21 / 3 全部通过 |
+| T03 | `go test -tags nodynamic -count=1 -timeout=15m -json .` | 160 个顶层测试通过，0 失败，1 跳过；新增 11 个顶层分享测试 |
+| T04 | `go test -race -tags nodynamic -count=1 -timeout=20m -json .` | 160 个顶层测试通过，0 失败，1 跳过，无数据竞争 |
+| T05 | `go vet -tags nodynamic ./...`、gofmt、静态 Go 二进制构建 | 通过；最终修改的 Go 文件格式一致 |
+| T06 | `npx playwright test` | 81 项通过，0 失败、0 跳过、0 flaky；Chromium 49、WebKit 32，233.1 秒 |
+| T07 | 最终 HTTP 边界与删除代次调整后，`npx playwright test sharing.spec.ts` | Chromium / WebKit 各 6 项，共 12 项再次通过，26.3 秒 |
+| T08 | `docker build -t bijin-share:review-20261013` | 通过，生产 `bijin:local` 标签未改动 |
+| T09 | 候选镜像独立目录启动、登录、原图字节比对、已分享筛选、重启、停止 | 通过；2 张有效 JPEG，扫描 0 失败，未登录普通原图 401，分享原图字节一致，重启保留同一地址，停止后旧地址 404；日志无 WARN / ERROR |
+| T10 | `git diff --check` | 通过；构建产物、测试图库 / SQLite 和日志在忽略目录，未进入代码改动 |
 
-新增 / 改写的 Go 用例：`TestSafeNext`（加 `\`、Tab、换行、NUL）、`TestSignedInLoginLinkStaysOnSite`、`TestFormLogin`（表单回退的返回地址）、`TestLoginReadsLittleAndNeverURLCredentials`、`TestHTTPSOnlyCookieAndHSTS`、`TestHealthAndLoginBgPublic`（只给 ok 与时区）、`TestSettingsWritesRefuseOtherSites`、`TestOriginalTellsMissingFromUnavailable`、`TestScanCleanupContinuesPastAPhotoItCannotCheck`（R12）、上传用例检查 0644；整理相关用例全部改走 `applyOrganize` / `POST /api/organize`，并断言第一版逐项写接口返回 404。删除 `TestLocalMigrationReusesExistingMetadataAndThumb`（对应功能已删除）。
+## 原图分享行为证据
 
-## 未测试项及原因
+- S01 / S09：原图默认未分享；相册列表、普通原图与分享管理继续登录保护。跨站不能开启或停止，错误 / 超长地址均 404 且不会影响有效分享。
+- S02 / S11：真实 JPEG、PNG、WebP、GIF 原文件从本地来源通过分享 HTTP 返回，字节、MIME、HEAD、Range 与 ETag 正确；GIF 两帧未变。S3 JPEG 条件读取、字节比对与不跳转已验证。两个浏览器实测未登录及外站图片标签显示 JPEG 原图。分享响应 `no-store`，关闭后 Range / 条件请求同样不能绕过检查。
+- S03 / S04：12 个并发复制请求得到同一链接，重启保留；停止后旧链接 404，重新开启新链接。迟到的复制 / 停止不会改变较新许可。
+- S05 / S06：本地和 S3 在扫描或通知前换图，旧链接不返回新内容；本地保持相同大小与纳秒修改时间的替换、读取期间原位修改也被拒绝。读到一半停止分享，返回 404。
+- S07：移动、删除、恢复文件以及复用数据库整数 id 都不恢复旧分享。删除后重新导入完全相同的文件和元数据，旧的首次复制请求仍被修改代次拒绝。临时来源故障不撤销许可，恢复后仍可用。
+- S08：只看已分享的计数、随机分页、单相册范围、停止后的缓存失效已验证；浏览器切换筛选重置分页，停止后移出结果，恢复全部图片正常。
+- S10：Chromium 在允许剪贴板写入的上下文中读取并比对真实剪贴板；WebKit 实际自动复制成功。拒绝剪贴板时显示可用手动地址；首次写入已成功但响应变为不完整 JSON 时核对原状态，没有复制错误地址或生成第二个分享。关闭未完成复制并重开同一张图仍可操作；390 / 320 px 手机布局可用。
 
-- R10 上传处理排队超时：需要连续 90 秒以上占满生成名额，代价高；改动是去掉总期限并改写超时文案，由代码检查与既有上传回归覆盖。
-- 实体 iPhone / Safari：没有设备，WebKit 结果不等同真机。
-- 生产：提交前的验证不在生产上做任何写操作。
+第一次容器验证使用完整回归目录，其中含故意损坏的 `broken.jpg`，日志产生一条坏图 WARN 和对应扫描 ERROR；已核对是该既有负例，其他 82 张可用图片及分享链路通过。随后用两张有效 JPEG 和全新 SQLite 完成正向容器验收，扫描 0 失败且无 WARN / ERROR。没有放宽解码或隐藏该错误。
 
-## 结论
+## 未测试项及范围
 
-审查列出的 R1–R14 已修复，其中 R1–R9、R11、R12 有修复前后的实际对比或新增用例证明；第一版整理写接口和旧缩略图迁移等旧代码已删除，原有功能的 Go、模块和双浏览器回归全部通过。测试结束后已删除 `bijin-fix` 容器、fixture 进程、隔离目录及本次拉取的 golang、node、Playwright 镜像，生产容器未改动。
+- `TestQueryScale` 需显式开启 `BIJIN_QUERY_SCALE=1`，本次未运行 10 万 / 20 万条规模压测；分享筛选的真实分页及原有查询回归已执行。
+- 实体 iPhone / Safari 未测；WebKit 结果属于引擎验证。
+- 本次未在生产账号或真实图库上执行写入，也未替换生产容器。生产 `bijin` 保持原镜像且 healthy。
 
+## 结论与复查
 
-## 生产部署与验收（2026-10-12 00:03:27 CST）
+按 Q1–Q14 确认的原图分享、停止分享和图库筛选已实现并在隔离环境验收。源码在本地 `master` 工作区，未提交 / 推送；候选镜像可供后续部署。
 
-- 提交 `6c95d59` 推送 master；netcup 部署目录 `git pull --ff-only` 后 `docker compose build bijin`，新镜像 `sha256:a25fc56eb6b5…`。部署前用 SQLite 在线备份保存 `bijin.db`，并给旧镜像打回滚标签。
-- 切换前验收：新镜像另起容器，数据库为生产副本，缩略图 / 壁纸目录只读挂载，接真实 RustFS，测试账号。启动扫描 4,025 张、0 失败、无需重新生成；照片列表 4,025，缩略图 200，大图 302 到 `s3.jgbman.cc` 预签名地址，下载字节与索引一致且带 12 小时私有缓存头；相册 51、壁纸 4,025 / 4,025、作者 5 / 模特 19；构造的返回地址回到 `/`；跨站的设置与整理写入 403；日志无 WARN / ERROR。
-- `docker compose up -d --no-build bijin` 后 healthy：两步验证与上传通知照常开启，6 核 / 4 GiB 与挂载不变，启动扫描 4,025 张、0 失败；重启次数 0。会话密钥未变，已登录设备不需要重新登录。
-- 公网复测 `https://csb.jgbman.cc`：`/api/health` 只返回 `{"ok":true,"tz":"Asia/Shanghai"}`；`/`、`/login`、`/api/health`、`/favicon.svg` 均带 `Strict-Transport-Security`；登录表单 `method="post" action="/api/login"`；未登录访问照片列表与原图 401；未登录时打开构造链接只显示登录页；随机壁纸 302，成品 200 且 SHA-256 与地址一致；45 MB 未登录登录请求 0.05 秒返回 401，容器内存 13 MiB。
-- 数据核对：photos 4,025、wallpapers 4,070、people 24、album_people 81、storages 1，内容哈希与部署前备份完全相同。
-- 清理：删除验收容器与目录（含数据库副本）、部署前数据库备份、旧镜像 `bijin:rollback-fe7fd6a`、全部构建缓存与基础镜像、10-09 留下的 Go 测试缓存卷 `bijin-gocache` / `bijin-gomod`，实测回收 8,971,423,744 字节（8.36 GiB）。保留当前镜像与运行中的 bijin、RustFS、OpenResty。
-- 未做：用生产账号登录的人工浏览（不使用生产密码）；登录后的功能由上述生产副本验收覆盖。
+本地可检查的原始证据在忽略目录 `output/verification/`：Go JSON、浏览器日志、前端构建日志、镜像构建日志与容器验证日志；截图为 `output/share-chromium-desktop.png` 和 `output/share-chromium-mobile.png`。netcup 的相同工作目录保留测试源码、日志与候选镜像用于复查。

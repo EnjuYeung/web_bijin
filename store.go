@@ -110,7 +110,10 @@ DROP INDEX IF EXISTS photos_mtime;
 	if err := s.migratePeople(); err != nil {
 		return err
 	}
-	return s.migrateWallpapers()
+	if err := s.migrateWallpapers(); err != nil {
+		return err
+	}
+	return s.migrateShares()
 }
 
 func (s *store) hasColumn(table, column string) (bool, error) {

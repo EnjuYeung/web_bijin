@@ -30,6 +30,7 @@ func newRouter(st *store, sc *scanner, thumbs *thumbCache, sources *sourceSet, t
 
 	mux := http.NewServeMux()
 	newUploadAPI(st, sc, sources).routes(mux, gate)
+	newShareAPI(st, sources, filepath.Join(filepath.Dir(thumbs.dir), ".share-tmp")).routes(mux, gate)
 	(&organizeAPI{store: st}).routes(mux, gate)
 	// Public for Compose and the page's time zone only. Scan progress and its
 	// errors name internal hosts and files, so they stay behind login.
@@ -161,7 +162,8 @@ func handleList(w http.ResponseWriter, r *http.Request, st *store, sc *scanner, 
 		album = albumID
 		selectedAlbum = &albumRef{ID: albumID, Name: albumDisplayName(albumID)}
 	}
-	photos, total, next, err := st.photoPage(seed, album, afterRank, afterID, limit)
+	shared := r.URL.Query().Get("shared") == "1"
+	photos, total, next, err := st.photoPageFiltered(seed, album, afterRank, afterID, limit, shared)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "list failed"})
 		return
@@ -187,35 +189,37 @@ type albumRef struct {
 }
 
 type photoItem struct {
-	ID     int64  `json:"id"`
-	W      int    `json:"w"`
-	H      int    `json:"h"`
-	Name   string `json:"name"`
-	Title  string `json:"title"`
-	Format string `json:"format"`
-	Size   int64  `json:"size"`
-	Thumb  string `json:"thumb"`
-	Src    string `json:"src"`
-	Mtime  int64  `json:"mtime"`
-	Date   string `json:"date"`
-	Year   int    `json:"year"`
+	ID      int64  `json:"id"`
+	W       int    `json:"w"`
+	H       int    `json:"h"`
+	Name    string `json:"name"`
+	Title   string `json:"title"`
+	Format  string `json:"format"`
+	Size    int64  `json:"size"`
+	Thumb   string `json:"thumb"`
+	Src     string `json:"src"`
+	Mtime   int64  `json:"mtime"`
+	Date    string `json:"date"`
+	Year    int    `json:"year"`
+	Version string `json:"version"`
 }
 
 func makePhotoItem(p photo, tz string) photoItem {
 	date, year := formatDateInTZ(p.MtimeUnix, tz)
 	return photoItem{
-		ID:     p.ID,
-		W:      p.Width,
-		H:      p.Height,
-		Name:   filepath.ToSlash(p.RelPath),
-		Title:  photoTitle(p.RelPath),
-		Format: photoFormat(p.RelPath),
-		Size:   p.Size,
-		Thumb:  fmt.Sprintf("/thumb/%d?v=%s", p.ID, photoVersion(p)),
-		Src:    fmt.Sprintf("/original/%d?v=%s", p.ID, photoVersion(p)),
-		Mtime:  p.MtimeUnix,
-		Date:   date,
-		Year:   year,
+		ID:      p.ID,
+		W:       p.Width,
+		H:       p.Height,
+		Name:    filepath.ToSlash(p.RelPath),
+		Title:   photoTitle(p.RelPath),
+		Format:  photoFormat(p.RelPath),
+		Size:    p.Size,
+		Thumb:   fmt.Sprintf("/thumb/%d?v=%s", p.ID, photoVersion(p)),
+		Src:     fmt.Sprintf("/original/%d?v=%s", p.ID, photoVersion(p)),
+		Mtime:   p.MtimeUnix,
+		Date:    date,
+		Year:    year,
+		Version: photoShareVersion(p),
 	}
 }
 
@@ -423,7 +427,11 @@ func withLog(next http.Handler) http.Handler {
 		lw := &statusWriter{ResponseWriter: w, code: 200}
 		next.ServeHTTP(lw, r)
 		if (strings.HasPrefix(r.URL.Path, "/api/") && r.URL.Path != "/api/health") || strings.HasPrefix(r.URL.Path, "/v1/") || lw.code >= 400 {
-			slog.Info("http", "method", r.Method, "path", r.URL.Path, "code", lw.code, "ms", time.Since(start).Milliseconds())
+			path := r.URL.Path
+			if strings.HasPrefix(path, "/i/") {
+				path = "/i/[share]"
+			}
+			slog.Info("http", "method", r.Method, "path", path, "code", lw.code, "ms", time.Since(start).Milliseconds())
 		}
 	})
 }
