@@ -1,14 +1,15 @@
 # 最近一次测试记录
 
-2026-10-13：原图分享（图床）功能。基线 `2c55d26` 加本次改动，全部程序与浏览器验证在 netcup 隔离环境执行；未部署生产或推送仓库。
+2026-10-13 14:50:09 CST：原图分享（图床）功能开发、生产部署与清理。基线 `2c55d26`，功能提交 `086241f` 经 [PR #5](https://github.com/EnjuYeung/web_bijin/pull/5) 合并为 `5ee3446`；程序与浏览器先在 netcup 隔离环境验证，再将同一镜像部署生产。
 
 ## 环境
 
-- netcup，Debian 13、AMD EPYC 9645。隔离源码目录 `/root/bijin-share-dev-20261013`；生产目录 `/opt/1panel/apps/web_bijin` 未改动。
+- netcup，Debian 13、AMD EPYC 9645。开发与验收使用隔离目录 `/root/bijin-share-dev-20261013`，验收后已清理；生产目录 `/opt/1panel/apps/web_bijin` 同步 GitHub `master`。
 - 前端 `node:24-alpine`：Node 24.21.0，2 核 / 2 GiB；仓库锁定的 Next.js、TypeScript 与依赖。
 - Go `golang:1.27-alpine`：Go 1.27.2，3 核 / 3 GiB，固定 `-tags nodynamic`；竞态检测使用 gcc / musl-dev 与 `CGO_ENABLED=1`。
 - 浏览器 `mcr.microsoft.com/playwright:v1.63.0-noble`：Node 24.20.0、Chromium、WebKit，3 核 / 3 GiB，单 worker。原图库为 genphotos 与既有回归用例生成的图片；S3 为仓库 fixture。
-- 容器候选 `bijin-share:review-20261013`，镜像 ID `sha256:46af2e93aa280a6d092211f303f168030cfa35f9973103316667666835644113`；端口仅 `127.0.0.1:5019`，独立照片 / 数据目录、测试账号，6 核 / 4 GiB，只读根文件系统。验收容器已删除，候选镜像保留。
+- 候选镜像 ID `sha256:46af2e93aa280a6d092211f303f168030cfa35f9973103316667666835644113`。正向验收使用独立照片 / 数据目录、测试账号、`127.0.0.1:5019`、6 核 / 4 GiB、只读根文件系统；生产数据库副本复测用 2 核 / 2 GiB、同一端口和只读来源 / 缓存挂载。验收容器已删除。
+- 生产 `bijin:local` 使用上述同一镜像，6 核 / 4 GiB，原有 Compose、端口、数据挂载和配置。公网 `https://csb.jgbman.cc` 经 OpenResty 验收；使用部署前会话密钥签名的临时会话进行只读核对，未尝试生产密码或改动现存分享。临时会话文件随部署备份删除。
 
 ## 方法与结果
 
@@ -21,9 +22,13 @@
 | T05 | `go vet -tags nodynamic ./...`、gofmt、静态 Go 二进制构建 | 通过；最终修改的 Go 文件格式一致 |
 | T06 | `npx playwright test` | 81 项通过，0 失败、0 跳过、0 flaky；Chromium 49、WebKit 32，233.1 秒 |
 | T07 | 最终 HTTP 边界与删除代次调整后，`npx playwright test sharing.spec.ts` | Chromium / WebKit 各 6 项，共 12 项再次通过，26.3 秒 |
-| T08 | `docker build -t bijin-share:review-20261013` | 通过，生产 `bijin:local` 标签未改动 |
+| T08 | `docker build -t bijin-share:review-20261013` | 通过；后续部署复用相同镜像 ID，不重新构建 |
 | T09 | 候选镜像独立目录启动、登录、原图字节比对、已分享筛选、重启、停止 | 通过；2 张有效 JPEG，扫描 0 失败，未登录普通原图 401，分享原图字节一致，重启保留同一地址，停止后旧地址 404；日志无 WARN / ERROR |
 | T10 | `git diff --check` | 通过；构建产物、测试图库 / SQLite 和日志在忽略目录，未进入代码改动 |
+| T11 | 提交源码与已构建镜像的隔离源码逐文件核对 | 126 个非 Markdown 源文件摘要一致；合并提交与功能提交无内容差异 |
+| T12 | 生产 SQLite 在线备份的独立副本，真实 RustFS 只读来源，完整分享链路 | 4025 张扫描 0 失败；原图 202807 字节与分享逐字节一致，重复复制、HEAD / Range、筛选、停止 404、再次分享换链接通过；既有 8 张表摘要未变，日志无 WARN / ERROR |
+| T13 | 切换生产后的公网 HTTP、SQLite 摘要及运行配置核对 | healthy；4025 照片 / 4070 壁纸 / 24 人物 / 81 相册人物关系 / 1 存储，既有 8 张表逐行摘要一致；SQLite quick_check 为 ok；环境、Compose 与会话密钥未变，旧密钥会话有效；登录保护、随机壁纸及现存分享的原图字节、HEAD / Range / ETag 通过，日志无 WARN / ERROR |
+| T14 | 验收后检查并删除本项目部署 / 测试产物与未使用镜像 | 部署备份及隔离目录、两个测试卷、三个测试工具镜像、旧应用镜像、重复候选标签及 28 条构建缓存已删除；netcup 回收 7827824640 字节，约 7.29 GiB；生产镜像、真实照片和现存分享保留 |
 
 ## 原图分享行为证据
 
@@ -41,10 +46,12 @@
 
 - `TestQueryScale` 需显式开启 `BIJIN_QUERY_SCALE=1`，本次未运行 10 万 / 20 万条规模压测；分享筛选的真实分页及原有查询回归已执行。
 - 实体 iPhone / Safari 未测；WebKit 结果属于引擎验证。
-- 本次未在生产账号或真实图库上执行写入，也未替换生产容器。生产 `bijin` 保持原镜像且 healthy。
+- 停止与重新分享的写操作在隔离数据库 / 来源及生产数据库副本执行；公网生产验收只读取真实图库与现存分享，没有为测试创建或撤销生产分享。
 
 ## 结论与复查
 
-按 Q1–Q14 确认的原图分享、停止分享和图库筛选已实现并在隔离环境验收。源码在本地 `master` 工作区，未提交 / 推送；候选镜像可供后续部署。
+按 Q1–Q14 确认的原图分享、停止分享和图库筛选已实现、验收、推送并部署生产。`bijin` healthy，原有数据摘要与登录配置一致。
 
-本地可检查的原始证据在忽略目录 `output/verification/`：Go JSON、浏览器日志、前端构建日志、镜像构建日志与容器验证日志；截图为 `output/share-chromium-desktop.png` 和 `output/share-chromium-mobile.png`。netcup 的相同工作目录保留测试源码、日志与候选镜像用于复查。
+初次公网检查假定尚无主动分享，实际已出现 1 条分享；随后核对该分享返回的真实原图及筛选结果，并保留其状态。生产迁移只初始化未分享记录，未把使用期间的新分享当成测试数据。
+
+用户要求验收后删除备份、测试数据和旧镜像。原始测试日志、截图与生成图库 / SQLite 属于临时验收产物；清理后以本报告、提交中的测试代码和部署镜像 ID 复查，重新运行方法见 `README.md` 与 `TESTING.md`。

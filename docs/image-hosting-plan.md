@@ -1,6 +1,6 @@
 # 原图分享设计
 
-2026-10-13 11:50:27 CST。基线为 netcup 与 GitHub `master` 的 `2c55d26`。Q1–Q13 与最终理解确认 Q14 已由用户批准，包含项目说明的原图分享例外；已完成开发与隔离验收；生产部署和仓库发布尚未执行。
+2026-10-13 11:50:27 CST。基线为 netcup 与 GitHub `master` 的 `2c55d26`。Q1–Q13 与最终理解确认 Q14 已由用户批准，包含项目说明的原图分享例外；2026-10-13 14:50:09 CST 已完成开发、验收、仓库发布和生产部署，并按用户要求清理部署备份、测试数据与旧镜像。
 
 ## 使用流程
 
@@ -47,7 +47,7 @@
 
 ## 验收项
 
-S01–S12 已使用独立目录、SQLite、S3 fixture 与 Chromium / WebKit 验证通过；具体方法与覆盖范围见 `TEST_REPORT.md`，未使用生产密码或写入生产图库。
+S01–S12 已使用独立目录、SQLite、S3 fixture 与 Chromium / WebKit 验证通过；另完成生产数据库副本与真实 RustFS 只读验证、生产公网验收。具体方法与覆盖范围见 `TEST_REPORT.md`，未使用生产密码或为验收改动真实图库 / 分享状态。
 
 | 编号 | 操作与预期 | 验证方式 |
 |---|---|---|
@@ -64,7 +64,7 @@ S01–S12 已使用独立目录、SQLite、S3 fixture 与 Chromium / WebKit 验�
 | S11 | GET、HEAD、Range、类型与响应缓存符合直接看图及关闭分享的要求 | HTTP |
 | S12 | 原有登录、上传、整理、大图直连与随机壁纸行为不回退 | 既有 Go 与浏览器回归 |
 
-实施时同步 `ARCHITECTURE.md`、`CODE_MAP.md`、`README.md`、`CONTEXT.md`、`DECISIONS.md`；完成实际验收后更新 `TEST_REPORT.md` 与 `CHANGELOG.md`。部署与仓库发布另按用户的具体指令执行。
+实施已同步 `ARCHITECTURE.md`、`CODE_MAP.md`、`README.md`、`CONTEXT.md`、`DECISIONS.md`、`TEST_REPORT.md` 与 `CHANGELOG.md`。用户明确授权生产部署、仓库推送与最终清理后，功能经 [PR #5](https://github.com/EnjuYeung/web_bijin/pull/5) 发布到 `master`，同一验收镜像部署到生产。
 
 ## 拟修改的项目说明
 
