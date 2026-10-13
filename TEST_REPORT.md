@@ -18,6 +18,12 @@
 | T04 | 干净数据下 `npx playwright test`（全量） | Chromium / WebKit 共 94 项通过，0 失败，4.8 分钟 |
 | T05 | `npx playwright test tests/logout.spec.ts --repeat-each=10` | 两浏览器共 120 项通过，0 失败，5.6 分钟 |
 | T06 | 取回截图人工复核（桌面收起 / 打开、320 px 相册列表与单本页、暗色） | 收起时只剩封面、名称、数量；按下状态与侧栏当前项一致；手机只显示图标，无横向溢出；卡片勾选为 44 px 方块 |
+| T07 | 提交 `4dd9c14` 与隔离副本逐文件 SHA-256 比对 | 132 个非文档文件一致，部署的就是测试过的代码 |
+| T08 | 生产部署前：SQLite 在线备份并 `quick_check`，记录各表行数；当前镜像打回滚标签 | quick_check ok；photos 4025、photo_shares 4025、album_people 81、people 24、wallpapers 4070、storages 1、share_batches 0 |
+| T09 | 生产 `git pull --ff-only` 到 `4dd9c14`，`docker compose build && up -d` | 新镜像 `060e834b42e3`，约 9 秒 healthy；启动扫描 4025 张、0 失败；日志无 WARN / ERROR；镜像内含 `share-toggle` 与「响应不完整，请重试」 |
+| T10 | 公网核对 `https://csb.jgbman.cc` | health 200、登录页 200；未登录 `/api/albums`、`/api/share-batches` 401，`/?view=albums` 302 到登录；随机壁纸 302；线上 CSS 含按钮按下样式；现存 2 个分享许可保留，抽查公开原图 200（image/jpeg） |
+| T11 | 部署后各表行数与 quick_check | 与部署前完全一致，quick_check ok |
+| T12 | 清理隔离目录、日志、数据库备份、测试镜像与卷、旧镜像、构建缓存 | 回收 7391232000 字节（约 6.88 GiB）；netcup 仅剩 bijin / RustFS / OpenResty 三个容器与镜像，构建缓存 0 |
 
 ## 业务验收
 
@@ -41,5 +47,6 @@
 ## 限制与结论
 
 - 未开启 `TestQueryScale` 10 万 / 20 万条可选压测；本次为前端改动，接口与数据库结构未变。
-- 测试全部在隔离目录进行，没有读写生产数据库、照片和分享许可。
-- 结论：功能与回归测试通过，可以部署。生产部署结果见下一次更新。
+- 测试全部在隔离目录进行，没有读写生产数据库、照片和分享许可；生产只做只读核对。
+- 登录后的界面没有在生产上点按验证（需要用户本人密码），由隔离环境同一代码的浏览器测试覆盖。
+- 结论：功能与回归测试通过，已部署生产并推送 master，生产 healthy，原有数据、配置与分享保留。
