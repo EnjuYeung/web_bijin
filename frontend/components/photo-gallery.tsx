@@ -11,23 +11,28 @@ import { GallerySkeleton } from "@/components/gallery-skeleton";
 import { PhotoSharing } from "@/components/photo-sharing";
 import { BatchSharing } from "@/components/batch-sharing";
 import { Checkbox } from "@/components/ui/checkbox";
-import { Field, FieldGroup, FieldLabel } from "@/components/ui/field";
+import { Field, FieldLabel } from "@/components/ui/field";
 
 function photoHash() { const match = /^#p\/(\d+)$/.exec(location.hash); return match ? Number(match[1]) : null; }
 
-export function PhotoGallery({ album, onCount, onTitle }: { album: string | null; onCount: (total: number) => void; onTitle: (title: string) => void }) {
+export function PhotoGallery({ album, sharing, onCount, onTitle }: { album: string | null; sharing: boolean; onCount: (total: number) => void; onTitle: (title: string) => void }) {
   const [sharingRevision, setSharingRevision] = useState(0);
   const [sharedOnly, setSharedOnly] = useState(false);
   useEffect(() => { setSharedOnly(new URLSearchParams(location.search).get("shared") === "1"); }, []);
   useEffect(() => { let dirty = false; const changed = () => { if (photoHash()) { dirty = true; return; } setSharingRevision(n => n + 1); }; const closed = () => { if (dirty && !photoHash()) { dirty = false; setSharingRevision(n => n + 1); } }; addEventListener("bijin-sharing-changed", changed); addEventListener("popstate", closed); addEventListener("hashchange", closed); return () => { removeEventListener("bijin-sharing-changed", changed); removeEventListener("popstate", closed); removeEventListener("hashchange", closed); }; }, []);
+  function showShared(checked: boolean) {
+    setSharedOnly(checked);
+    const url = new URL(location.href);
+    if (checked) url.searchParams.set("shared", "1"); else url.searchParams.delete("shared");
+    history.replaceState(history.state, "", url);
+  }
+  // A hidden filter would silently keep photos out of view.
+  useEffect(() => { if (!sharing && sharedOnly) showShared(false); }, [sharing, sharedOnly]);
   return <>
-    <BatchSharing albums={album === null ? [] : [album]} />
-    <FieldGroup className="mb-4"><Field orientation="horizontal" className="w-fit"><Checkbox id="shared-only" checked={sharedOnly} onCheckedChange={checked => {
-      setSharedOnly(checked);
-      const url = new URL(location.href);
-      if (checked) url.searchParams.set("shared", "1"); else url.searchParams.delete("shared");
-      history.replaceState(history.state, "", url);
-    }} /><FieldLabel htmlFor="shared-only">只看已分享</FieldLabel></Field></FieldGroup>
+    {sharing && <div id="sharing-panel" className="sharing-panel">
+      <BatchSharing albums={album === null ? [] : [album]} />
+      <Field orientation="horizontal" className="sharing-check"><Checkbox id="shared-only" checked={sharedOnly} onCheckedChange={showShared} /><FieldLabel htmlFor="shared-only">只看已分享</FieldLabel></Field>
+    </div>}
     <Gallery key={`${album ?? "all"}:${sharedOnly}:${sharedOnly ? sharingRevision : 0}`} album={album} sharedOnly={sharedOnly} onCount={onCount} onTitle={onTitle} />
   </>;
 }

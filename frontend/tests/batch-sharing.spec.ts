@@ -12,6 +12,10 @@ async function cleanup(page: Page) {
   expect((await page.request.post(`/api/share-batches/${task.id}/start`, { data: { revision: task.revision } })).status()).toBe(200);
   await finish(page, task.id);
 }
+async function manage(page: Page) {
+  const toggle = page.getByRole("button", { name: "管理分享", exact: true });
+  await toggle.click(); await expect(toggle).toHaveAttribute("aria-pressed", "true");
+}
 async function begin(page: Page, mode: "open" | "stop") {
   const prepared = page.waitForResponse(r => r.url().endsWith("/api/share-batches/prepare") && r.request().method() === "POST");
   await page.getByRole("button", { name: mode === "open" ? "批量开启分享" : "批量停止分享", exact: true }).click();
@@ -34,7 +38,7 @@ test.afterEach(async ({ page }) => { await cleanup(page); });
 test("album selection opens all pages, copies original addresses, reports state and stops all shares", async ({ page, browserName }) => {
   if (browserName === "chromium") await page.context().grantPermissions(["clipboard-read", "clipboard-write"]);
   const errors: string[] = []; page.on("pageerror", e => errors.push(e.message));
-  await page.goto("/?view=albums");
+  await page.goto("/?view=albums"); await manage(page);
   await page.getByRole("checkbox", { name: "选择相册「batch」", exact: true }).check();
   await page.getByRole("checkbox", { name: "选择相册「misc」", exact: true }).check();
   const task = await begin(page, "open"); expect(task.total).toBe(53);
@@ -70,6 +74,7 @@ test("single album mobile controls, manual multiline links and results recover a
   await page.addInitScript(() => localStorage.setItem("juens-theme", "day"));
   await page.setViewportSize({ width: 320, height: 700 });
   await page.goto("/?album=misc&shared=1");
+  await expect(page.getByRole("button", { name: "管理分享", exact: true })).toHaveAttribute("aria-pressed", "true");
   const task = await begin(page, "open"); expect(task.total).toBe(3);
   const done = await finish(page, task.id); expect(done.succeeded).toBe(3);
   await expect(page.locator(".batch-result")).toContainText("成功 3");
@@ -89,10 +94,10 @@ test("single album mobile controls, manual multiline links and results recover a
 test("lost start answer is read back, does not create a second attempt, and result survives reopening", async ({ page }) => {
   let starts = 0;
   await page.route("**/api/share-batches/*/start", async route => { starts++; const response = await route.fetch(); expect(response.status()).toBe(200); await route.fulfill({ status: 200, contentType: "application/json", body: "{" }); });
-  await page.goto("/?album=misc"); const task = await begin(page, "open");
+  await page.goto("/?album=misc"); await manage(page); const task = await begin(page, "open");
   const done = await finish(page, task.id); expect(done.revision).toBe(1); expect(starts).toBe(1);
   await expect(page.getByRole("dialog")).toHaveCount(0);
-  await page.goto("/?view=albums"); await expect(page.locator(".batch-result")).toContainText("成功 3");
+  await page.goto("/?view=albums"); await manage(page); await expect(page.locator(".batch-result")).toContainText("成功 3");
 });
 
 test("select all only selects filtered albums and a filter change clears hidden selections", async ({ page }) => {
@@ -101,7 +106,7 @@ test("select all only selects filtered albums and a filter change clears hidden 
     for (const a of data.albums) { a.author = a.id === "batch" ? { id: 900, name: "筛选测试作者" } : null; a.models = []; }
     await route.fulfill({ response, json: data });
   });
-  await page.goto("/?view=albums");
+  await page.goto("/?view=albums"); await manage(page);
   await page.getByRole("checkbox", { name: "全选当前列表", exact: true }).check();
   expect(await page.getByRole("checkbox", { name: /^选择相册/ }).count()).toBeGreaterThan(1);
   await page.getByRole("combobox", { name: "按作者筛选", exact: true }).click();
@@ -122,11 +127,74 @@ test("viewing an older result still observes the active task and releases batch 
   let hold = true;
   await page.route("**/api/share-batches", async route => { const response = await route.fetch(); const data = await response.json(); if (hold) data.tasks.find((t: { id: string }) => t.id === next.id).status = "running"; await route.fulfill({ response, json: data }); });
   await page.route(`**/api/share-batches/${next.id}`, async route => { const response = await route.fetch(); const data = await response.json(); if (hold) data.status = "running"; await route.fulfill({ response, json: data }); });
-  await page.goto("/?album=misc");
+  await page.goto("/?album=misc"); await manage(page);
   await expect(page.getByRole("button", { name: "批量开启分享", exact: true })).toBeDisabled();
   await page.getByRole("combobox", { name: "查看批量任务", exact: true }).click();
   await page.getByRole("option", { name: /停止/ }).first().click();
   await expect(page.locator(".batch-result")).toContainText("停止分享");
   hold = false;
   await expect(page.getByRole("button", { name: "批量开启分享", exact: true })).toBeEnabled();
+});
+
+test("sharing controls stay hidden until 管理分享 is pressed; closing clears the selection and the shared filter", async ({ page, browserName }) => {
+  const errors: string[] = []; page.on("pageerror", e => errors.push(e.message));
+  const toggle = page.getByRole("button", { name: "管理分享", exact: true });
+  await page.goto("/?view=albums");
+  await expect(page.locator(".album-card").first()).toBeVisible();
+  await expect(toggle).toHaveAttribute("aria-pressed", "false");
+  await expect(page.getByRole("checkbox")).toHaveCount(0);
+  await expect(page.locator(".album-meta [data-slot=badge]")).toHaveCount(0);
+  await expect(page.locator("#sharing-panel")).toHaveCount(0);
+  await page.screenshot({ path: `../output/manage-${browserName}-albums-closed.png` });
+  // A batch that ends while the controls are closed is reflected once they open.
+  const task = await (await page.request.post("/api/share-batches/prepare", { data: { mode: "open", albums: ["misc"] } })).json();
+  await page.request.post(`/api/share-batches/${task.id}/start`, { data: { revision: task.revision } }); await finish(page, task.id);
+  await manage(page);
+  const misc = page.locator(".album-select-card").filter({ has: page.getByRole("checkbox", { name: "选择相册「misc」", exact: true }) });
+  await expect(misc).toContainText("全部已分享 · 3/3");
+  await expect(page.locator(".batch-result")).toContainText("成功 3");
+  // The whole 44 px chip selects, even at its corner, without opening the album.
+  const chip = misc.locator(".album-checkbox"); const size = (await chip.boundingBox())!;
+  expect(size.width).toBeGreaterThanOrEqual(44); expect(size.height).toBeGreaterThanOrEqual(44);
+  await chip.click({ position: { x: 3, y: 3 } });
+  await expect(page.getByRole("checkbox", { name: "选择相册「misc」", exact: true })).toBeChecked();
+  expect(new URL(page.url()).searchParams.get("view")).toBe("albums");
+  await expect(page.getByText("已选 1 本相册", { exact: true })).toBeVisible();
+  await page.screenshot({ path: `../output/manage-${browserName}-albums-open.png` });
+  await toggle.click();
+  await expect(toggle).toHaveAttribute("aria-pressed", "false");
+  await expect(page.getByRole("checkbox")).toHaveCount(0);
+  await expect(page.locator(".batch-result")).toHaveCount(0);
+  await manage(page);
+  await expect(page.getByRole("checkbox", { name: "选择相册「misc」", exact: true })).not.toBeChecked();
+  await expect(page.getByRole("button", { name: "批量开启分享", exact: true })).toHaveCount(0);
+
+  for (const path of ["/", "/?album=misc"]) {
+    await page.goto(path);
+    await expect(page.locator(".sheet").first()).toBeVisible();
+    await expect(toggle).toHaveAttribute("aria-pressed", "false");
+    await expect(page.getByRole("checkbox", { name: "只看已分享" })).toHaveCount(0);
+    await expect(page.locator(".batch-result")).toHaveCount(0);
+    await expect(page.getByRole("button", { name: "批量开启分享", exact: true })).toHaveCount(0);
+    await manage(page);
+    await expect(page.locator(".batch-result")).toContainText("成功 3");
+    await page.getByRole("checkbox", { name: "只看已分享" }).check();
+    await expect(page.locator("#count")).toHaveText("3");
+    await expect.poll(() => new URL(page.url()).searchParams.get("shared")).toBe("1");
+    await toggle.click();
+    await expect(page.getByRole("checkbox", { name: "只看已分享" })).toHaveCount(0);
+    await expect.poll(() => new URL(page.url()).searchParams.get("shared")).toBeNull();
+    if (path === "/") await expect.poll(async () => Number(await page.locator("#count").innerText())).toBeGreaterThan(3);
+  }
+
+  await page.setViewportSize({ width: 320, height: 700 });
+  for (const path of ["/?view=albums", "/?album=misc"]) {
+    await page.goto(path);
+    await expect(page.locator("#page-title")).toBeVisible();
+    const box = (await toggle.boundingBox())!; expect(box.width).toBeLessThanOrEqual(48); expect(box.height).toBeGreaterThanOrEqual(44);
+    await manage(page);
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+  }
+  await page.screenshot({ path: `../output/manage-${browserName}-album-mobile.png` });
+  expect(errors).toEqual([]);
 });

@@ -113,6 +113,7 @@ test("shared filter works in gallery and album, stopping removes it and resets p
   await page.getByRole("button", { name: "复制分享链接", exact: true }).click();
   await expect(page.getByRole("button", { name: "停止分享", exact: true })).toBeVisible();
   await page.locator("#lb-close").click();
+  await page.getByRole("button", { name: "管理分享", exact: true }).click();
   await page.getByRole("checkbox", { name: "只看已分享" }).check();
   await expect(page.locator("#count")).toHaveText("1");
   await expect(page.locator(".sheet")).toHaveCount(1);

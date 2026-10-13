@@ -25,8 +25,11 @@ export async function api<T>(path: string, options: RequestInit = {}): Promise<T
     location.assign(loginURL());
     throw new APIError("需要重新登录", 401);
   }
-  const data = await response.json().catch(() => ({}));
-  if (!response.ok) throw new APIError(data.error || `请求失败（${response.status}）`, response.status);
+  const data = await response.json().catch(() => undefined);
+  if (!response.ok) throw new APIError(data?.error || `请求失败（${response.status}）`, response.status);
+  // Every API answers JSON. A success whose body is cut off (for example while
+  // the page is leaving) or is not JSON is an unknown result, not an empty one.
+  if (data === undefined) throw new APIError("响应不完整，请重试", response.status);
   return data as T;
 }
 

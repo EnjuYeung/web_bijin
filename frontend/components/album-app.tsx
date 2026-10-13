@@ -1,7 +1,7 @@
 "use client";
 
 import { lazy, Suspense, useCallback, useEffect, useRef, useState } from "react";
-import { ArrowLeft, Contrast, FolderHeart, Images, LogOut, Moon, SlidersHorizontal, Sun, Upload, UserRoundPen } from "lucide-react";
+import { ArrowLeft, Contrast, FolderHeart, Images, Link2, LogOut, Moon, SlidersHorizontal, Sun, Upload, UserRoundPen } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Spinner } from "@/components/ui/spinner";
 import { GallerySkeleton } from "@/components/gallery-skeleton";
@@ -24,6 +24,8 @@ export function AlbumApp() {
   const [ready, setReady] = useState(false);
   const [timezone, setTimezone] = useState("Asia/Shanghai");
   const [leaving, setLeaving] = useState(false);
+  // Sharing controls stay out of the way until asked for, once per visit.
+  const [sharing, setSharing] = useState(false);
   const { expanded, mode, toggleSidebar, cycleMode } = usePreferences(timezone);
   const brand = useRef<HTMLButtonElement>(null);
   const updateCount = useCallback((value: number) => setCount(value), []);
@@ -36,6 +38,7 @@ export function AlbumApp() {
     const next: View = query.has("album") ? "album" : page === "albums" || page === "settings" || page === "upload" || page === "organize" ? page : "photos";
     setAlbum(folder);
     setView(next);
+    setSharing(next !== "albums" && query.get("shared") === "1");
     setTitle(next === "album" ? folder === "." ? "根目录" : folder?.split("/").pop() || "相册" : titles[next]);
     setReady(true);
     const controller = new AbortController();
@@ -111,10 +114,13 @@ export function AlbumApp() {
           <h1 id="page-title">{title}</h1>
           {view !== "settings" && view !== "upload" && view !== "organize" && <p id="count" aria-live="polite" aria-atomic="true" aria-label={count === null ? "正在读取数量" : `${count} ${view === "albums" ? "个相册" : "张照片"}`}>{count === null ? "—" : count.toLocaleString("zh-CN")}</p>}
         </div>
-        <Button id="theme-btn" variant="ghost" size="icon" aria-label={`显示模式：${modeLabels[mode]}；点击切换`} title={`显示模式：${modeLabels[mode]}；点击切换`} onClick={cycleMode}><ThemeIcon aria-hidden="true" /></Button>
+        <div className="top-actions">
+          {(view === "photos" || albumsActive) && <Button id="share-toggle" variant="ghost" aria-pressed={sharing} aria-label="管理分享" title={sharing ? "管理分享：已打开；点击收起" : "管理分享：点击打开"} onClick={() => setSharing(on => !on)}><Link2 data-icon="inline-start" aria-hidden="true" /><span>管理分享</span></Button>}
+          <Button id="theme-btn" variant="ghost" size="icon" aria-label={`显示模式：${modeLabels[mode]}；点击切换`} title={`显示模式：${modeLabels[mode]}；点击切换`} onClick={cycleMode}><ThemeIcon aria-hidden="true" /></Button>
+        </div>
       </header>
       <main id="main-content" tabIndex={-1}>
-        {!ready ? <GallerySkeleton /> : view === "upload" ? <Suspense fallback={<GallerySkeleton />}><UploadPanel /></Suspense> : view === "organize" ? <Suspense fallback={<GallerySkeleton />}><OrganizePanel /></Suspense> : view === "settings" ? <Suspense fallback={<GallerySkeleton />}><SettingsPanel /></Suspense> : view === "albums" ? <Albums onCount={updateCount} /> : <PhotoGallery key={album ?? "all"} album={album} onCount={updateCount} onTitle={updateTitle} />}
+        {!ready ? <GallerySkeleton /> : view === "upload" ? <Suspense fallback={<GallerySkeleton />}><UploadPanel /></Suspense> : view === "organize" ? <Suspense fallback={<GallerySkeleton />}><OrganizePanel /></Suspense> : view === "settings" ? <Suspense fallback={<GallerySkeleton />}><SettingsPanel /></Suspense> : view === "albums" ? <Albums sharing={sharing} onCount={updateCount} /> : <PhotoGallery key={album ?? "all"} album={album} sharing={sharing} onCount={updateCount} onTitle={updateTitle} />}
       </main>
     </div>
   </>;

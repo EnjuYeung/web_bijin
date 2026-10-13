@@ -348,3 +348,18 @@ test("07 random wallpapers: settings card, public API and login background", asy
   expect(loaded.headers()["content-type"]).toBe("image/webp");
   await visitor.close();
 });
+
+test("08 an unreadable success answer shows a retry instead of breaking the page", async ({ page }) => {
+  let cut = true;
+  await page.route("**/api/settings", async route => {
+    if (!cut) return route.fallback();
+    await route.fulfill({ status: 200, contentType: "text/html", body: "<!doctype html><title>not json</title>" });
+  });
+  await page.goto("/?view=settings");
+  await expect(page.getByText("设置暂时读不出来", { exact: true })).toBeVisible();
+  await expect(page.getByText("响应不完整，请重试")).toBeVisible();
+  cut = false;
+  await page.getByRole("button", { name: "重试", exact: true }).click();
+  await expect(page.locator("#local-count")).toContainText("58 张照片");
+});
+

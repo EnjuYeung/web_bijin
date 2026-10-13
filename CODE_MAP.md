@@ -50,7 +50,7 @@
 |---|---|
 | `frontend/app/layout.tsx` | Next.js 页面外壳、元数据和首屏主题/侧栏偏好脚本，不请求用户数据。 |
 | `frontend/app/page.tsx`、`frontend/app/login/page.tsx` | 首页与登录页静态导出入口。 |
-| `frontend/components/album-app.tsx` | 标题、导航、网站标题折叠交互、按需加载设置页、上传页、整理页与视图选择；侧栏底部退出登录，其他标签页退出或返回键恢复旧页面时转到登录页。 |
+| `frontend/components/album-app.tsx` | 标题、导航、网站标题折叠交互、按需加载设置页、上传页、整理页与视图选择；顶部「管理分享」开关（默认收起）；侧栏底部退出登录，其他标签页退出或返回键恢复旧页面时转到登录页。 |
 | `frontend/components/photo-gallery.tsx` | 游标分页、虚拟瀑布流、hash 大图、键盘/触摸切换、焦点和滚动恢复；已分享筛选切换重置分页，停止后移出筛选结果。 |
 | `frontend/components/albums.tsx` | 文件夹相册封面、数量、「作者 · 模特」、作者 / 模特多选筛选（本次访问内保留）、排序工具（名称 / 作者 / 模特 / 添加日期与升降序）、空态与重试。 |
 | `frontend/components/option-select.tsx` | 基于 Base UI Select 的单选下拉，与名字下拉同一套弹层样式；用于相册排序、整理页的填写情况、设置页的寻址方式和上传页的保存位置；项目里不再使用原生下拉。 |
@@ -68,7 +68,7 @@
 | `frontend/lib/upload.ts` | 非递归文件选择 / 拖入读取，XHR 进度、取消及本地保存回执，取消等待。 |
 | `frontend/components/login.tsx` | 登录表单（开启两步验证时显示动态码框）、错误与锁定提示、退出后的「已退出登录」提示并通知其他标签页、安全返回地址。 |
 | `frontend/components/ui/` | 官方 shadcn/ui Base UI 组件；统一语义颜色、按钮状态、表单与对话框。 |
-| `frontend/lib/api.ts`、`frontend/lib/preferences.ts` | 现有 Go API 的类型与请求、格式化、主题与侧栏偏好。 |
+| `frontend/lib/api.ts`、`frontend/lib/preferences.ts` | 现有 Go API 的类型与请求（成功但内容读不出时按结果未知报错，不当作空数据）、格式化、主题与侧栏偏好。 |
 | `frontend/app/globals.css` | 令牌到 Tailwind / shadcn 的映射、各页面布局、响应式与减少动态规则。 |
 | `tokens.css` | 主图库与登录页共享的颜色、字体、间距、动效、圆角和侧栏尺寸；在构建时合并进静态 CSS。 |
 | `frontend/next.config.ts`、`frontend/scripts/export.mjs` | Next.js 静态导出、生成 JavaScript / CSS 的 gzip 副本，并复制到 Go 内嵌目录 `web/`。 |
@@ -92,7 +92,7 @@
 | `frontend/tests/logout.spec.ts` | 退出登录（Chromium 与 WebKit 各跑一遍）：侧栏底部位置与收起/手机布局、提示与重新登录回首页、偏好保留、返回键不回相册、真实浏览器配置下缓存的缩略图被清掉、其他标签页跟着退出、上传中先询问且选留下不退出、已过期时可退出、别的网站不能让人退出。 |
 | `frontend/tests/two-step.spec.ts` | 两步验证登录页：只用密码时不显示动态码框；开启时必填、错码提示、用过的码被拒、下一个码可用、按 IP 锁定与提示，桌面与手机截图。 |
 | `assets_test.go` | 验证导出资源的门禁边界，以及 gzip 解压内容、MIME、缓存与拒绝压缩时的回退。 |
-| `frontend/tests/album.spec.ts`、`frontend/playwright.config.ts` | Playwright 实际浏览器回归：登录、照片/相册、大图、设置表单（含大图直连：浏览器跟随 302 直接向存储取原图）、主题/品牌交互与响应式、随机壁纸卡片与复制、别的网站无 Cookie 引用壁纸、登录页背景为壁纸。 |
+| `frontend/tests/album.spec.ts`、`frontend/playwright.config.ts` | Playwright 实际浏览器回归：登录、照片/相册、大图、设置表单（含大图直连：浏览器跟随 302 直接向存储取原图）、主题/品牌交互与响应式、随机壁纸卡片与复制、别的网站无 Cookie 引用壁纸、登录页背景为壁纸、成功但内容读不出的响应显示重试。 |
 | `frontend/tests/s3_fixture.py` | 仅监听本机的 S3 浏览器测试服务，使用生成的测试图片，接受预签名读写、条件写入与任务元数据，并按 `response-*` 参数返回响应头，不连接真实桶。 |
 | `upload_test.go` | 上传核心验收：保存/索引/缩略图/壁纸、本地保存的文件为 0644、身份与来源检查、非法路径/图片、传输中断、并发同名不覆盖、符号链接、S3 现有凭据与坏图误报回归。 |
 | `upload_verification_test.go` | 核对已保存原图、S3 内存与真实对象差异、不存在与故障、冲突、流式断传和鉴权。 |
@@ -158,5 +158,5 @@
 
 - `frontend/components/batch-sharing.tsx`：相册列表与单本页共用的核对、提交、进度、任务恢复、取消、重试、复制和手动复制界面。
 - `frontend/lib/share-batches.ts`：任务响应校验、读取及分享变化通知。
-- `frontend/components/albums.tsx`：相册勾选、当前筛选全选与分享状态；`photo-gallery.tsx` 接入单本入口与筛选更新；`photo-sharing.tsx` 协调单图状态。
-- `batch_sharing_test.go`：真实 HTTP、来源、SQLite、并发交错、重启与原图字节回归；`frontend/tests/batch-sharing.spec.ts`：Chromium / WebKit 的批量操作、复制、恢复、筛选及手机布局。
+- `frontend/components/albums.tsx`：打开「管理分享」后显示相册勾选、当前筛选全选与分享状态；`photo-gallery.tsx` 打开后显示单本入口与「只看已分享」，收起时取消该筛选；`photo-sharing.tsx` 协调单图状态。
+- `batch_sharing_test.go`：真实 HTTP、来源、SQLite、并发交错、重启与原图字节回归；`frontend/tests/batch-sharing.spec.ts`：Chromium / WebKit 的批量操作、复制、恢复、筛选、「管理分享」默认收起与收起清理及手机布局。
