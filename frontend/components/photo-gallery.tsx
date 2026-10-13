@@ -8,10 +8,27 @@ import { Dialog, DialogClose, DialogContent, DialogDescription, DialogHeader, Di
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "@/components/ui/empty";
 import { GallerySkeleton } from "@/components/gallery-skeleton";
+import { PhotoSharing } from "@/components/photo-sharing";
+import { Checkbox } from "@/components/ui/checkbox";
+import { Field, FieldGroup, FieldLabel } from "@/components/ui/field";
 
 function photoHash() { const match = /^#p\/(\d+)$/.exec(location.hash); return match ? Number(match[1]) : null; }
 
 export function PhotoGallery({ album, onCount, onTitle }: { album: string | null; onCount: (total: number) => void; onTitle: (title: string) => void }) {
+  const [sharedOnly, setSharedOnly] = useState(false);
+  useEffect(() => { setSharedOnly(new URLSearchParams(location.search).get("shared") === "1"); }, []);
+  return <>
+    <FieldGroup className="mb-4"><Field orientation="horizontal" className="w-fit"><Checkbox id="shared-only" checked={sharedOnly} onCheckedChange={checked => {
+      setSharedOnly(checked);
+      const url = new URL(location.href);
+      if (checked) url.searchParams.set("shared", "1"); else url.searchParams.delete("shared");
+      history.replaceState(history.state, "", url);
+    }} /><FieldLabel htmlFor="shared-only">只看已分享</FieldLabel></Field></FieldGroup>
+    <Gallery key={`${album ?? "all"}:${sharedOnly}`} album={album} sharedOnly={sharedOnly} onCount={onCount} onTitle={onTitle} />
+  </>;
+}
+
+function Gallery({ album, sharedOnly, onCount, onTitle }: { album: string | null; sharedOnly: boolean; onCount: (total: number) => void; onTitle: (title: string) => void }) {
   const [photos, setPhotos] = useState<Photo[]>([]);
   const [loaded, setLoaded] = useState(false);
   const [notice, setNotice] = useState("");
@@ -26,6 +43,7 @@ export function PhotoGallery({ album, onCount, onTitle }: { album: string | null
   const scroll = useRef(0);
   const touch = useRef({ x: 0, until: 0 });
   const pendingStep = useRef(false);
+  const total = useRef(0);
   const paging = useRef({ next: "", seed: "", busy: false, done: false, controller: null as AbortController | null });
 
   const loadMore = useCallback(async () => {
@@ -40,6 +58,7 @@ export function PhotoGallery({ album, onCount, onTitle }: { album: string | null
       if (state.seed) query.set("seed", state.seed);
       if (state.next) query.set("after", state.next);
       if (album !== null) query.set("album", album);
+      if (sharedOnly) query.set("shared", "1");
       const data = await api<PhotoPage>("/api/photos?" + query, { signal: controller.signal });
       if (controller.signal.aborted) return;
       state.seed = data.seed;
@@ -47,13 +66,14 @@ export function PhotoGallery({ album, onCount, onTitle }: { album: string | null
       state.done = !state.next;
       setPhotos(previous => { const ids = new Set(previous.map(photo => photo.id)); return [...previous, ...data.photos.filter(photo => !ids.has(photo.id))]; });
       onCount(data.total);
+      total.current = data.total;
       if (data.album?.name) onTitle(data.album.name);
       setNotice(data.status.scanning ? "正在整理新照片，完成后刷新即可查看。" : "");
       setLoaded(true);
     } catch (err) {
       if (!controller.signal.aborted) setError(err instanceof Error ? err.message : "暂时连不上相册服务。");
     } finally { if (state.controller === controller) state.busy = false; }
-  }, [album, onCount, onTitle]);
+  }, [album, sharedOnly, onCount, onTitle]);
 
   useEffect(() => { loadMore(); return () => { paging.current.controller?.abort(); paging.current.busy = false; }; }, [loadMore]);
   useEffect(() => {
@@ -143,7 +163,7 @@ export function PhotoGallery({ album, onCount, onTitle }: { album: string | null
     {error && <Alert variant="destructive"><AlertTitle>照片暂时读不出来</AlertTitle><AlertDescription>{error}<Button variant="outline" onClick={loadMore}><RefreshCw data-icon="inline-start" aria-hidden="true" />重试</Button></AlertDescription></Alert>}
     {notice && <p className="note" role="status">{notice}</p>}
     {!loaded && !error && <GallerySkeleton />}
-    {loaded && !photos.length && <Empty><EmptyHeader><EmptyMedia variant="icon"><Images aria-hidden="true" /></EmptyMedia><EmptyTitle>还没有照片</EmptyTitle><EmptyDescription>添加本地或云端照片，扫描后就能在这里浏览。</EmptyDescription></EmptyHeader></Empty>}
+    {loaded && !photos.length && <Empty><EmptyHeader><EmptyMedia variant="icon"><Images aria-hidden="true" /></EmptyMedia><EmptyTitle>{sharedOnly ? "还没有分享的照片" : "还没有照片"}</EmptyTitle><EmptyDescription>{sharedOnly ? "在大图中复制分享链接后，可在这里找到并停止分享。" : "添加本地或云端照片，扫描后就能在这里浏览。"}</EmptyDescription></EmptyHeader></Empty>}
     <div id="grid" className="photo-grid" ref={grid} style={{ height: Math.max(0, masonry.height) }}>
       {visible.map(({ photo, x, y, w, h }) => <button key={photo.id} className="sheet" data-id={photo.id} type="button" aria-label={photo.title || photo.name} style={{ transform: `translate(${x}px,${y}px)`, width: w, height: h }} onClick={event => openPhoto(photo, event.currentTarget)}>
         <img src={photo.thumb} width={photo.w} height={photo.h} alt="" decoding="async" />
@@ -151,11 +171,17 @@ export function PhotoGallery({ album, onCount, onTitle }: { album: string | null
       </button>)}
     </div>
     <DialogContent className="photo-dialog" showCloseButton={false} finalFocus={() => trigger.current?.isConnected ? trigger.current : document.getElementById("main-content")} onKeyDown={event => {
-      if (event.key === "ArrowLeft" || event.key === "ArrowRight") { event.preventDefault(); event.stopPropagation(); step(event.key === "ArrowLeft" ? -1 : 1); }
+      if ((event.key === "ArrowLeft" || event.key === "ArrowRight") && !(event.target instanceof HTMLElement && event.target.closest("input, textarea, [contenteditable=true]"))) { event.preventDefault(); event.stopPropagation(); step(event.key === "ArrowLeft" ? -1 : 1); }
     }}>
       <DialogHeader className="sr-only"><DialogTitle>{preview?.title || preview?.name || "照片"}</DialogTitle><DialogDescription>点击照片或关闭按钮返回；左右方向键切换照片。</DialogDescription></DialogHeader>
       <DialogClose render={<Button variant="overlay" size="icon" className="photo-close" id="lb-close" aria-label="返回照片" title="返回照片" />}><X aria-hidden="true" /></DialogClose>
-      {preview && <><div className="photo-stage" onTouchStart={event => { touch.current.x = event.changedTouches[0]?.clientX || 0; }} onTouchEnd={event => {
+      {preview && <><PhotoSharing key={`${preview.id}:${preview.version}`} photo={preview} enabled={!!selected} onStopped={() => {
+        if (!sharedOnly) return;
+        closePhoto();
+        setPhotos(previous => previous.filter(photo => photo.id !== preview.id));
+        total.current = Math.max(0, total.current - 1); onCount(total.current);
+        setNotice("已停止分享。");
+      }} /><div className="photo-stage" onTouchStart={event => { touch.current.x = event.changedTouches[0]?.clientX || 0; }} onTouchEnd={event => {
         const delta = (event.changedTouches[0]?.clientX || 0) - touch.current.x;
         if (Math.abs(delta) > 50) { touch.current.until = Date.now() + 400; step(delta > 0 ? -1 : 1); }
       }}>

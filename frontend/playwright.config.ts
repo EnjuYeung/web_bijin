@@ -18,7 +18,7 @@ export default defineConfig({
   projects: [
     { name: "chromium", use: { browserName: "chromium", launchOptions: { args: ["--no-sandbox"] } } },
     // Safari's engine, for what logging out leaves behind on iPhones and Macs.
-    { name: "webkit", use: { browserName: "webkit" }, testMatch: /(logout|organize-saving|upload|upload-recovery)\.spec\.ts/ },
+    { name: "webkit", use: { browserName: "webkit" }, testMatch: /(logout|organize-saving|upload|upload-recovery|sharing)\.spec\.ts/ },
   ],
   webServer: [
     { command: "python3 tests/s3_fixture.py", port: 18093, reuseExistingServer: false },

@@ -20,6 +20,8 @@
 | `storage.go` | 对象存储配置：字段校验与默认值（Endpoint、Bucket、前缀、Region、寻址方式、大图直连与浏览器访问地址），以及 SQLite `storages` 表的增删改查与补列迁移。 |
 | `settings.go` | 设置页接口：读取本地说明、各来源状态、上传通知状态与壁纸统计、添加/修改/删除对象存储、测试连接；Secret Key 只写不读。 |
 | `server.go` | 注册 HTTP 路由，提供照片、相册、缩略图（不可变缓存）、原图（转发或 302 到预签名地址；存储不可达 502、对象不存在 404）、登录背景（302 到一张壁纸）、公开随机壁纸和健康检查（只给 `ok` 与时区）接口，并内嵌前端文件；所有写接口在注册时统一经过同源（+ JSON）门禁，经 HTTPS 访问时发送 HSTS。 |
+| `sharing.go` | 原图分享 HTTP：仅登录后管理、随机地址公开读取、修改代次与选定版本校验、来源范围和完整内容核对、最多两份匿名临时快照、GET / HEAD / Range 与 no-store；分享不签发 S3 直链。 |
+| `share_store.go` | SQLite 分享记录与迁移、照片改变 / 删除时撤销的触发器、同一次分享幂等复用、修改代次防止迟到操作恢复许可；已分享查询条件与缓存失效。 |
 | `upload.go` | GUI 上传：同源与路径校验、现有目标、本地原子提交、S3 条件预签名与保存验证、进程内任务状态，以及消费照片处理结果来判断完成与重试。 |
 | `auth.go` | 校验用户名、密码和动态码（请求体最多 16 KiB，只读请求体），按 IP 输错锁定，生成签名 Cookie（经 HTTPS 时带 Secure），只放行本站路径作为登录后的返回地址，保护需要登录的页面和接口；退出登录删除当前设备的 Cookie 并请浏览器清本站缓存。 |
 | `totp.go` | 两步验证：动态码计算（RFC 6238）、密钥解析与生成，以及 `bijin two-step` 子命令的终端二维码和确认流程。 |
@@ -48,7 +50,7 @@
 | `frontend/app/layout.tsx` | Next.js 页面外壳、元数据和首屏主题/侧栏偏好脚本，不请求用户数据。 |
 | `frontend/app/page.tsx`、`frontend/app/login/page.tsx` | 首页与登录页静态导出入口。 |
 | `frontend/components/album-app.tsx` | 标题、导航、网站标题折叠交互、按需加载设置页、上传页、整理页与视图选择；侧栏底部退出登录，其他标签页退出或返回键恢复旧页面时转到登录页。 |
-| `frontend/components/photo-gallery.tsx` | 游标分页、虚拟瀑布流、hash 大图、键盘/触摸切换、焦点和滚动恢复。 |
+| `frontend/components/photo-gallery.tsx` | 游标分页、虚拟瀑布流、hash 大图、键盘/触摸切换、焦点和滚动恢复；已分享筛选切换重置分页，停止后移出筛选结果。 |
 | `frontend/components/albums.tsx` | 文件夹相册封面、数量、「作者 · 模特」、作者 / 模特多选筛选（本次访问内保留）、排序工具（名称 / 作者 / 模特 / 添加日期与升降序）、空态与重试。 |
 | `frontend/components/option-select.tsx` | 基于 Base UI Select 的单选下拉，与名字下拉同一套弹层样式；用于相册排序、整理页的填写情况、设置页的寻址方式和上传页的保存位置；项目里不再使用原生下拉。 |
 | `frontend/lib/album-organizer.ts` | 整理相册 deep module：已确认资料 + 未确认意图的最新预览、临时人物身份、页面内统一顺序、明确拒绝、待确认 / 核对 / 原编号重试与保存状态。 |
@@ -57,6 +59,7 @@
 | `frontend/components/person-picker.tsx` | 基于 Base UI Combobox 的名字下拉：筛选、复用已有名字、输入新建（用作筛选时只选不建），作者单选、模特多选，可全程用键盘操作。 |
 | `frontend/lib/albums.ts` | 相册排序规则（中文排序器、没填的排最后）、作者 / 模特与填写情况筛选、按相册统计名单、排序与筛选偏好的读写和「作者 · 模特」文字。 |
 | `frontend/lib/names.ts` | 名字清理与比较：身份与服务器同一规则（只忽略英文字母大小写），输入筛选忽略全部大小写；整理 module、名字下拉、相册筛选共用。 |
+| `frontend/components/photo-sharing.tsx` | 大图中的原图分享：状态、复制 / 停止、Safari 点击内发起的异步剪贴板、手动复制、响应协议校验与写回答丢失后的核对、关闭 / 切图取消旧操作。 |
 | `frontend/components/settings-panel.tsx` | 来源卡片、校验表单、添加/编辑/测试/删除对象存储、大图直连与浏览器访问地址、上传通知状态、随机壁纸卡片（数量与可复制的接口地址）；扫描中短时刷新。 |
 | `frontend/components/upload-panel.tsx` | 上传页：读取保存位置、选择 / 拖入文件、显示批次与操作；离开提醒读取 module 的待完成事实。 |
 | `frontend/lib/upload-batch.ts` | 上传批次 module：名单与位置、四路执行、停止、保存核对、续查 / 处理重试、失效与旧回调隔离；`hold()` 协调浏览器离开决定，暂缓后续请求。 |
@@ -71,6 +74,8 @@
 | `frontend/package.json`、`frontend/package-lock.json`、`frontend/components.json` | 前端依赖、可复现安装与 shadcn 配置。 |
 
 ## 测试
+
+原图分享的行为验收见 `sharing_test.go`（真实本地 / S3 字节、生命周期、并发、临时故障、元数据不变与读取中换图、分页及门禁）和 `frontend/tests/sharing.spec.ts`（Chromium / WebKit 的真实复制、外站引用、手动复制、回答丢失、筛选与手机布局）。
 
 | 文件 | 作用 |
 |---|---|

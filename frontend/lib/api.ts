@@ -32,7 +32,7 @@ export async function api<T>(path: string, options: RequestInit = {}): Promise<T
 
 export interface ScanState { scanning: boolean; queued: boolean; lastAt?: string; lastErr?: string; seen: number; failed: number; ready: number }
 export interface SourceStatus { at: string; seen: number; err?: string }
-export interface Photo { id: number; w: number; h: number; name: string; title: string; format: string; size: number; thumb: string; src: string; mtime: number; date: string; year: number }
+export interface Photo { id: number; w: number; h: number; name: string; title: string; format: string; size: number; thumb: string; src: string; mtime: number; date: string; year: number; version: string }
 export interface PersonRef { id: number; name: string }
 export interface Person extends PersonRef { albums: number }
 export interface People { authors: Person[]; models: Person[]; stale: number }

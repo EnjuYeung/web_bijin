@@ -98,6 +98,27 @@ func (s *store) photoIndex() (*photoIndex, error) {
 	})
 }
 
+func (s *store) sharedPhotoIndex() (*photoIndex, error) {
+	return s.cache.sharedIndex.get(&s.cache.shareRevision, func(snapshot uint64) (*photoIndex, error) {
+		rows, err := s.db.Query("SELECT id, album_path FROM photos WHERE " + visiblePhotos + " AND " + sharedPhotos)
+		if err != nil {
+			return nil, err
+		}
+		defer rows.Close()
+		index := &photoIndex{snapshot: snapshot, albums: make(map[string][]int64)}
+		for rows.Next() {
+			var id int64
+			var album string
+			if err := rows.Scan(&id, &album); err != nil {
+				return nil, err
+			}
+			index.ids = append(index.ids, id)
+			index.albums[album] = append(index.albums[album], id)
+		}
+		return index, rows.Err()
+	})
+}
+
 type rankedPhoto struct {
 	rank uint64
 	id   int64
@@ -106,10 +127,15 @@ type photoOrderKey struct {
 	snapshot uint64
 	seed     int64
 	album    string
+	shared   bool
 }
 
 func (s *store) photoOrder(index *photoIndex, seed int64, album string) ([]rankedPhoto, error) {
-	key := photoOrderKey{index.snapshot, seed, album}
+	return s.photoOrderFiltered(index, seed, album, false)
+}
+
+func (s *store) photoOrderFiltered(index *photoIndex, seed int64, album string, shared bool) ([]rankedPhoto, error) {
+	key := photoOrderKey{index.snapshot, seed, album, shared}
 	return s.cache.orders.get(key, photoOrderLimits, func() ([]rankedPhoto, error) {
 		ids := index.ids
 		if album != "" {
@@ -127,6 +153,10 @@ func (s *store) photoOrder(index *photoIndex, seed int64, album string) ([]ranke
 }
 
 func (s *store) photosByIDs(order []rankedPhoto, album string) (map[int64]photo, error) {
+	return s.photosByIDsFiltered(order, album, false)
+}
+
+func (s *store) photosByIDsFiltered(order []rankedPhoto, album string, shared bool) (map[int64]photo, error) {
 	out := make(map[int64]photo, len(order))
 	if len(order) == 0 {
 		return out, nil
@@ -140,6 +170,9 @@ func (s *store) photosByIDs(order []rankedPhoto, album string) (map[int64]photo,
 	if album != "" {
 		query += " AND album_path = ?"
 		args = append(args, album)
+	}
+	if shared {
+		query += " AND " + sharedPhotos
 	}
 	rows, err := s.db.Query(query, args...)
 	if err != nil {
@@ -159,11 +192,19 @@ func (s *store) photosByIDs(order []rankedPhoto, album string) (map[int64]photo,
 }
 
 func (s *store) photoPage(seed int64, album string, afterRank uint64, afterID int64, limit int) ([]photo, int, *string, error) {
-	index, err := s.photoIndex()
+	return s.photoPageFiltered(seed, album, afterRank, afterID, limit, false)
+}
+
+func (s *store) photoPageFiltered(seed int64, album string, afterRank uint64, afterID int64, limit int, shared bool) ([]photo, int, *string, error) {
+	load := s.photoIndex
+	if shared {
+		load = s.sharedPhotoIndex
+	}
+	index, err := load()
 	if err != nil {
 		return nil, 0, nil, err
 	}
-	order, err := s.photoOrder(index, seed, album)
+	order, err := s.photoOrderFiltered(index, seed, album, shared)
 	if err != nil {
 		return nil, 0, nil, err
 	}
@@ -179,7 +220,7 @@ func (s *store) photoPage(seed int64, album string, afterRank uint64, afterID in
 	for consumed < len(order) && len(photos) < limit {
 		end := min(consumed+limit-len(photos), len(order))
 		batch := order[consumed:end]
-		found, err := s.photosByIDs(batch, album)
+		found, err := s.photosByIDsFiltered(batch, album, shared)
 		if err != nil {
 			return nil, 0, nil, err
 		}
