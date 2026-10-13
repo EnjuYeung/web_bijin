@@ -7,6 +7,7 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Field, FieldGroup, FieldLabel } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
+import { sharingChanged } from "@/lib/share-batches";
 import { Spinner } from "@/components/ui/spinner";
 
 interface ShareState { active: boolean; generation: number; version: string; path: string }
@@ -51,7 +52,8 @@ export function PhotoSharing({ photo, enabled, onStopped }: { photo: Photo; enab
     lifetime.current = controller;
     busy.current = false; setPending(false); setState(null); setManual(""); setCopied(false); setNotice("");
     if (enabled) load();
-    return () => controller.abort();
+    const updated = () => { if (enabled && !busy.current) load(); }; addEventListener("bijin-sharing-changed", updated);
+    return () => { controller.abort(); removeEventListener("bijin-sharing-changed", updated); };
   }, [enabled, load]);
   useEffect(() => {
     if (!copied) return;
@@ -81,7 +83,7 @@ export function PhotoSharing({ photo, enabled, onStopped }: { photo: Photo; enab
         body: JSON.stringify({ generation: state.generation, version: photo.version }),
       });
       if (signal.aborted) { rejectText?.(new Error("照片已关闭")); return; }
-      setState(next);
+      setState(next); sharingChanged();
       if (stop) { setNotice("已停止分享，旧链接不再接受新访问。"); onStopped(); return; }
       const address = new URL(next.path, location.origin).href;
       resolveText?.(new Blob([address], { type: "text/plain" }));

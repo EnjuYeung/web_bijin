@@ -9,22 +9,26 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "@/components/ui/empty";
 import { GallerySkeleton } from "@/components/gallery-skeleton";
 import { PhotoSharing } from "@/components/photo-sharing";
+import { BatchSharing } from "@/components/batch-sharing";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Field, FieldGroup, FieldLabel } from "@/components/ui/field";
 
 function photoHash() { const match = /^#p\/(\d+)$/.exec(location.hash); return match ? Number(match[1]) : null; }
 
 export function PhotoGallery({ album, onCount, onTitle }: { album: string | null; onCount: (total: number) => void; onTitle: (title: string) => void }) {
+  const [sharingRevision, setSharingRevision] = useState(0);
   const [sharedOnly, setSharedOnly] = useState(false);
   useEffect(() => { setSharedOnly(new URLSearchParams(location.search).get("shared") === "1"); }, []);
+  useEffect(() => { let dirty = false; const changed = () => { if (photoHash()) { dirty = true; return; } setSharingRevision(n => n + 1); }; const closed = () => { if (dirty && !photoHash()) { dirty = false; setSharingRevision(n => n + 1); } }; addEventListener("bijin-sharing-changed", changed); addEventListener("popstate", closed); addEventListener("hashchange", closed); return () => { removeEventListener("bijin-sharing-changed", changed); removeEventListener("popstate", closed); removeEventListener("hashchange", closed); }; }, []);
   return <>
+    <BatchSharing albums={album === null ? [] : [album]} />
     <FieldGroup className="mb-4"><Field orientation="horizontal" className="w-fit"><Checkbox id="shared-only" checked={sharedOnly} onCheckedChange={checked => {
       setSharedOnly(checked);
       const url = new URL(location.href);
       if (checked) url.searchParams.set("shared", "1"); else url.searchParams.delete("shared");
       history.replaceState(history.state, "", url);
     }} /><FieldLabel htmlFor="shared-only">只看已分享</FieldLabel></Field></FieldGroup>
-    <Gallery key={`${album ?? "all"}:${sharedOnly}`} album={album} sharedOnly={sharedOnly} onCount={onCount} onTitle={onTitle} />
+    <Gallery key={`${album ?? "all"}:${sharedOnly}:${sharedOnly ? sharingRevision : 0}`} album={album} sharedOnly={sharedOnly} onCount={onCount} onTitle={onTitle} />
   </>;
 }
 

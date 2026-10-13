@@ -30,7 +30,9 @@ func newRouter(st *store, sc *scanner, thumbs *thumbCache, sources *sourceSet, t
 
 	mux := http.NewServeMux()
 	newUploadAPI(st, sc, sources).routes(mux, gate)
-	newShareAPI(st, sources, filepath.Join(filepath.Dir(thumbs.dir), ".share-tmp")).routes(mux, gate)
+	sharing := newShareAPI(st, sources, filepath.Join(filepath.Dir(thumbs.dir), ".share-tmp"))
+	sharing.routes(mux, gate)
+	newBatchAPI(sharing).routes(mux, gate)
 	(&organizeAPI{store: st}).routes(mux, gate)
 	// Public for Compose and the page's time zone only. Scan progress and its
 	// errors name internal hosts and files, so they stay behind login.
@@ -234,7 +236,13 @@ func handleAlbums(w http.ResponseWriter, r *http.Request, st *store, sc *scanner
 		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "list failed"})
 		return
 	}
+	counts, err := st.albumShareCounts()
+	if err != nil {
+		writeJSON(w, 500, map[string]string{"error": "list failed"})
+		return
+	}
 	type item struct {
+		Shared    int       `json:"shared"`
 		ID        string    `json:"id"`
 		Name      string    `json:"name"`
 		Count     int       `json:"count"`
@@ -247,6 +255,7 @@ func handleAlbums(w http.ResponseWriter, r *http.Request, st *store, sc *scanner
 	for _, a := range albums {
 		added, _ := formatDateInTZ(a.Added, tz)
 		out = append(out, item{
+			Shared:      counts[a.ID],
 			ID:          a.ID,
 			Name:        a.Name,
 			Count:       a.Count,

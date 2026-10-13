@@ -37,7 +37,7 @@ export interface PersonRef { id: number; name: string }
 export interface Person extends PersonRef { albums: number }
 export interface People { authors: Person[]; models: Person[]; stale: number }
 export interface AlbumPeople { author: PersonRef | null; models: PersonRef[] }
-export interface Album extends AlbumPeople { id: string; name: string; count: number; cover: Photo; added: number; addedDate: string }
+export interface Album extends AlbumPeople { id: string; name: string; count: number; shared: number; cover: Photo; added: number; addedDate: string }
 export interface PhotoPage { photos: Photo[]; total: number; next?: string; seed: string; tz: string; status: ScanState; album?: { id: string; name: string } }
 export interface AlbumPage { albums: Album[]; total: number; tz: string; status: ScanState }
 export interface StorageInput {

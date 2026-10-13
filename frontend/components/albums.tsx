@@ -8,6 +8,10 @@ import { nameIdentity } from "@/lib/names";
 import { GallerySkeleton } from "@/components/gallery-skeleton";
 import { OptionSelect } from "@/components/option-select";
 import { PersonPicker } from "@/components/person-picker";
+import { BatchSharing } from "@/components/batch-sharing";
+import { Checkbox } from "@/components/ui/checkbox";
+import { Field, FieldGroup, FieldLabel } from "@/components/ui/field";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "@/components/ui/empty";
@@ -17,6 +21,7 @@ const sortChoices = (Object.keys(sortLabels) as AlbumSortKey[]).map(key => ({ va
 const known = (chosen: string[], list: Person[]) => chosen.filter(name => list.some(person => nameIdentity(person.name) === nameIdentity(name)));
 
 export function Albums({ onCount }: { onCount: (count: number) => void }) {
+  const [selected, setSelected] = useState<string[]>([]);
   const [data, setData] = useState<AlbumPage | null>(null);
   const [error, setError] = useState("");
   const [revision, setRevision] = useState(0);
@@ -32,11 +37,12 @@ export function Albums({ onCount }: { onCount: (count: number) => void }) {
     }).catch(err => { if (!controller.signal.aborted) setError(err.message); });
     return () => controller.abort();
   }, [onCount, revision]);
+  useEffect(() => { const sync = () => setRevision(n => n + 1); addEventListener("bijin-sharing-changed", sync); return () => removeEventListener("bijin-sharing-changed", sync); }, []);
   const names = useMemo(() => albumNames(data?.albums ?? []), [data]);
   const active = useMemo(() => data ? { authors: known(filter.authors, names.authors), models: known(filter.models, names.models) } : filter, [data, filter, names]);
   const albums = useMemo(() => data ? sortAlbums(data.albums.filter(album => matchesFilter(album, active)), sort) : [], [data, active, sort]);
   function change(next: AlbumSort) { setSort(next); writeAlbumSort(next); }
-  function changeFilter(next: AlbumFilter) { setFilter(next); writeAlbumFilter(next); }
+  function changeFilter(next: AlbumFilter) { setSelected([]); setFilter(next); writeAlbumFilter(next); }
   const flipped: AlbumSort = { ...sort, direction: sort.direction === "asc" ? "desc" : "asc" };
   const order = `顺序：${directionLabel(sort)}，点击改为${directionLabel(flipped)}`;
 
@@ -58,14 +64,16 @@ export function Albums({ onCount }: { onCount: (count: number) => void }) {
         </Button>
       </div>
     </div>
+    <FieldGroup className="my-4"><Field orientation="horizontal"><Checkbox id="select-albums" checked={albums.length > 0 && albums.every(a => selected.includes(a.id))} indeterminate={selected.length > 0 && !albums.every(a => selected.includes(a.id))} onCheckedChange={checked => setSelected(checked ? albums.map(a => a.id) : [])} /><FieldLabel htmlFor="select-albums">全选当前列表</FieldLabel></Field></FieldGroup>
+    <BatchSharing albums={selected} />
     {filtered && <p id="album-filter-note" className="album-filter-note" role="status">筛选后 {albums.length} / {data.total} 本<Button variant="ghost" onClick={() => changeFilter(emptyFilter)}><X aria-hidden="true" data-icon="inline-start" />清除筛选</Button></p>}
     {albums.length ? <div id="album-grid" className="album-grid">
       {albums.map(album => {
         const people = peopleText(album);
-        return <a key={album.id} className="album-card" href={"/?album=" + encodeURIComponent(album.id)} title={album.id === "." ? album.name : album.id} aria-label={`${album.name}，${album.count} 张照片${people ? "，" + people : ""}`}>
+        return <div key={album.id} className="album-select-card"><FieldGroup className="album-checkbox"><Field orientation="horizontal"><Checkbox id={"album-choice-" + album.id} aria-label={"选择相册「" + album.id + "」"} checked={selected.includes(album.id)} onCheckedChange={checked => setSelected(list => checked ? [...list, album.id] : list.filter(id => id !== album.id))} /><FieldLabel htmlFor={"album-choice-" + album.id}><span aria-hidden="true">选择</span><span className="sr-only">选择相册「{album.id}」</span></FieldLabel></Field></FieldGroup><a className="album-card" href={"/?album=" + encodeURIComponent(album.id)} title={album.id === "." ? album.name : album.id} aria-label={`${album.name}，${album.count} 张照片${people ? "，" + people : ""}`}>
           <img src={album.cover.thumb} alt="" width={album.cover.w} height={album.cover.h} loading="lazy" decoding="async" />
-          <span className="album-meta"><strong>{album.name}</strong>{people && <span className="album-people">{people}</span>}<small>{album.count.toLocaleString("zh-CN")} 张照片</small></span>
-        </a>;
+          <span className="album-meta"><strong>{album.name}</strong>{people && <span className="album-people">{people}</span>}<small>{album.count.toLocaleString("zh-CN")} 张照片</small><Badge variant="secondary" className="max-w-full whitespace-normal">{album.shared === 0 ? "未分享" : album.shared === album.count ? "全部已分享" : "部分已分享"} · {album.shared}/{album.count}</Badge></span>
+        </a></div>;
       })}
     </div> : <Empty><EmptyHeader><EmptyMedia variant="icon"><SearchX aria-hidden="true" /></EmptyMedia><EmptyTitle>没有符合条件的相册</EmptyTitle><EmptyDescription>换一个作者或模特试试，或者清除筛选。</EmptyDescription></EmptyHeader></Empty>}
   </>;

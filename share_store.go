@@ -92,36 +92,47 @@ func (s *store) saveShare(p photo, expected int64, fresh photoShare) (photoShare
 		return photoShare{}, err
 	}
 	defer tx.Rollback()
+	sh, changed, err := s.writeShare(tx, p, expected, fresh, true)
+	if err != nil && !changed {
+		return photoShare{}, err
+	}
+	if commitErr := tx.Commit(); commitErr != nil {
+		return photoShare{}, commitErr
+	}
+	if changed {
+		s.cache.shareRevision.Add(1)
+	}
+	return sh, err
+}
+
+// A batch does not converge with newer single-photo writes: their intent wins.
+func (s *store) writeShare(tx *sql.Tx, p photo, expected int64, fresh photoShare, converge bool) (photoShare, bool, error) {
 	var matches int
-	err = tx.QueryRow(`SELECT COUNT(*) FROM photos WHERE id = ? AND rel_path = ?
+	err := tx.QueryRow(`SELECT COUNT(*) FROM photos WHERE id = ? AND rel_path = ?
  AND source_version = ? AND size = ? AND mtime_unix = ? AND `+visiblePhotos,
 		p.ID, p.sourceKey(), p.SourceVersion, p.Size, p.MtimeUnix).Scan(&matches)
 	if err != nil {
-		return photoShare{}, err
+		return photoShare{}, false, err
 	}
 	if matches != 1 {
-		return photoShare{}, errSourceChanged
+		return photoShare{}, false, errSourceChanged
 	}
 	current, err := scanShare(tx.QueryRow("SELECT "+shareColumns+" FROM photo_shares WHERE photo_id = ?", p.ID), p.ID)
 	if err != nil {
-		return photoShare{}, err
+		return photoShare{}, false, err
 	}
 	// Two copies that started with the same inactive generation converge.
-	if current.Generation != expected && !(current.Token != "" && current.Generation == expected+1) {
-		return photoShare{}, errShareStateChanged
+	if current.Generation != expected && !(converge && current.Token != "" && current.Generation == expected+1) {
+		return photoShare{}, false, errShareStateChanged
 	}
 	if current.Token != "" {
 		if current.Digest != fresh.Digest || current.Scope != fresh.Scope || current.SourceKey != fresh.SourceKey || current.SourceVersion != fresh.SourceVersion {
 			if _, err = tx.Exec("UPDATE photo_shares SET token = NULL, generation = generation + 1 WHERE photo_id = ?", p.ID); err != nil {
-				return photoShare{}, err
+				return photoShare{}, false, err
 			}
-			if err = tx.Commit(); err != nil {
-				return photoShare{}, err
-			}
-			s.cache.shareRevision.Add(1)
-			return photoShare{}, errSourceChanged
+			return photoShare{}, true, errSourceChanged
 		}
-		return current, nil
+		return current, false, nil
 	}
 	fresh.PhotoID, fresh.Generation = p.ID, current.Generation+1
 	_, err = tx.Exec(`INSERT INTO photo_shares
@@ -133,13 +144,9 @@ func (s *store) saveShare(p photo, expected int64, fresh photoShare) (photoShare
 		fresh.PhotoID, fresh.Token, fresh.Generation, fresh.SourceKey, fresh.SourceVersion,
 		fresh.Scope, fresh.Digest, fresh.MIME, fresh.Extension, fresh.Size)
 	if err != nil {
-		return photoShare{}, err
+		return photoShare{}, false, err
 	}
-	if err = tx.Commit(); err != nil {
-		return photoShare{}, err
-	}
-	s.cache.shareRevision.Add(1)
-	return fresh, nil
+	return fresh, true, nil
 }
 
 func (s *store) stopShare(id, expected int64) (photoShare, error) {
@@ -148,26 +155,36 @@ func (s *store) stopShare(id, expected int64) (photoShare, error) {
 		return photoShare{}, err
 	}
 	defer tx.Rollback()
-	current, err := scanShare(tx.QueryRow("SELECT "+shareColumns+" FROM photo_shares WHERE photo_id = ?", id), id)
-	if err != nil {
-		return photoShare{}, err
-	}
-	if current.Token == "" && (current.Generation == expected || current.Generation == expected+1) {
-		return current, nil
-	}
-	if current.Generation != expected {
-		return photoShare{}, errShareStateChanged
-	}
-	_, err = tx.Exec("UPDATE photo_shares SET token = NULL, generation = generation + 1 WHERE photo_id = ?", id)
+	sh, changed, err := s.writeStopShare(tx, id, expected)
 	if err != nil {
 		return photoShare{}, err
 	}
 	if err = tx.Commit(); err != nil {
 		return photoShare{}, err
 	}
+	if changed {
+		s.cache.shareRevision.Add(1)
+	}
+	return sh, nil
+}
+
+func (s *store) writeStopShare(tx *sql.Tx, id, expected int64) (photoShare, bool, error) {
+	current, err := scanShare(tx.QueryRow("SELECT "+shareColumns+" FROM photo_shares WHERE photo_id = ?", id), id)
+	if err != nil {
+		return photoShare{}, false, err
+	}
+	if current.Token == "" && (current.Generation == expected || current.Generation == expected+1) {
+		return current, false, nil
+	}
+	if current.Generation != expected {
+		return photoShare{}, false, errShareStateChanged
+	}
+	_, err = tx.Exec("UPDATE photo_shares SET token = NULL, generation = generation + 1 WHERE photo_id = ?", id)
+	if err != nil {
+		return photoShare{}, false, err
+	}
 	current.Token, current.Generation = "", current.Generation+1
-	s.cache.shareRevision.Add(1)
-	return current, nil
+	return current, true, nil
 }
 
 func (sh photoShare) path() string {
