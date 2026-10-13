@@ -43,6 +43,16 @@ export function BatchSharing({ albums }: { albums: string[] }) {
     }, 2000);
     return () => { disposed = true; clearTimeout(timeout); };
   }, [current]);
+  useEffect(() => {
+    // Viewing an older result must not stop observing the active task.
+    if (current?.status === "running" || !tasks.some(t => t.status === "running")) return;
+    let disposed = false;
+    const timeout = setTimeout(async () => {
+      try { const list = await listBatches(); if (disposed || !alive.current) return; setTasks(list); sharingChanged(); }
+      catch (err) { if (!disposed && alive.current) { setError(err instanceof Error ? err.message : "任务状态暂时无法读取。"); setTasks(list => [...list]); } }
+    }, 2000);
+    return () => { disposed = true; clearTimeout(timeout); };
+  }, [current, tasks]);
   const running = tasks.some(t => t.status === "running") || current?.status === "running";
 
   async function prepare(mode: "open" | "stop") {
@@ -96,7 +106,7 @@ export function BatchSharing({ albums }: { albums: string[] }) {
     </div>}
     {current && <div className="batch-result">
       <div className="flex flex-wrap items-center gap-2"><Badge variant="secondary">{batchLabels[current.status]}</Badge><span>{current.mode === "open" ? "开启" : "停止"}分享 · {current.albums.length} 本相册</span></div>
-      {tasks.length > 1 && <OptionSelect id="share-task" label="查看批量任务" value={current.id} choices={tasks.map(t => ({ value: t.id, label: `${new Date(t.created * 1000).toLocaleString("zh-CN")} · ${t.mode === "open" ? "开启" : "停止"} · ${batchLabels[t.status]}` }))} onChange={id => { setManual([]); setNotice(""); refresh(id).catch(err => setError(err.message)); }} />}
+      {tasks.length > 1 && <OptionSelect id="share-task" label="查看批量任务" disabled={pending} value={current.id} choices={tasks.map(t => ({ value: t.id, label: `${new Date(t.created * 1000).toLocaleString("zh-CN")} · ${t.mode === "open" ? "开启" : "停止"} · ${batchLabels[t.status]}` }))} onChange={id => { setManual([]); setNotice(""); refresh(id).catch(err => setError(err.message)); }} />}
       <p role="status" aria-atomic="true">已处理 {current.done} / {current.total} 张 · 成功 {current.succeeded} · 失败 {current.failed}{current.status === "interrupted" ? "，应用重启后未自动续跑，请重试剩余项。" : ""}</p>
       <progress max={Math.max(1, current.total)} value={current.done} aria-label="批量分享进度" />
       <div className="flex flex-wrap gap-2">

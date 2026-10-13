@@ -112,3 +112,21 @@ test("select all only selects filtered albums and a filter change clears hidden 
   await page.getByRole("checkbox", { name: "全选当前列表", exact: true }).check();
   const task = await begin(page, "open"); expect(task.albums).toEqual(["batch"]); await finish(page, task.id);
 });
+
+
+test("viewing an older result still observes the active task and releases batch controls when it finishes", async ({ page }) => {
+  const previous = await (await page.request.post("/api/share-batches/prepare", { data: { mode: "stop", albums: ["misc"] } })).json();
+  await page.request.post(`/api/share-batches/${previous.id}/start`, { data: { revision: previous.revision } }); await finish(page, previous.id);
+  const next = await (await page.request.post("/api/share-batches/prepare", { data: { mode: "open", albums: ["misc"] } })).json();
+  await page.request.post(`/api/share-batches/${next.id}/start`, { data: { revision: next.revision } }); await finish(page, next.id);
+  let hold = true;
+  await page.route("**/api/share-batches", async route => { const response = await route.fetch(); const data = await response.json(); if (hold) data.tasks.find((t: { id: string }) => t.id === next.id).status = "running"; await route.fulfill({ response, json: data }); });
+  await page.route(`**/api/share-batches/${next.id}`, async route => { const response = await route.fetch(); const data = await response.json(); if (hold) data.status = "running"; await route.fulfill({ response, json: data }); });
+  await page.goto("/?album=misc");
+  await expect(page.getByRole("button", { name: "批量开启分享", exact: true })).toBeDisabled();
+  await page.getByRole("combobox", { name: "查看批量任务", exact: true }).click();
+  await page.getByRole("option", { name: /停止/ }).first().click();
+  await expect(page.locator(".batch-result")).toContainText("停止分享");
+  hold = false;
+  await expect(page.getByRole("button", { name: "批量开启分享", exact: true })).toBeEnabled();
+});
