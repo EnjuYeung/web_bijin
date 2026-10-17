@@ -8,6 +8,16 @@ import { cleanName, nameIdentity, searchKey } from "@/lib/names";
 
 interface Option { name: string; albums?: number; create?: boolean }
 
+// Base UI's Escape on a closed list also empties the chosen names. Here
+// Escape only closes the list or drops the typed text; names are removed with
+// their own ✕ buttons. A model box clears its text before the cancel; a
+// closed author box keeps showing the chosen name.
+function keptOnEscape(details: Combobox.Root.ChangeEventDetails) {
+  if (details.reason !== "escape-key") return false;
+  details.cancel();
+  return true;
+}
+
 // PersonPicker chooses existing names or adds the typed one. Authors take one
 // name, models several; onChange receives the complete new list of names.
 // Filters pass create={false}: they only pick from names already in use.
@@ -73,7 +83,7 @@ export function PersonPicker({ id, label, placeholder, people, value, multiple =
   const trigger = <Combobox.Trigger className="person-icon" aria-label={"展开" + label}><ChevronDown aria-hidden="true" /></Combobox.Trigger>;
 
   if (multiple) return <Combobox.Root {...shared} multiple value={selected} inputValue={query} onInputValueChange={next => setQuery(next)}
-    onValueChange={(next: Option[]) => { choose(next); setQuery(""); }}>
+    onValueChange={(next: Option[], details) => { if (keptOnEscape(details)) return; choose(next); setQuery(""); }}>
     <Combobox.InputGroup className="person-field" data-multiple="">
       <Combobox.Value>{(current: Option[]) => <Combobox.Chips className="person-chips">
         {current.map(option => <Combobox.Chip key={option.name} className="person-chip" aria-label={option.name}>
@@ -86,8 +96,8 @@ export function PersonPicker({ id, label, placeholder, people, value, multiple =
     </Combobox.InputGroup>
     {popup}
   </Combobox.Root>;
-  return <Combobox.Root {...shared} value={selected[0] ?? null} onInputValueChange={next => setQuery(next)}
-    onValueChange={(next: Option | null) => choose(next ? [next] : [])}>
+  return <Combobox.Root {...shared} value={selected[0] ?? null} onInputValueChange={(next, details) => { if (!keptOnEscape(details)) setQuery(next); }}
+    onValueChange={(next: Option | null, details) => { if (!keptOnEscape(details)) choose(next ? [next] : []); }}>
     <Combobox.InputGroup className="person-field">
       <Combobox.Input id={id} aria-label={label} placeholder={placeholder} className="person-input" onKeyDown={onKeyDown} />
       {selected.length > 0 && !disabled && <Combobox.Clear className="person-icon" aria-label={"清除" + label}><X aria-hidden="true" /></Combobox.Clear>}

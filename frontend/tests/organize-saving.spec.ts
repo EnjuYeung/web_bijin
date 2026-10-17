@@ -205,3 +205,52 @@ test("saving 06 pending edits guard page changes, tab close and logout; saved ed
   await page.locator("#nav-albums").click();
   await expect(page.locator("#page-title")).toHaveText("相册");
 });
+
+test("saving 07 Escape closes the list or drops typing and never clears saved names", async ({ page }) => {
+  const writes: Wire[] = [];
+  page.on("request", request => {
+    if (request.method() === "POST" && new URL(request.url()).pathname === "/api/organize") writes.push(request.postDataJSON());
+  });
+  await page.goto("/?view=organize");
+  const misc = row(page, "misc");
+  const author = misc.getByRole("combobox", { name: "「misc」的作者" });
+  // The reported steps: add a new model from its 「添加」 option, then Escape.
+  await modelBox(page).fill("Probe Name");
+  await page.getByRole("option", { name: "添加「Probe Name」" }).click();
+  await expect(misc.locator(".organize-status")).toHaveText("已保存");
+  await page.keyboard.press("Escape");
+  await expect(misc.locator(".person-chip")).toHaveText(["Probe Name"]);
+  // The single-name author box: chosen with Enter, then Escape.
+  await pick(page, "「misc」的作者", "Studio A");
+  await expect(misc.locator(".organize-status")).toHaveText("已保存");
+  await author.press("Escape");
+  await expect(author).toHaveValue("Studio A");
+  const sent = writes.length;
+  for (const box of [modelBox(page), author]) {
+    // With the list closed, and after typing: Escape drops only the typed text.
+    await box.press("Escape"); await box.press("Escape");
+    await box.fill("Draft");
+    await expect(page.getByRole("option", { name: "添加「Draft」" })).toBeVisible();
+    await box.press("Escape");
+    await expect(page.getByRole("option")).toHaveCount(0);
+    await box.press("Escape");
+  }
+  await expect(modelBox(page)).toHaveValue("");
+  await expect(author).toHaveValue("Studio A");
+  await expect(misc.locator(".person-chip")).toHaveText(["Probe Name"]);
+  await expect(misc.locator(".organize-status")).toHaveText("已保存");
+  expect(writes.slice(sent)).toEqual([]);
+  expect(writes.map(wire => wire.models ?? wire.author)).toEqual([["Probe Name"], "Studio A"]);
+  // Filters use the same box: Escape keeps the chosen filter names too.
+  const modelFilter = page.getByRole("combobox", { name: "按模特筛选" });
+  await modelFilter.click();
+  await page.getByRole("option", { name: /^Probe Name/ }).click();
+  await expect(page.locator("#organize-count")).toHaveText(/^显示 1 \//);
+  await modelFilter.press("Escape"); await modelFilter.press("Escape");
+  await expect(page.locator(".organize-filters .person-chip")).toHaveText(["Probe Name"]);
+  await expect(page.locator("#organize-count")).toHaveText(/^显示 1 \//);
+  await page.reload();
+  await expect(row(page, "misc").locator(".person-chip")).toHaveText(["Probe Name"]);
+  await expect(author).toHaveValue("Studio A");
+  expect(await actualModels(page)).toEqual(["Probe Name"]);
+});
