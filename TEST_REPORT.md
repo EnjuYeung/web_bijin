@@ -1,6 +1,6 @@
 # 最近一次测试报告
 
-2026-10-17 14:40:45 CST：发布前合并验收。合并提交 `2c589db` 包含两部分：整理页识别建议 `a345e41`（方案见 `docs/album-recognition-plan.md`），以及名字下拉按 Esc 不再清空已选名字 `1bb7b56`。基线 `7a56378`。用户已授权：合并后在隔离环境重跑全量测试，推送 master，部署生产，清理测试与旧镜像。
+2026-10-17 14:45:31 CST：合并验收、推送与生产部署（发布前验收完成于 14:40:45）。合并提交 `2c589db` 包含两部分：整理页识别建议 `a345e41`（方案见 `docs/album-recognition-plan.md`），以及名字下拉按 Esc 不再清空已选名字 `1bb7b56`。基线 `7a56378`。用户已授权：合并后在隔离环境重跑全量测试，推送 master，部署生产，清理测试与旧镜像。
 
 ## 测试环境
 
@@ -19,6 +19,12 @@
 | T05 | 干净数据下 `npx playwright test`（全量） | Chromium / WebKit 共 104 项通过，0 失败，5.2 分钟（原 94 项 + 识别 8 项 + Esc 2 项） |
 | T06 | `npx playwright test tests/logout.spec.ts --repeat-each=10` | 两浏览器共 120 项通过，0 失败，5.3 分钟 |
 | T07 | 截图人工复核（识别服务卡片、整理页建议，桌面与 320 px） | 与现有卡片同一风格；建议为虚线框，名字整词显示，「新名字」放不下时整体换行；无横向溢出 |
+| T08 | 推送：`git push origin master`（`93543c8` 只比 `2c589db` 多文档，代码逐文件一致） | GitHub master 为 `93543c8` |
+| T09 | 部署前：SQLite 在线备份到 `/root/bijin-backup-20261017-predeploy.db`（0600）并 `quick_check`，记录各表行数；当前镜像打回滚标签 | quick_check ok；photos 4288、photo_shares 4288、album_people 92、people 27、wallpapers 4333、storages 1、share_batches 3、share_batch_items 455、organize_receipts 11 |
+| T10 | 生产 `git pull --ff-only` 到 `93543c8`，`docker compose build && up -d` | 新镜像 `9b4e2fd4b4c3`，启动后 healthy、重启 0 次；启动扫描 4288 张、0 失败；日志只有 INFO；镜像内含「识别未填写的相册」与 Esc 修复 |
+| T11 | 部署后数据库核对 | quick_check ok；原有各表行数与部署前一致；新表 `recognizer` 已建、为空；数据库仍为 0600 |
+| T12 | 公网核对 `https://csb.jgbman.cc` | health 200、登录页 200；未登录首页 302 到登录，`/api/recognizer`、`/api/recognize`、`/api/settings` 401；随机壁纸 302；现有 503 个分享许可中抽查一个，HEAD 200 image/jpeg |
+| T13 | 清理 | 删除两个隔离目录、Playwright / Go / Node 测试镜像、3 个测试卷、回滚镜像（旧 `060e834b42e3`）与构建缓存，回收约 9.8 GB；netcup 只剩 bijin / RustFS / OpenResty；部署前数据库备份保留 |
 
 ## 业务验收
 
@@ -56,4 +62,4 @@
 - 未用真实 AI 服务测试（R15）：需要用户的 API Key。Gemini 兼容接口对 JSON Schema 的实际支持、各模型对推理强度的支持，需在设置页「测试」确认。
 - 未开启 `TestQueryScale` 10 万 / 20 万条可选压测；本次未改照片查询。
 - 测试全部在隔离目录进行；为设计方案只读取过生产数据库副本（读完即删）和照片文件头。
-- 结论：合并提交 `2c589db` 的功能与回归测试全部通过，可以推送并部署。
+- 结论：合并提交 `2c589db` 的功能与回归测试全部通过；`93543c8` 已推送并部署生产，生产 healthy，原有数据、配置与分享保留。识别服务需用户在设置页填入真实 Key 后才能使用和验收（R15）。
