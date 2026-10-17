@@ -1,5 +1,5 @@
 import { test, expect, type Page } from "@playwright/test";
-import { copyFile, mkdir, readFile, rm } from "node:fs/promises";
+import { copyFile, mkdir, readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 
 const photos = resolve("../photos");

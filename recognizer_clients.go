@@ -9,7 +9,6 @@ import (
 	"io"
 	"net/http"
 	"strings"
-	"time"
 	"unicode/utf8"
 
 	"github.com/anthropics/anthropic-sdk-go"
@@ -18,8 +17,10 @@ import (
 
 // Requests to the recognition service. Claude goes through its own Messages
 // API, where the JSON format and reasoning level are honored; every other
-// service uses the OpenAI chat format. Neither sends temperature: newer Claude
-// models reject values below 1, and the default suits extraction.
+// service uses the OpenAI chat format. Neither sends temperature: current
+// Claude models no longer take sampling settings (Opus 4.7 and later, Fable
+// and Sonnet 5 refuse any value, Sonnet 5.5 and Haiku 5.5 all but the
+// default), and the default suits extraction.
 
 const recognitionSystem = `You suggest the author and the models of photo albums from their folder paths.
 - An album is identified by its folder path relative to the photo library. Parent folders count too: "Azuki/Aug 2022" is an album of the model Azuki.
@@ -74,10 +75,6 @@ func (e *serviceError) status() int {
 		return http.StatusGatewayTimeout
 	}
 	return http.StatusBadGateway
-}
-
-func contextWithTimeout(r *http.Request, d time.Duration) (context.Context, context.CancelFunc) {
-	return context.WithTimeout(r.Context(), d)
 }
 
 // ask sends the prompt and returns the text of the answer.

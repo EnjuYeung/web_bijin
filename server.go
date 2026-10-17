@@ -166,7 +166,7 @@ func handleList(w http.ResponseWriter, r *http.Request, st *store, sc *scanner, 
 		selectedAlbum = &albumRef{ID: albumID, Name: albumDisplayName(albumID)}
 	}
 	shared := r.URL.Query().Get("shared") == "1"
-	photos, total, next, err := st.photoPageFiltered(seed, album, afterRank, afterID, limit, shared)
+	photos, total, next, err := st.photoPage(seed, album, afterRank, afterID, limit, shared)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "list failed"})
 		return
@@ -239,7 +239,7 @@ func handleAlbums(w http.ResponseWriter, r *http.Request, st *store, sc *scanner
 	}
 	counts, err := st.albumShareCounts()
 	if err != nil {
-		writeJSON(w, 500, map[string]string{"error": "list failed"})
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "list failed"})
 		return
 	}
 	type item struct {

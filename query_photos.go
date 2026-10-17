@@ -73,6 +73,7 @@ WHERE broken = 0 AND width > 0 AND height > 0;
 
 type photoIndex struct {
 	snapshot uint64
+	shared   bool // only the photos with an active share
 	ids      []int64
 	albums   map[string][]int64
 }
@@ -105,7 +106,7 @@ func (s *store) sharedPhotoIndex() (*photoIndex, error) {
 			return nil, err
 		}
 		defer rows.Close()
-		index := &photoIndex{snapshot: snapshot, albums: make(map[string][]int64)}
+		index := &photoIndex{snapshot: snapshot, shared: true, albums: make(map[string][]int64)}
 		for rows.Next() {
 			var id int64
 			var album string
@@ -131,11 +132,7 @@ type photoOrderKey struct {
 }
 
 func (s *store) photoOrder(index *photoIndex, seed int64, album string) ([]rankedPhoto, error) {
-	return s.photoOrderFiltered(index, seed, album, false)
-}
-
-func (s *store) photoOrderFiltered(index *photoIndex, seed int64, album string, shared bool) ([]rankedPhoto, error) {
-	key := photoOrderKey{index.snapshot, seed, album, shared}
+	key := photoOrderKey{index.snapshot, seed, album, index.shared}
 	return s.cache.orders.get(key, photoOrderLimits, func() ([]rankedPhoto, error) {
 		ids := index.ids
 		if album != "" {
@@ -152,11 +149,7 @@ func (s *store) photoOrderFiltered(index *photoIndex, seed int64, album string, 
 	}, func(order []rankedPhoto) int64 { return int64(len(order))*16 + int64(len(album)) + 128 })
 }
 
-func (s *store) photosByIDs(order []rankedPhoto, album string) (map[int64]photo, error) {
-	return s.photosByIDsFiltered(order, album, false)
-}
-
-func (s *store) photosByIDsFiltered(order []rankedPhoto, album string, shared bool) (map[int64]photo, error) {
+func (s *store) photosByIDs(order []rankedPhoto, album string, shared bool) (map[int64]photo, error) {
 	out := make(map[int64]photo, len(order))
 	if len(order) == 0 {
 		return out, nil
@@ -191,11 +184,9 @@ func (s *store) photosByIDsFiltered(order []rankedPhoto, album string, shared bo
 	return out, rows.Err()
 }
 
-func (s *store) photoPage(seed int64, album string, afterRank uint64, afterID int64, limit int) ([]photo, int, *string, error) {
-	return s.photoPageFiltered(seed, album, afterRank, afterID, limit, false)
-}
-
-func (s *store) photoPageFiltered(seed int64, album string, afterRank uint64, afterID int64, limit int, shared bool) ([]photo, int, *string, error) {
+// photoPage is one page of the gallery, of one album when album is set and of
+// the shared photos only when shared is set.
+func (s *store) photoPage(seed int64, album string, afterRank uint64, afterID int64, limit int, shared bool) ([]photo, int, *string, error) {
 	load := s.photoIndex
 	if shared {
 		load = s.sharedPhotoIndex
@@ -204,7 +195,7 @@ func (s *store) photoPageFiltered(seed int64, album string, afterRank uint64, af
 	if err != nil {
 		return nil, 0, nil, err
 	}
-	order, err := s.photoOrderFiltered(index, seed, album, shared)
+	order, err := s.photoOrder(index, seed, album)
 	if err != nil {
 		return nil, 0, nil, err
 	}
@@ -220,7 +211,7 @@ func (s *store) photoPageFiltered(seed int64, album string, afterRank uint64, af
 	for consumed < len(order) && len(photos) < limit {
 		end := min(consumed+limit-len(photos), len(order))
 		batch := order[consumed:end]
-		found, err := s.photosByIDsFiltered(batch, album, shared)
+		found, err := s.photosByIDs(batch, album, shared)
 		if err != nil {
 			return nil, 0, nil, err
 		}

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"errors"
@@ -26,10 +27,10 @@ const (
 	providerGrok   = "grok"
 	providerCustom = "custom"
 
-	maxRecognizeAlbums   = 20
-	maxRecognizeExamples = 300
-	maxRecognizerModel   = 100
-	maxRecognizerKey     = 1000
+	maxRecognizeAlbums    = 20
+	maxRecognizeExamples  = 300
+	maxRecognizerModel    = 100
+	maxRecognizerKey      = 1000
 	recognizerOriginError = "只能从相册网站使用识别服务"
 )
 
@@ -183,7 +184,8 @@ func (a *recognizerAPI) get(w http.ResponseWriter, r *http.Request) {
 }
 
 // input reads the form. An empty key keeps the saved one, but only for the
-// same service: a key never travels to another company's API.
+// same service at the same address: a key never travels to another company's
+// API, and a custom service's address is part of which company that is.
 func (a *recognizerAPI) input(w http.ResponseWriter, r *http.Request) (recognizerConfig, bool) {
 	var in recognizerConfig
 	dec := json.NewDecoder(http.MaxBytesReader(w, r.Body, 16<<10))
@@ -198,11 +200,23 @@ func (a *recognizerAPI) input(w http.ResponseWriter, r *http.Request) (recognize
 			writeRecognizerError(w, err)
 			return in, false
 		}
-		if ok && saved.Provider == strings.TrimSpace(in.Provider) {
+		if ok {
+			// Check the form as it would be saved with the old key, so an
+			// address written differently (a trailing /) still counts as the same.
 			in.APIKey = saved.APIKey
-		} else if ok && strings.TrimSpace(in.Provider) != "" {
-			writeJSON(w, http.StatusBadRequest, map[string]any{"error": "换了识别服务，请填写这家服务的 API Key"})
-			return in, false
+			c, err := in.normalize()
+			switch {
+			case err != nil:
+				writeRecognizerError(w, err)
+				return c, false
+			case c.Provider != saved.Provider:
+				writeJSON(w, http.StatusBadRequest, map[string]any{"error": "换了识别服务，请填写这家服务的 API Key"})
+				return c, false
+			case c.Endpoint != saved.Endpoint:
+				writeJSON(w, http.StatusBadRequest, map[string]any{"error": "换了接口地址，请重新填写 API Key"})
+				return c, false
+			}
+			return c, true
 		}
 	}
 	c, err := in.normalize()
@@ -244,7 +258,7 @@ func (a *recognizerAPI) test(w http.ResponseWriter, r *http.Request) {
 	}
 	prompt := recognitionPrompt{Albums: []promptAlbum{{Album: "Studio Example - Vol.1 Model Example", Need: []string{"author", "models"}}}}
 	start := time.Now()
-	ctx, cancel := contextWithTimeout(r, recognizeTimeout)
+	ctx, cancel := context.WithTimeout(r.Context(), recognizeTimeout)
 	defer cancel()
 	text, err := a.ask(ctx, c, prompt)
 	if err == nil {
@@ -304,7 +318,7 @@ func (a *recognizerAPI) recognize(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	start := time.Now()
-	ctx, cancel := contextWithTimeout(r, recognizeTimeout)
+	ctx, cancel := context.WithTimeout(r.Context(), recognizeTimeout)
 	defer cancel()
 	text, err := a.ask(ctx, c, prompt)
 	var suggestions []albumSuggestion

@@ -111,6 +111,50 @@ test("lost start answer is read back, does not create a second attempt, and resu
   await recent(page).click(); await expect(page.locator(".batch-result")).toContainText("成功 3");
 });
 
+test("a refused confirmation shows its reason inside the dialog and going back clears it", async ({ page }) => {
+  await page.goto("/?album=misc"); await manage(page);
+  const prepared = page.waitForResponse(r => r.url().endsWith("/api/share-batches/prepare"));
+  await page.getByRole("button", { name: "批量开启分享", exact: true }).click();
+  const task = await (await prepared).json();
+  const dialog = page.getByRole("dialog");
+  await expect(dialog).toContainText(`共 ${task.total} 张`);
+  // Another tab already runs a task: the server refuses this one with 409.
+  await page.route("**/api/share-batches/*/start", route => route.fulfill({ status: 409, contentType: "application/json", body: JSON.stringify({ error: "任务或图片状态已改变，请重新核对" }) }));
+  await page.getByRole("button", { name: "确认开启分享", exact: true }).click();
+  await expect(dialog.locator("#batch-confirm-error")).toContainText("任务或图片状态已改变，请重新核对");
+  await expect(page.getByRole("button", { name: "确认开启分享", exact: true })).toBeEnabled();
+  expect((await (await page.request.get(`/api/share-batches/${task.id}`)).json()).status).toBe("prepared");
+  await page.getByRole("button", { name: "返回", exact: true }).click();
+  await expect(dialog).toHaveCount(0);
+  await expect(page.locator(".batch-sharing [role=alert]")).toHaveCount(0);
+  await page.unroute("**/api/share-batches/*/start");
+  const started = await begin(page, "open");
+  await finish(page, started.id);
+});
+
+test("the shared-only gallery waits for a running task to end, then reloads once", async ({ page }) => {
+  await openByAPI(page, ["misc"]);
+  await page.goto("/?album=misc&shared=1");
+  await expect(page.locator(".sheet")).toHaveCount(3);
+  let lists = 0;
+  page.on("request", r => { if (r.url().includes("/api/photos?") && r.url().includes("shared=1")) lists++; });
+  // The real task ends at once; its first three progress reads say it is still running.
+  let polls = 0;
+  await page.route(/\/api\/share-batches\/[A-Za-z0-9_-]{32}$/, async route => {
+    const response = await route.fetch(); const task = await response.json();
+    if (route.request().method() === "GET" && ++polls <= 3) Object.assign(task, { status: "running", done: polls, succeeded: polls, items: [] });
+    await route.fulfill({ response, json: task });
+  });
+  const started = await begin(page, "stop");
+  await expect.poll(() => polls, { timeout: 15_000 }).toBe(3);
+  await expect(page.locator(".batch-result")).toContainText("正在处理");
+  expect(lists).toBe(0);
+  await expect(page.locator(".batch-result")).toContainText("已完成", { timeout: 10_000 });
+  await expect(page.getByText("还没有分享的照片", { exact: true })).toBeVisible();
+  expect(lists).toBe(1);
+  await finish(page, started.id);
+});
+
 test("select all only selects filtered albums and a filter change clears hidden selections", async ({ page }) => {
   await page.route("**/api/albums", async route => {
     const response = await route.fetch(); const data = await response.json();

@@ -101,8 +101,8 @@ func TestBatchSharingScopeOriginalReuseStopAndLinks(t *testing.T) {
 		}
 	}
 	res, raw = shareRequest(t, h.srv, h.cookie, "GET", "/api/share-batches/"+b.ID+"/links", nil, nil)
-	json.Unmarshal(raw, &links)
-	if len(links.Paths) != 0 {
+	links.Paths = nil
+	if err := json.Unmarshal(raw, &links); err != nil || res.StatusCode != 200 || len(links.Paths) != 0 {
 		t.Fatal("stopped links copied")
 	}
 }
@@ -243,6 +243,28 @@ func TestBatchSharingGateExpiryReplacementAndSummary(t *testing.T) {
 		t.Fatal("expired task revoked permit")
 	}
 }
+
+// The page polls a running task every two seconds: it gets the counts and the
+// failures, and every photo only once the task has stopped.
+func TestBatchSharingRunningDetailsCarryFailuresOnly(t *testing.T) {
+	h := newShareHarness(t, map[string][]byte{"A/a.jpg": tinyJPEG(12, 12), "A/b.jpg": tinyJPEG(14, 12)})
+	b := prepareBatch(t, h, "open", "A")
+	if len(b.Items) != 2 {
+		t.Fatal("prepared items", b.Items)
+	}
+	h.st.db.Exec("UPDATE share_batches SET status='running',revision=1 WHERE id=?", b.ID)
+	h.st.db.Exec("UPDATE share_batch_items SET status='failed',error='x' WHERE batch_id=? AND ordinal=1", b.ID)
+	running := batchCall(t, h, "GET", "/api/share-batches/"+b.ID, nil)
+	if running.Total != 2 || running.Failed != 1 || running.Done != 1 || len(running.Items) != 1 || running.Items[0].Status != "failed" {
+		t.Fatalf("running details %+v", running)
+	}
+	h.st.db.Exec("UPDATE share_batches SET status='cancelled',finished=? WHERE id=?", time.Now().Unix(), b.ID)
+	stopped := batchCall(t, h, "GET", "/api/share-batches/"+b.ID, nil)
+	if len(stopped.Items) != 2 || stopped.Failed != 1 {
+		t.Fatalf("stopped details %+v", stopped)
+	}
+}
+
 func TestBatchSharingSnapshotBeyondPagination(t *testing.T) {
 	files := map[string][]byte{}
 	for i := 0; i < 85; i++ {
@@ -267,7 +289,7 @@ func TestBatchSharingOldAttemptCannotCommitOrInterruptRetry(t *testing.T) {
 		t.Fatal(err)
 	}
 	a := &batchAPI{share: newShareAPI(h.st, h.sources, t.TempDir()), now: time.Now}
-	before, err := a.read(b.ID)
+	before, err := h.st.readBatch(b.ID, batchAll)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -276,7 +298,7 @@ func TestBatchSharingOldAttemptCannotCommitOrInterruptRetry(t *testing.T) {
 		t.Fatal(err)
 	}
 	a.run(context.Background(), b.ID, 1)
-	after, err := a.read(b.ID)
+	after, err := h.st.readBatch(b.ID, batchAll)
 	if err != nil || after.Status != "running" || after.Revision != 2 || after.Done != 0 {
 		t.Fatal("old attempt changed retry", after, err)
 	}
@@ -325,7 +347,7 @@ func TestBatchSharingPermitAndResultRollbackTogether(t *testing.T) {
 	b := prepareBatch(t, h, "open", "A")
 	h.st.db.Exec("UPDATE share_batches SET status='running',revision=1 WHERE id=?", b.ID)
 	a := &batchAPI{share: newShareAPI(h.st, h.sources, t.TempDir()), now: time.Now}
-	selected, err := a.read(b.ID)
+	selected, err := h.st.readBatch(b.ID, batchAll)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -347,7 +369,7 @@ func TestBatchSharingPermitAndResultRollbackTogether(t *testing.T) {
 	if err != nil || sh.Token != "" || sh.Generation != it.Generation {
 		t.Fatal("permit committed without result", sh, err)
 	}
-	after, err := a.read(b.ID)
+	after, err := h.st.readBatch(b.ID, batchAll)
 	if err != nil || after.Done != 0 {
 		t.Fatal("uncommitted result displayed", after, err)
 	}

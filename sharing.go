@@ -20,15 +20,35 @@ import (
 	"github.com/minio/minio-go/v7"
 )
 
+// Each snapshot copies a whole original into a temporary file. Visitors of
+// share links and the owner's own copying (one photo or a batch) take turns in
+// separate slots, so a burst of visitors never keeps the owner waiting.
 type shareAPI struct {
 	store   *store
 	sources *sourceSet
 	tempDir string
-	gate    chan struct{}
+	public  slots
+	owner   slots
 }
 
 func newShareAPI(st *store, sources *sourceSet, tempDir string) *shareAPI {
-	return &shareAPI{store: st, sources: sources, tempDir: tempDir, gate: make(chan struct{}, 2)}
+	return &shareAPI{store: st, sources: sources, tempDir: tempDir, public: make(slots, 2), owner: make(slots, 2)}
+}
+
+// slots bounds how many snapshots run at once.
+type slots chan struct{}
+
+func (s slots) acquire(ctx context.Context) (release func(), err error) {
+	select {
+	case s <- struct{}{}:
+		if err := ctx.Err(); err != nil {
+			<-s
+			return nil, err
+		}
+		return func() { <-s }, nil
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
 }
 
 func (a *shareAPI) routes(mux *http.ServeMux, gate *authGate) {
@@ -61,20 +81,15 @@ func (a *shareAPI) get(w http.ResponseWriter, r *http.Request) {
 		a.failure(w, r, p.ID, err)
 		return
 	}
-	if sh.Token != "" {
-		scope, scopeErr := a.scope(p.sourceKey())
-		object, statErr := a.sources.Stat(r.Context(), p.sourceKey())
-		if errors.Is(scopeErr, errSourceNotConfigured) || errors.Is(statErr, errSourceNotConfigured) || isNotFound(statErr) ||
-			(scopeErr == nil && statErr == nil && (scope != sh.Scope || object.Version != sh.SourceVersion || object.Size != sh.Size)) {
-			if err := a.store.retireShare(sh.Token); err != nil {
-				a.failure(w, r, p.ID, err)
-				return
-			}
-			sh, err = a.store.shareForPhoto(p.ID)
-			if err != nil {
-				a.failure(w, r, p.ID, err)
-				return
-			}
+	if sh.Token != "" && a.checkSource(r.Context(), p, sh) == sourceChanged {
+		if err := a.store.retireShare(sh.Token); err != nil {
+			a.failure(w, r, p.ID, err)
+			return
+		}
+		sh, err = a.store.shareForPhoto(p.ID)
+		if err != nil {
+			a.failure(w, r, p.ID, err)
+			return
 		}
 	}
 	a.state(w, p, sh)
@@ -116,17 +131,28 @@ func (a *shareAPI) selected(w http.ResponseWriter, r *http.Request, body shareWr
 	return p, true
 }
 
-func (a *shareAPI) acquire(ctx context.Context) error {
-	select {
-	case a.gate <- struct{}{}:
-		if err := ctx.Err(); err != nil {
-			<-a.gate
-			return err
-		}
-		return nil
-	case <-ctx.Done():
-		return ctx.Err()
+type sourceCheck int
+
+const (
+	sourceUnknown sourceCheck = iota // the source could not be asked just now
+	sourceCurrent
+	sourceChanged // gone, moved or holding another version than the permit
+)
+
+// checkSource compares a permit with what its source holds now, without
+// reading the original.
+func (a *shareAPI) checkSource(ctx context.Context, p photo, sh photoShare) sourceCheck {
+	scope, scopeErr := a.scope(p.sourceKey())
+	object, statErr := a.sources.Stat(ctx, p.sourceKey())
+	switch {
+	case errors.Is(scopeErr, errSourceNotConfigured) || errors.Is(statErr, errSourceNotConfigured) || isNotFound(statErr):
+		return sourceChanged
+	case scopeErr != nil || statErr != nil:
+		return sourceUnknown
+	case scope != sh.Scope || object.Version != sh.SourceVersion || object.Size != sh.Size:
+		return sourceChanged
 	}
+	return sourceCurrent
 }
 
 func (a *shareAPI) create(w http.ResponseWriter, r *http.Request) {
@@ -139,10 +165,11 @@ func (a *shareAPI) create(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	if err := a.acquire(r.Context()); err != nil {
+	release, err := a.owner.acquire(r.Context())
+	if err != nil {
 		return
 	}
-	defer func() { <-a.gate }()
+	defer release()
 	snapshot, err := a.snapshot(r.Context(), p)
 	if err != nil {
 		if shareSourceChanged(err) {
@@ -337,7 +364,7 @@ func (a *shareAPI) media(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	decoded, err := base64.RawURLEncoding.DecodeString(token)
-	if !found || err != nil || len(decoded) != 32 || base64.RawURLEncoding.EncodeToString(decoded) != token {
+	if err != nil || len(decoded) != 32 || base64.RawURLEncoding.EncodeToString(decoded) != token {
 		http.NotFound(w, r)
 		return
 	}
@@ -359,10 +386,11 @@ func (a *shareAPI) media(w http.ResponseWriter, r *http.Request) {
 		a.retireMedia(w, r, sh)
 		return
 	}
-	if err := a.acquire(r.Context()); err != nil {
+	release, err := a.public.acquire(r.Context())
+	if err != nil {
 		return
 	}
-	defer func() { <-a.gate }()
+	defer release()
 	snapshot, err := a.snapshot(r.Context(), p)
 	if err != nil {
 		if shareSourceChanged(err) {

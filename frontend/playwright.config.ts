@@ -17,7 +17,8 @@ export default defineConfig({
   },
   projects: [
     { name: "chromium", use: { browserName: "chromium", launchOptions: { args: ["--no-sandbox"] } } },
-    // Safari's engine, for what logging out leaves behind on iPhones and Macs.
+    // Safari's engine (iPhone, Mac) for the flows that differ there: logging
+    // out, saving, uploads, clipboard sharing and recognition.
     { name: "webkit", use: { browserName: "webkit" }, testMatch: /(logout|organize-saving|upload|upload-recovery|sharing|recognition)\.spec\.ts/ },
   ],
   webServer: [

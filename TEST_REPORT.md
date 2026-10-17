@@ -1,92 +1,48 @@
 # 最近一次测试报告
 
-2026-10-17 19:08:22 CST：设置页改为左侧子页、相册分享状态筛选与封面标记、照片页去掉「管理分享」、批量结果只在发起页自动显示，以及页面标题修复。本次的开发验收、发布验收、推送、生产部署和清理都已完成。方案见 `docs/settings-layout-plan.md` 与 `DECISIONS.md` 2026-10-17 18:25:39 / 18:40:42 两节；提交 `3249a26`，基线 `2341764`。用户的授权是：两批改动一起测试，然后推送、部署，并删除测试环境、备份和旧镜像。
+2026-10-17 22:45:12 CST：按 `CODE_REVIEW.md`（2026-10-17）修复 C01–C15 后的开发验收。测试对象是未提交的工作区（基线 `564e73b`），最后一轮在全部改动完成后整体重跑；未提交、未推送、未部署生产。
 
 ## 测试环境
 
-- netcup Debian 13。开发验收在 `/root/bijin-ui-dev/src`，内容是打包的工作区。发布验收在新目录 `/root/bijin-release-test/src`，内容是 `git archive 3249a26`，共 161 个文件。两者都不连接生产数据库、照片、RustFS 或真实 AI 服务。
-- Go 用 `golang:1.27-alpine`（`-tags nodynamic`；race 测试另装 build-base）。前端和浏览器用 `mcr.microsoft.com/playwright:v1.63.0-noble`，包括 Node、Chromium 和 WebKit，Next.js 16.3.7。
-- 测试服务是同一份代码构建的 `output/bijin-ui-test`（127.0.0.1:18092 / 18094），配合 `tests/s3_fixture.py`（18093）和 `tests/recognizer_fixture.py`（18095）；测试图片由 `genphotos.go` 新建。
-- 扫描失败标记（S10）没有制造真正失败的扫描：用 Playwright 改写 `/api/settings` 的返回，填入 `status.err`。切换子页时进行中的「测试连接」（S11），是用拦截后延迟回答的 `/api/storages/test` 模拟的。
+- netcup Debian 13，新建隔离目录（工作区打包复制，0 个 `._*` 文件），不连接生产数据库、照片、RustFS 或真实 AI 服务；生产容器全程没有改动或重启（healthy）。
+- Go：`golang:1.27-alpine`（`-tags nodynamic`，race 另装 build-base）；前端与浏览器：`mcr.microsoft.com/playwright:v1.63.0-noble`（Node、Chromium、WebKit，Next.js 16.3.7）。
+- 测试服务 `output/bijin-ui-test`（127.0.0.1:18092 / 18094）、`tests/s3_fixture.py`（18093）、`tests/recognizer_fixture.py`（18095），测试图片由 `genphotos.go` 新建。
 
-## 方法与结果
+## 测试方法与结果（最后一轮，最终工作区）
 
-开发验收（未提交的工作区）：
-
-| 编号 | 实际方法 | 结果 |
+| 编号 | 方法 | 结果 |
 | --- | --- | --- |
-| D01 | `npm ci && npm run typecheck && npm run build`；前端模块测试 | 通过；15 / 21 / 3 / 6 项通过 |
-| D02 | `go vet`，`go test -tags nodynamic -count=1 -json .` | 176 项通过（在改页面标题之前跑的；改后的结果见 T03） |
-| D03 | 全量 `npx playwright test` | 108 项通过、13 项失败，原因与修复见下文。修好后用 Chromium 分批复测：album 8/8、settings 9/9、batch-sharing 8/8、sharing 6/6 通过；organize 在 T05 中通过 |
-| D04 | 截图人工复核：设置页 1100 / 1470 px，侧栏展开 / 收起；320 / 375 / 768 px；滚动吸顶；扫描失败标记；相册封面标记桌面和 320 px；双主题 | 宽屏：子页按钮竖排在左，整体居中，选中样式与侧栏一致。窄屏：四个按钮一行放下，图标在上、名字在下。吸顶时卡片不会从按钮行两侧露出。封面标记小而安静，全部已分享是樱粉链条，部分已分享是灰色链条加「1/50」。没有横向溢出。 |
+| T01 | `npm ci && npm run typecheck && npm run build`；`tsc --noEmit --noUnusedLocals --noUnusedParameters` | 通过；未使用检查 0 项 |
+| T02 | `npm run test:organizer / test:upload / test:names / test:recognition` | 15 / 21 / 3 / 6 通过，0 失败 |
+| T03 | `gofmt -l`、`go vet`、`staticcheck`（2026.2.2）、`deadcode` | 全部无输出 |
+| T04 | `go test -tags nodynamic -count=1 -json .` | 179 个顶层测试通过、0 失败；`TestQueryScale` 可选压测按默认跳过 |
+| T05 | 同上加 `-race` | 179 通过，0 处 DATA RACE |
+| T06 | 干净数据上全量 `npx playwright test` | Chromium / WebKit 共 125 项通过，0 失败，6.5 分钟 |
 
-发布验收：第一次在提交 `ab62b41` 上运行，暴露出两个测试问题，修复后修订为 `3249a26`，再在新目录完整重跑。第二次运行时间为 12:54:21–13:04:36（netcup 时间，CST 18:54–19:04）。
+新增的回归（均在 T04–T06 中通过）：
 
-| 编号 | 实际方法 | 结果 |
-| --- | --- | --- |
-| T01 | `npm ci && npm run typecheck && npm run build` | 通过，静态导出完成 |
-| T02 | `npm run test:organizer` / `test:upload` / `test:names` / `test:recognition` | 15 / 21 / 3 / 6 项通过，0 失败 |
-| T03 | `go vet` 后运行 `go test -tags nodynamic -count=1 -json .` | 176 个顶层测试通过，0 失败；`TestQueryScale` 可选压测按默认跳过 |
-| T04 | `CGO_ENABLED=1 go test -race`，参数同 T03 | 176 通过，没有 DATA RACE |
-| T05 | 在干净数据上跑全量 `npx playwright test` | Chromium / WebKit 共 121 项通过，0 失败、0 不稳定，用时 6.2 分钟。原有 108 项，新增：settings 01–09（Chromium），batch-sharing 新增的 2 项在两种浏览器各跑一次 |
-| T06 | 推送：`git push origin master` | GitHub master 为 `3249a26` |
-| T07 | 部署前：用 SQLite 在线备份到 `/root/bijin-backup-20261017-1905-predeploy.db`（0600），运行 `quick_check`，记录各表行数；给当前镜像打回滚标签 | quick_check ok。photos 4288、photo_shares 4288（其中 503 个已开启）、album_people 94、people 30、wallpapers 4333、storages 1、share_batches 3、share_batch_items 455、organize_receipts 15、recognizer 1 |
-| T08 | 生产执行 `git pull --ff-only` 到 `3249a26`，再 `docker compose build && up -d` | 新镜像 `4f2e32510fcd` healthy，重启 0 次。启动扫描 4288 张，0 失败。日志只有 INFO。程序里包含「查看最近的批量任务」「全部分享状态」「设置分类」「album-share-mark」 |
-| T09 | 部署后核对数据库 | quick_check ok；各表行数与部署前一致；已开启的分享仍是 503 个；识别服务配置还在；数据库权限仍为 0600 |
-| T10 | 公网核对 `https://csb.jgbman.cc` | health 200，登录页 200 且标题为「Juen's」；未登录访问首页 302 到登录页；`/api/settings`、`/api/albums`、`/api/share-batches` 返回 401；随机壁纸 302 到 `/media/sha256/…webp`；随机抽 3 个已开启的分享，HEAD 都返回 200 image/jpeg |
-| T11 | 清理（用户要求删除测试环境、备份和旧镜像） | 删除了：两个隔离目录、测试容器、Go / Playwright 测试镜像、4 个测试缓存卷、回滚标签与旧镜像 `ee7e3fbecafe`、构建缓存 2.18 GB，以及 3 份部署前数据库备份（`20261017-predeploy`、`-1735-`、`-1905-`），共回收约 9.5 GiB。netcup 现在只剩 bijin / RustFS / OpenResty。容器在清理前后都没有重启（启动时间 19:06:57，重启 0 次）。 |
-
-没有运行：退出登录重复测试，因为这次没有改退出登录相关的代码。
+- Go：`TestRecognizerKeepsKeyOnlyAtTheSameAddress`、`TestSharingVisitorsDoNotTakeOwnerSlots`、`TestBatchSharingRunningDetailsCarryFailuresOnly`。
+- 浏览器（两种浏览器各一次）：「a refused confirmation shows its reason inside the dialog…」「the shared-only gallery waits for a running task to end, then reloads once」；`recognition 01` 增加换接口地址不发送旧 Key 的检查。
 
 ## 业务验收
 
-设置页（编号与 `docs/settings-layout-plan.md` 一致）：
-
-| 编号 | 用户想做什么 | 操作与预期 | 证据 | 状态 |
-| --- | --- | --- | --- | --- |
-| S01 | 默认子页 | 从侧栏进入设置页：显示四个子页按钮，选中「本地图库」，只显示它的卡片；大标题「设置」，标签页标题「设置 · Juen's」 | settings 01；album 01 | 通过 |
-| S02 | 切换与历史 | 依次点四个子页：只显示对应卡片，网址 `tab` 跟着变，浏览器历史条数不变；按后退回到照片页 | settings 01 | 通过 |
-| S03 | 网址直达 | 打开 `tab=wallpaper` 后刷新，仍停在随机壁纸；打开 `tab=abc` 显示本地图库 | settings 02 | 通过 |
-| S04 | 整理页链接 | 没配置识别服务时，从整理页点「去设置页配置」，直接打开识别服务子页 | recognition 03 | 通过 |
-| S05 | 键盘与读屏 | 方向键、Home / End 能切换和选中，并且循环；按 Tab 进入卡片，有焦点环；子页按钮、卡片区和选中状态能被读屏识别 | settings 03 | 通过 |
-| S06 | 宽屏样式 | 1100 / 1470 px，侧栏展开和收起各测一次：按钮竖排在左，比主侧栏窄；卡片不超过 960 px；左右留白相等；选中样式的底色、边框、菱形与侧栏「设置」完全相同 | settings 04；截图 | 通过 |
-| S07 | 窄屏样式 | 320 / 375 / 768 px：四个按钮同一行且等宽，图标在上，名字放得下，高度不小于 44 px，没有横向滚动；双主题截图 | settings 05；截图 | 通过 |
-| S08 | 按钮常驻 | 1440×600 和 375×600，打开对象存储编辑表单后滚到底：按钮行仍然贴在标题栏下方 | settings 06 | 通过 |
-| S09 | 回到顶部 | 在页面下方切换到随机壁纸，`scrollY` 变为 0 | settings 06 | 通过 |
-| S10 | 扫描失败标记 | 一切正常、识别服务未配置时没有标记；对象存储或本地图库扫描失败时，只有对应按钮显示错误色圆点，读屏念「…，扫描失败」，鼠标提示「…：扫描失败」；手机上也看得到 | settings 07（改写接口返回模拟失败） | 通过 |
-| S11 | 不丢表单 | 填了一半的存储表单正在测试连接时切到随机壁纸，回答在隐藏期间到达；切回来，填过的内容和「连接成功，找到 5 张图片。」都还在 | settings 08 | 通过 |
-| S12 | 读取中与失败 | 读取变慢时，子页按钮马上出现，右侧显示占位；读取失败时，提示和重试按钮在右侧，按钮仍在；重试后恢复 | settings 09；album 08 | 通过 |
-| S13 | 回归 | 全量 Go、前端模块与浏览器测试 | T01–T05 | 通过 |
-
-相册分享相关：
-
-| 编号 | 用户想做什么 | 操作与预期 | 证据 | 状态 |
-| --- | --- | --- | --- | --- |
-| P01 | 照片页干净 | `/` 和旧地址 `/?shared=1` 都没有「管理分享」，没有「只看已分享」，显示全部照片 | batch-sharing「sharing controls stay hidden…」 | 通过 |
-| P02 | 封面分享标记 | 全部已分享：只有樱粉链条，提示「全部已分享」。部分已分享：显示「1/50」，提示「部分已分享，1 / 50 张」。未分享没有标记。标记在封面左上角、小于 32 px，读屏名称末尾带状态。打开「管理分享」后标记让位给勾选方块，标签显示「部分已分享 · 1/50」。320 px 双主题没有溢出 | batch-sharing「covers mark shared albums…」；截图 | 通过 |
-| P03 | 按分享状态筛选 | 下拉默认「全部分享状态」。选全部已分享、部分已分享、未分享，数量都正确，并显示「筛选后 N / M 本」。刷新后保留；「清除筛选」会一起清掉 | 同上 | 通过 |
-| P04 | 历史结果不再自动弹出 | 本页发起的任务：结束后显示结果，收起再打开「管理分享」仍显示。从侧栏离开再回来，或刷新后：只有「查看最近的批量任务」按钮，点了才出现表格。正在处理的任务打开即显示 | batch-sharing「a finished result opens…」「single album…reopen after refresh」「lost start answer…」「viewing an older result…」 | 通过 |
-| P05 | 单本相册页不变 | 单本相册页的「管理分享」、批量开启 / 停止、「只看已分享」照常可用 | sharing「shared filter works in an album…」；batch-sharing 多项 | 通过 |
-| P06 | 页面标题 | 登录页「Juen's」，照片页「照片 · Juen's」，设置页「设置 · Juen's」 | album 01；settings 01；T10 | 通过 |
+| 编号 | 用户想做什么 / 预期 | 证据 | 状态 |
+| --- | --- | --- | --- |
+| C01 | 换「其他兼容服务」的地址时，旧 Key 不发给新地址：留空保存或测试返回「换了接口地址，请重新填写 API Key」，新地址收不到请求；同一地址写法不同（空格、末尾 /）仍沿用 | Go 与 recognition 01 | 通过 |
+| C02 | 批量确认被拒绝（模拟 409）时，原因显示在弹窗里；「返回」后清除；再次开始能完成 | 浏览器新回归 | 通过 |
+| C03 | 「只看已分享」打开时，批量任务处理中（模拟 3 次进度）不重新读取列表，结束时只读取 1 次并显示空态 | 浏览器新回归；原有停止分享回归 | 通过 |
+| C04 | 处理中的任务详情只带失败项，结束后带全部；超过 48 小时的记录按不存在处理，许可不受影响 | Go 新回归；`TestBatchSharingGateExpiryReplacementAndSummary` | 通过 |
+| C05 | 访客占满公开名额时，站长 100 ms 内拿到自己的名额 | Go 新回归 | 通过 |
+| C06–C15 | 删除无效代码、拆分文件与文档整理后，原有功能不变 | T01–T06 | 通过 |
 
 ## 失败、修复与复测记录
 
-- D03 第一次全量跑出 13 项失败：
-  - **album 03**：测试从侧栏回到设置页后，直接找对象存储的「删除」按钮。按方案，设置页现在默认显示本地图库，于是测试卡住，还留下了一个测试存储。修复：测试先点「对象存储」子页。这是行为按方案改变，不是迁就实现。
-  - **连带失败 9 项**：留下的测试存储多出 2 张照片和 1 本相册，album 05 / 07 和 organize 01–08 的数量随之对不上。重建干净数据后复测，全部通过。
-  - **settings 01（页面标题）**：标签页标题是「Juen's」，不是「设置 · Juen's」。排查确认这是原有问题：直接打开页面就是这样，与切换子页无关，以前没有测试检查标题。修复：由相册应用自己渲染标题，原因见 `DECISIONS.md`。
-  - **settings 04**：比较选中样式时，背景色正在做 100 ms 的过渡动画。修复：测试等过渡结束后再比较。
-  - **settings 07**：读屏名称里「对象存储」和「，扫描失败」之间可能有空白。修复：测试改用正则匹配。
-- 发布验收第一次（`ab62b41`）有两项失败：
-  - **Go `TestLoginThenHomeAndList`**：它在首页 HTML 原文里找 `Juen's`，而 React 把标题里的撇号写成 `&#x27;`（浏览器显示不变，T10 与 P06 已核对）。修复：测试先解码 HTML 再查找，检查的内容不变。
-  - **batch-sharing「a finished result opens…」**：任务列表按创建时间排序，只精确到秒；测试在同一秒里建了两个任务，「最近一次」可能取到任意一个。修复：测试等到下一秒再发起第二个任务。真实使用中不会一秒内发起两次批量分享，所以只在文档里说明，不改程序。
-  - 两处修复都并进了 `3249a26`，并在新目录完整重跑（T01–T05），全部通过。
-- 截图复核时，几张手机截图颜色发灰、侧栏宽度不对。原因是主题和侧栏的过渡动画还没结束就截了图，界面本身没有问题。截图前加了 400 ms 等待后重拍，显示正常。
-- 原有测试只做了两类改动，都对应按方案改变的行为：一是打开设置页的地址加上 `tab=`；二是批量结果「重新打开页面仍自动显示」改为「点按钮后显示」。没有删除任何失败的测试。
+- 第一轮 Go 全量有 1 项失败：`TestBatchSharingGateExpiryReplacementAndSummary`。原因是详情接口去掉清理后，超过 48 小时的记录仍能读到，属于实现回退。修复实现（读取时过期记录按不存在处理），测试没有改；之后全部重跑通过。
+- `gofmt` 指出新加测试前缺一个空行，已改。
+- 没有删除或放宽任何原有测试。原有测试只做两类调整，都跟随内部接口变化：`photoPage` 多了「只看已分享」参数；读取任务改用 `store.readBatch`；名额测试改用新的 `slots`。
 
 ## 限制与结论
 
-- 设置页的新测试只在 Chromium 上跑（Playwright 配置里 WebKit 只跑指定的几个文件）；分享相关的新测试在 Chromium 和 WebKit 上都跑了。iPhone 真机上的吸顶效果和 `env(safe-area-inset-top)` 没有实测。
-- 扫描失败标记是通过改写接口返回模拟的，没有制造真实的扫描失败。
-- 按你的要求，3 份部署前数据库备份已全部删除，服务器上现在**没有数据库备份**。这次只改了前端，数据库结构和数据都没动，部署后行数与部署前一致。如果要恢复定期备份，需要另外安排。
-- 结论：两批改动都按确认的方案实现，提交 `3249a26` 的功能测试和回归测试全部通过；已推送并部署生产，生产 healthy，原有数据、配置和 503 个分享都保留；测试环境、备份和旧镜像已清理。
+- 「只看已分享」的刷新次数通过拦截响应模拟进度来验证，没有在真实的长任务上测量；没有在 iPhone 真机上测试。
+- 测试环境（隔离目录、Go 缓存卷、Go 与 Playwright 镜像、构建缓存）已删除，netcup 只剩 bijin / RustFS / OpenResty。生产服务器仍没有 bijin 数据库备份（10-17 19:08 清理时按用户要求删除）。
+- 结论：C01–C15 已按优先级修复，最终工作区的构建、静态检查、Go（含 race）与两种浏览器回归全部通过；尚未提交、推送或部署。

@@ -18,6 +18,10 @@ type photoShare struct {
 }
 
 const shareColumns = "photo_id, COALESCE(token, ''), generation, source_key, source_version, source_scope, sha256, mime, extension, size"
+
+// retireShares ends permits: the address stops working and the generation
+// moves on, so a delayed write for the old one is refused. Append a WHERE.
+const retireShares = "UPDATE photo_shares SET token = NULL, generation = generation + 1 WHERE "
 const sharedPhotos = `EXISTS (SELECT 1 FROM photo_shares ps WHERE ps.photo_id = photos.id
  AND ps.token IS NOT NULL AND ps.source_key = photos.rel_path AND ps.source_version = photos.source_version)`
 
@@ -75,7 +79,7 @@ func (s *store) shareForToken(token string) (photoShare, error) {
 }
 
 func (s *store) retireShare(token string) error {
-	res, err := s.db.Exec("UPDATE photo_shares SET token = NULL, generation = generation + 1 WHERE token = ?", token)
+	res, err := s.db.Exec(retireShares+"token = ?", token)
 	if err != nil {
 		return err
 	}
@@ -127,7 +131,7 @@ func (s *store) writeShare(tx *sql.Tx, p photo, expected int64, fresh photoShare
 	}
 	if current.Token != "" {
 		if current.Digest != fresh.Digest || current.Scope != fresh.Scope || current.SourceKey != fresh.SourceKey || current.SourceVersion != fresh.SourceVersion {
-			if _, err = tx.Exec("UPDATE photo_shares SET token = NULL, generation = generation + 1 WHERE photo_id = ?", p.ID); err != nil {
+			if _, err = tx.Exec(retireShares+"photo_id = ?", p.ID); err != nil {
 				return photoShare{}, false, err
 			}
 			return photoShare{}, true, errSourceChanged
@@ -179,7 +183,7 @@ func (s *store) writeStopShare(tx *sql.Tx, id, expected int64) (photoShare, bool
 	if current.Generation != expected {
 		return photoShare{}, false, errShareStateChanged
 	}
-	_, err = tx.Exec("UPDATE photo_shares SET token = NULL, generation = generation + 1 WHERE photo_id = ?", id)
+	_, err = tx.Exec(retireShares+"photo_id = ?", id)
 	if err != nil {
 		return photoShare{}, false, err
 	}
@@ -192,4 +196,18 @@ func (sh photoShare) path() string {
 		return ""
 	}
 	return fmt.Sprintf("/i/%s.%s", sh.Token, sh.Extension)
+}
+
+// albumShareCounts is how many visible photos of each album are shared. It
+// shares the filtered index revision and reads no sources.
+func (s *store) albumShareCounts() (map[string]int, error) {
+	idx, err := s.sharedPhotoIndex()
+	if err != nil {
+		return nil, err
+	}
+	counts := map[string]int{}
+	for id, items := range idx.albums {
+		counts[id] = len(items)
+	}
+	return counts, nil
 }

@@ -658,17 +658,42 @@ func TestSharingCanceledReadDoesNotKeepSlot(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	for i := 0; i < 20; i++ {
-		if err := a.acquire(ctx); err == nil {
-			<-a.gate
+		if release, err := a.public.acquire(ctx); err == nil {
+			release()
 			t.Fatal("canceled acquisition succeeded")
 		}
 	}
 	ctx, cancel = context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
-	if err := a.acquire(ctx); err != nil {
+	release, err := a.public.acquire(ctx)
+	if err != nil {
 		t.Fatal(err)
 	}
-	<-a.gate
+	release()
+}
+
+// Visitors holding every public slot do not keep the owner's copy waiting.
+func TestSharingVisitorsDoNotTakeOwnerSlots(t *testing.T) {
+	a := newShareAPI(nil, nil, t.TempDir())
+	for i := 0; i < cap(a.public); i++ {
+		release, err := a.public.acquire(context.Background())
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer release()
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+	if _, err := a.public.acquire(ctx); err == nil {
+		t.Fatal("a third visitor got a slot")
+	}
+	ctx, cancel = context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+	release, err := a.owner.acquire(ctx)
+	if err != nil {
+		t.Fatal("owner waited behind visitors:", err)
+	}
+	release()
 }
 
 func TestSharingBadAddressesNeverExposeOriginalOrCancelValidLink(t *testing.T) {

@@ -28,6 +28,8 @@ const reasoningChoices: { value: ReasoningChoice; label: string }[] = [
 ];
 const reasoningLabel = (value: Reasoning) => reasoningChoices.find(choice => choice.value === (value || "default"))!.label;
 const providerLabel = (value: string) => providers.find(item => item.value === value)?.label ?? value;
+// The server saves a custom address trimmed and without a trailing slash.
+const trimEndpoint = (value: string) => value.trim().replace(/\/+$/, "");
 type Form = { provider: RecognizerProvider; endpoint: string; apiKey: string; model: string; reasoning: ReasoningChoice };
 type FormKey = "endpoint" | "apiKey" | "model";
 
@@ -44,8 +46,10 @@ export function RecognizerCard({ initial }: { initial: RecognizerView }) {
   const [pending, setPending] = useState<"save" | "test" | "delete" | null>(null);
   const editor = useRef<HTMLFormElement>(null);
 
-  // A saved key is reused only for the same service.
-  const keyKept = view.configured && view.hasKey && view.provider === form.provider;
+  // A saved key is reused only for the same service, and for 其他兼容服务 only
+  // at the same address: the server refuses to send it anywhere else.
+  const sameEndpoint = form.provider !== "custom" || trimEndpoint(form.endpoint) === trimEndpoint(view.endpoint);
+  const keyKept = view.configured && view.hasKey && view.provider === form.provider && sameEndpoint;
   function open() {
     setForm(view.configured && view.provider ? { provider: view.provider, endpoint: view.endpoint, apiKey: "", model: view.model, reasoning: view.reasoning || "default" } : { provider: "claude", endpoint: "", apiKey: "", model: "", reasoning: "default" });
     setErrors({}); setMessage(null); setEditing(true);
@@ -62,7 +66,9 @@ export function RecognizerCard({ initial }: { initial: RecognizerView }) {
   function validate() {
     const found: Partial<Record<FormKey, string>> = {};
     if (form.provider === "custom" && !form.endpoint.trim()) found.endpoint = "请填写接口地址。";
-    if (!keyKept && !form.apiKey.trim()) found.apiKey = view.configured && view.provider !== form.provider ? "换了识别服务，请填写这家服务的 API Key。" : "请填写 API Key。";
+    if (!keyKept && !form.apiKey.trim()) found.apiKey = !view.configured ? "请填写 API Key。"
+      : view.provider !== form.provider ? "换了识别服务，请填写这家服务的 API Key。"
+      : !sameEndpoint ? "换了接口地址，请重新填写 API Key。" : "请填写 API Key。";
     if (!form.model.trim()) found.model = "请填写模型名。";
     setErrors(found);
     const first = Object.keys(found)[0];

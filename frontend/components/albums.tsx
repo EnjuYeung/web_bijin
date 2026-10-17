@@ -9,6 +9,7 @@ import { GallerySkeleton } from "@/components/gallery-skeleton";
 import { OptionSelect } from "@/components/option-select";
 import { PersonPicker } from "@/components/person-picker";
 import { BatchSharing } from "@/components/batch-sharing";
+import { onSharingChanged } from "@/lib/sharing";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Field, FieldLabel } from "@/components/ui/field";
 import { Badge } from "@/components/ui/badge";
@@ -38,7 +39,8 @@ export function Albums({ sharing, onCount }: { sharing: boolean; onCount: (count
     }).catch(err => { if (!controller.signal.aborted) setError(err.message); });
     return () => controller.abort();
   }, [onCount, revision]);
-  useEffect(() => { const sync = () => setRevision(n => n + 1); addEventListener("bijin-sharing-changed", sync); return () => removeEventListener("bijin-sharing-changed", sync); }, []);
+  // Covers show sharing state, so any change in this tab reloads the counts.
+  useEffect(() => onSharingChanged(() => setRevision(n => n + 1)), []);
   // Opening reads fresh sharing counts; closing drops the hidden selection.
   useEffect(() => { if (sharing) setRevision(n => n + 1); else setSelected([]); }, [sharing]);
   const names = useMemo(() => albumNames(data?.albums ?? []), [data]);

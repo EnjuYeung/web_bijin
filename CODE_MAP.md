@@ -9,7 +9,8 @@
 3. `main.go`、`config.go`：了解程序如何启动。
 4. `source.go`、`photo_processing.go`、`scan.go`、`events.go`、`store.go`、`thumb.go`、`wallpaper.go`：了解照片如何进入图库并生成壁纸。
 5. `server.go`、`auth.go`、`totp.go`、`upload.go`：了解页面、接口、登录和两步验证。
-6. `frontend/components/album-app.tsx`、`frontend/components/photo-gallery.tsx`、`frontend/app/globals.css`：了解浏览器界面。
+6. `sharing.go`、`share_store.go`、`batch_sharing.go`、`batch_store.go`：了解原图分享与按相册批量分享。
+7. `frontend/components/album-app.tsx`、`frontend/components/photo-gallery.tsx`、`frontend/app/globals.css`：了解浏览器界面。
 
 ## Go 后端
 
@@ -20,9 +21,10 @@
 | `storage.go` | 对象存储配置：字段校验与默认值（Endpoint、Bucket、前缀、Region、寻址方式、大图直连与浏览器访问地址），以及 SQLite `storages` 表的增删改查与补列迁移。 |
 | `settings.go` | 设置页接口：读取本地说明、各来源状态、上传通知状态与壁纸统计、添加/修改/删除对象存储、测试连接；Secret Key 只写不读。 |
 | `server.go` | 注册 HTTP 路由，提供照片、相册、缩略图（不可变缓存）、原图（转发或 302 到预签名地址；存储不可达 502、对象不存在 404）、登录背景（302 到一张壁纸）、公开随机壁纸和健康检查（只给 `ok` 与时区）接口，并内嵌前端文件；所有写接口在注册时统一经过同源（+ JSON）门禁，经 HTTPS 访问时发送 HSTS。 |
-| `sharing.go` | 原图分享 HTTP：仅登录后管理、随机地址公开读取、修改代次与选定版本校验、来源范围和完整内容核对、最多两份匿名临时快照、GET / HEAD / Range 与 no-store；分享不签发 S3 直链。 |
-| `batch_sharing.go` | 按相册批量分享：固定范围、SQLite 任务与逐项结果、单任务进程内执行、逐项许可与结果同事务、执行轮次隔离、取消 / 重试 / 重启中断、48 小时保留及相册分享计数；管理入口沿用登录和同源门禁。 |
-| `share_store.go` | SQLite 分享记录与迁移、照片改变 / 删除时撤销的触发器、同一次分享幂等复用、修改代次防止迟到操作恢复许可；已分享查询条件与缓存失效。 |
+| `sharing.go` | 原图分享 HTTP：仅登录后管理、随机地址公开读取、修改代次与选定版本校验、来源范围和完整内容核对（`checkSource` 供大图状态与批量链接共用）、匿名临时快照（访客与站长各两个名额）、GET / HEAD / Range 与 no-store；分享不签发 S3 直链。 |
+| `share_store.go` | SQLite 分享记录与迁移、照片改变 / 删除时撤销的触发器、同一次分享幂等复用、修改代次防止迟到操作恢复许可；已分享查询条件、各相册已分享数量与缓存失效。 |
+| `batch_sharing.go` | 按相册批量分享的接口与执行器：登录和同源门禁、单任务进程内逐张处理、取消 / 重试、执行轮次隔离，复制链接时并发核对来源。 |
+| `batch_store.go` | 批量分享的 SQLite 记录：任务与逐张结果的建表、范围核对与创建、开始 / 取消 / 中断、逐张许可与结果同事务提交、48 小时保留与按需清理；运行中的详情只带失败项。 |
 | `upload.go` | GUI 上传：同源与路径校验、现有目标、本地原子提交、S3 条件预签名与保存验证、进程内任务状态，以及消费照片处理结果来判断完成与重试。 |
 | `auth.go` | 校验用户名、密码和动态码（请求体最多 16 KiB，只读请求体），按 IP 输错锁定，生成签名 Cookie（经 HTTPS 时带 Secure），只放行本站路径作为登录后的返回地址，保护需要登录的页面和接口；退出登录删除当前设备的 Cookie 并请浏览器清本站缓存。 |
 | `totp.go` | 两步验证：动态码计算（RFC 6238）、密钥解析与生成，以及 `bijin two-step` 子命令的终端二维码和确认流程。 |
@@ -64,7 +66,10 @@
 | `frontend/components/person-picker.tsx` | 基于 Base UI Combobox 的名字下拉：筛选、复用已有名字、输入新建（用作筛选时只选不建），作者单选、模特多选，可全程用键盘操作。 |
 | `frontend/lib/albums.ts` | 相册排序规则（中文排序器、没填的排最后）、作者 / 模特与填写情况筛选、按相册统计名单、排序与筛选偏好的读写（整理页的排序和视图另存）和「作者 · 模特」文字。 |
 | `frontend/lib/names.ts` | 名字清理与比较：身份与服务器同一规则（只忽略英文字母大小写），输入筛选忽略全部大小写；整理 module、名字下拉、相册筛选共用。 |
-| `frontend/components/photo-sharing.tsx` | 大图中的原图分享：状态、复制 / 停止、Safari 点击内发起的异步剪贴板、手动复制、响应协议校验与写回答丢失后的核对、关闭 / 切图取消旧操作。 |
+| `frontend/components/photo-sharing.tsx` | 大图中的原图分享：状态、复制 / 停止、手动复制、响应协议校验与写回答丢失后的核对、关闭 / 切图取消旧操作。 |
+| `frontend/components/batch-sharing.tsx` | 相册列表与单本页共用的批量分享：核对弹窗（被拒绝的原因显示在弹窗内）、提交、进度、任务恢复、取消、重试、复制与手动复制；已结束的任务只在本页发起时自动显示，否则收在「查看最近的批量任务」后面；只在任务结束时通知分享变化。 |
+| `frontend/lib/share-batches.ts` | 批量任务的响应校验、读取、开始 / 重试 / 取消与列表。 |
+| `frontend/lib/sharing.ts` | 单图与批量分享共用：分享地址格式、分享变化通知（区分来自大图还是批量任务）、点击时先占用剪贴板的复制。 |
 | `frontend/components/settings-panel.tsx` | 四个子页（本地图库 / 对象存储 / 识别服务 / 随机壁纸）：标准标签页键盘操作、地址 `tab` 参数、扫描失败标记，未选中的卡片只隐藏；来源卡片、校验表单、添加/编辑/测试/删除对象存储、大图直连与浏览器访问地址、上传通知状态、识别服务卡片、随机壁纸卡片（数量与可复制的接口地址）；扫描中短时刷新。 |
 | `frontend/components/recognizer-settings.tsx` | 设置页「识别服务」卡片：服务、接口地址、只写的 API Key、模型名、推理强度；测试（不保存）、保存、删除。 |
 | `frontend/components/upload-panel.tsx` | 上传页：读取保存位置、选择 / 拖入文件、显示批次与操作；离开提醒读取 module 的待完成事实。 |
@@ -81,11 +86,13 @@
 
 ## 测试
 
-原图分享的行为验收见 `sharing_test.go`（真实本地 / S3 字节、生命周期、并发、临时故障、元数据不变与读取中换图、分页及门禁）和 `frontend/tests/sharing.spec.ts`（Chromium / WebKit 的真实复制、外站引用、手动复制、回答丢失、筛选与手机布局）。
-
 | 文件 | 作用 |
 |---|---|
 | `album_test.go` | 测试文件夹相册的分组、命名、封面、添加日期和过滤。 |
+| `sharing_test.go` | 原图分享：真实本地 / S3 字节、生命周期、并发、临时故障、元数据不变与读取中换图、分页及门禁、访客不占站长的名额。 |
+| `batch_sharing_test.go` | 批量分享：真实 HTTP、来源、SQLite、并发交错、旧执行轮次、重启中断与原图字节。 |
+| `frontend/tests/sharing.spec.ts` | Chromium / WebKit 的真实复制、外站引用、手动复制、回答丢失、「只看已分享」与手机布局。 |
+| `frontend/tests/batch-sharing.spec.ts` | Chromium / WebKit 的批量操作、复制、恢复、筛选、确认弹窗内显示被拒绝的原因、任务处理中「只看已分享」不重读而结束时只读一次、「管理分享」默认收起与收起清理、照片页没有「管理分享」、封面分享标记与分享状态筛选、已结束结果只在发起页自动显示及手机布局。 |
 | `recognizer_test.go` | 识别服务：配置校验与门禁、Key 只写不读 / 同服务沿用 / 换服务重填、假 OpenAI 格式服务上的请求内容（无 temperature、JSON Schema、推理强度）与逐条检查、去掉 JSON Schema 重试、各类失败与 50 秒期限、假 Claude 服务上的 Messages API 请求、测试不保存。 |
 | `organize_test.go` | 作者 / 模特（全部经 `applyOrganize` / `POST /api/organize`）：名字规范化、替换 / 顺序 / 清空 / 大小写复用、重开数据库后仍在、改名合并与删除、登录 / 同源 / JSON 门禁、第一版逐项写接口已删除、非法输入、失效记录与清理。 |
 | `organize_receipts_test.go` | 回执与资料原子提交、失败回滚、并发重复请求、重启、丢失 HTTP 响应后核对、名字 / 同源 / 登录校验、容量 / 时间上限及旧编号不重做。 |
@@ -125,8 +132,6 @@
 | `photo_processing_test.go` | 模块与 HTTP 验收：旧列举不回退版本；用通道控制读取和等待，验证更新、删除、取消与壁纸未完成时浏览；补图返回当前版本、条件清理、坏图/GIF/壁纸失败结果、未变扫描零逐图请求。 |
 | `review_fix_test.go` | 审查问题回归：失败恢复、坏图、缓存、并发、会话、S3 超时、EXIF、持久化和索引迁移。 |
 | `wallpaper_test.go` | 随机壁纸：规格与取整（用 Sharp 实际尺寸）、生成→接口读取→替换→删除的完整生命周期、参数与 204/400、随机均匀、补生成只读一次、壁纸失败不影响相册、上传通知、登录背景、只公开两个路径、设置统计、旧库迁移。 |
-| `TESTING.md` | 项目的测试原则和验收顺序。 |
-| `TEST_REPORT.md` | 最新一次实际测试的环境、方法、结果和结论。 |
 
 ## 构建与部署
 
@@ -146,7 +151,10 @@
 | `README.md` | 面向使用者的安装和操作说明。 |
 | `ARCHITECTURE.md` | 当前技术栈、架构、功能和接口说明。 |
 | `DECISIONS.md` | 记录重要技术和设计选择及其原因。 |
-| `CONTEXT.md` | 术语表：账号、两步验证、动态码、保持登录、原图、壁纸等说法的统一叫法。 |
+| `CONTEXT.md` | 术语表：账号、两步验证、动态码、保持登录、原图、壁纸、分享、识别等说法的统一叫法。 |
+| `CODE_REVIEW.md` | 最近一次代码审查的问题清单与修复跟进；更早的审查见 Git 历史。 |
+| `TESTING.md`、`TEST_REPORT.md` | 测试原则与验收顺序；最近一次实际测试的环境、方法、结果和结论。 |
+| `docs/*-plan.md` | 各功能当时与用户确认的方案与验收项（原图分享、批量分享、识别建议、整理页布局、设置页子页）；之后的变化以 `ARCHITECTURE.md` 与 `DECISIONS.md` 为准。 |
 | `design.md` | Hallmark 锁定的界面设计系统，约束主图库、登录页和大图层共享的视觉语言。 |
 | `CHANGELOG.md` | 记录各版本完成功能。 |
 | `AGENTS.md` | 约束后续开发、测试、文档和部署工作的项目规则。 |
@@ -157,16 +165,9 @@
 这些目录不是核心源码，通常不会提交到 Git：
 
 - `photos/`：本地测试或实际照片来源；添加对象存储后仍与对象存储一起扫描。
-- `data/`：SQLite（照片索引、壁纸表、对象存储配置与相册作者 / 模特）、会话密钥、缩略图缓存和壁纸（`wallpapers/`）。
+- `data/`：SQLite（照片索引、壁纸表、对象存储与识别服务配置、相册作者 / 模特、分享许可与批量任务）、会话密钥、缩略图缓存、壁纸（`wallpapers/`）和分享读取的临时快照目录（`.share-tmp/`）。
 - `output/`：浏览器截图等测试产物。
 - `web/`：Next.js 静态导出产物（仅 `.gitkeep` 提交）；Go 构建前必须生成。
 - `frontend/node_modules/`、`.next/`、`out/`：安装依赖与构建缓存。
 
-更新时间：2026-10-11 23:44:23 CST。
-
-## 批量分享前端与回归
-
-- `frontend/components/batch-sharing.tsx`：相册列表与单本页共用的核对、提交、进度、任务恢复、取消、重试、复制和手动复制界面；已结束的任务只在本页发起时自动显示，否则收在「查看最近的批量任务」后面。
-- `frontend/lib/share-batches.ts`：任务响应校验、读取及分享变化通知。
-- `frontend/components/albums.tsx`：封面始终标出部分 / 全部已分享，可按分享状态筛选；打开「管理分享」后显示相册勾选、当前筛选全选与带数量的分享状态；`photo-gallery.tsx` 在单本相册页打开后显示单本入口与「只看已分享」，收起时取消该筛选；`photo-sharing.tsx` 协调单图状态。
-- `batch_sharing_test.go`：真实 HTTP、来源、SQLite、并发交错、重启与原图字节回归；`frontend/tests/batch-sharing.spec.ts`：Chromium / WebKit 的批量操作、复制、恢复、筛选、「管理分享」默认收起与收起清理、照片页没有「管理分享」、封面分享标记与分享状态筛选、已结束结果只在发起页自动显示及手机布局。
+更新时间：2026-10-17 22:45:12 CST（审查修复）。

@@ -50,7 +50,7 @@ func TestQueryPagesPreserveLegacyOrder(t *testing.T) {
 		var rank uint64
 		var id int64
 		for page := 0; page < 30; page++ {
-			photos, total, next, err := st.photoPage(seed, "", rank, id, 19)
+			photos, total, next, err := st.photoPage(seed, "", rank, id, 19, false)
 			if err != nil || total != len(wanted) {
 				t.Fatalf("page: total=%d err=%v", total, err)
 			}
@@ -65,7 +65,7 @@ func TestQueryPagesPreserveLegacyOrder(t *testing.T) {
 		}
 	}
 	builds := st.cache.orders.builds.Load()
-	if _, _, _, err := st.photoPage(42, "", 0, 0, 40); err != nil {
+	if _, _, _, err := st.photoPage(42, "", 0, 0, 40, false); err != nil {
 		t.Fatal(err)
 	}
 	if st.cache.orders.builds.Load() != builds || st.cache.index.builds.Load() != 1 {
@@ -83,7 +83,7 @@ func TestQueryVisibleScopeDetailsAndInvalidation(t *testing.T) {
 	}
 	b.ID = bID
 	other := queryPhoto(t, st, "other/c.jpg", 20)
-	photos, total, _, err := st.photoPage(7, "same", 0, 0, 40)
+	photos, total, _, err := st.photoPage(7, "same", 0, 0, 40, false)
 	if err != nil || total != 2 || len(photos) != 2 {
 		t.Fatalf("same-folder sources: %d %v", total, err)
 	}
@@ -92,7 +92,7 @@ func TestQueryVisibleScopeDetailsAndInvalidation(t *testing.T) {
 	if _, err := st.upsert(a); err != nil {
 		t.Fatal(err)
 	}
-	photos, _, _, err = st.photoPage(7, "same", 0, 0, 40)
+	photos, _, _, err = st.photoPage(7, "same", 0, 0, 40, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -108,7 +108,7 @@ func TestQueryVisibleScopeDetailsAndInvalidation(t *testing.T) {
 	if _, err := st.upsert(a); err != nil {
 		t.Fatal(err)
 	}
-	photos, total, _, err = st.photoPage(7, "same", 0, 0, 40)
+	photos, total, _, err = st.photoPage(7, "same", 0, 0, 40, false)
 	if err != nil || total != 1 || len(photos) != 1 || photos[0].ID != b.ID {
 		t.Fatalf("move: %+v total=%d err=%v", photos, total, err)
 	}
@@ -177,7 +177,7 @@ func TestQueryPageSkipsStaleCandidatesAndFillsPage(t *testing.T) {
 	if _, err := st.db.Exec("UPDATE photos SET broken=1 WHERE id IN (?,?,?)", order[0].id, order[3].id, order[7].id); err != nil {
 		t.Fatal(err)
 	}
-	photos, _, next, err := st.photoPage(42, "a", 0, 0, 10)
+	photos, _, next, err := st.photoPage(42, "a", 0, 0, 10, false)
 	if err != nil || len(photos) != 10 || next == nil {
 		t.Fatalf("fill: %d %v %v", len(photos), next, err)
 	}
@@ -463,7 +463,7 @@ func TestQueryConcurrentReadsAndWrites(t *testing.T) {
 		go func() {
 			defer wg.Done()
 			for i := 0; i < 40; i++ {
-				if _, _, _, err := st.photoPage(42, "", 0, 0, 40); err != nil {
+				if _, _, _, err := st.photoPage(42, "", 0, 0, 40, false); err != nil {
 					t.Error(err)
 					return
 				}
@@ -497,7 +497,7 @@ func TestQueryConcurrentReadsAndWrites(t *testing.T) {
 		}
 	}
 	wg.Wait()
-	photos, n, _, err := st.photoPage(42, "", 0, 0, 40)
+	photos, n, _, err := st.photoPage(42, "", 0, 0, 40, false)
 	if err != nil || n != 1 || len(photos) != 1 || photos[0].SourceVersion != "v39" {
 		t.Fatal("final state not visible", n, err)
 	}
@@ -512,18 +512,18 @@ func TestQueryOrderEvictionRebuildsSameCursor(t *testing.T) {
 	for i := 0; i < 100; i++ {
 		queryPhoto(t, st, fmt.Sprintf("%d.jpg", i), int64(i))
 	}
-	first, _, cursor, err := st.photoPage(42, "", 0, 0, 40)
+	first, _, cursor, err := st.photoPage(42, "", 0, 0, 40, false)
 	if err != nil || cursor == nil {
 		t.Fatal(err)
 	}
 	rank, id := parseCursor(*cursor)
-	want, _, _, _ := st.photoPage(42, "", rank, id, 40)
+	want, _, _, _ := st.photoPage(42, "", rank, id, 40, false)
 	for seed := int64(100); seed < 112; seed++ {
-		if _, _, _, err := st.photoPage(seed, "", 0, 0, 40); err != nil {
+		if _, _, _, err := st.photoPage(seed, "", 0, 0, 40, false); err != nil {
 			t.Fatal(err)
 		}
 	}
-	got, _, _, err := st.photoPage(42, "", rank, id, 40)
+	got, _, _, err := st.photoPage(42, "", rank, id, 40, false)
 	if err != nil || !slices.Equal(want, got) || len(first) != 40 {
 		t.Fatal("eviction changed cursor order", err)
 	}

@@ -462,6 +462,43 @@ func TestRecognizerTestDoesNotSave(t *testing.T) {
 	}
 }
 
+// A custom service at another address is another company: the saved key stays
+// home unless the owner types one for the new address.
+func TestRecognizerKeepsKeyOnlyAtTheSameAddress(t *testing.T) {
+	h := recognizeHarness(t)
+	first := newFakeService(t, chatAnswer(`{"albums":[]}`))
+	second := newFakeService(t, chatAnswer(`{"albums":[]}`))
+	configureRecognizer(t, h, map[string]any{"provider": "custom", "endpoint": first.srv.URL + "/v1", "apiKey": "sk-first", "model": "m"})
+
+	sameAddress := map[string]any{"provider": "custom", "endpoint": " " + first.srv.URL + "/v1/ ", "apiKey": "", "model": "m"}
+	if code, out, _ := h.json(t, "POST", "/api/recognizer/test", sameAddress); code != http.StatusOK || out["ok"] != true {
+		t.Fatalf("same address without key = %d %v", code, out)
+	}
+	if seen := first.seen(); len(seen) != 1 || seen[0].header.Get("Authorization") != "Bearer sk-first" {
+		t.Fatalf("same address request %v", seen)
+	}
+
+	moved := map[string]any{"provider": "custom", "endpoint": second.srv.URL + "/v1", "apiKey": "", "model": "m"}
+	for _, method := range []string{"POST", "PUT"} {
+		path := map[string]string{"POST": "/api/recognizer/test", "PUT": "/api/recognizer"}[method]
+		if code, out, _ := h.json(t, method, path, moved); code != http.StatusBadRequest || out["error"] != "换了接口地址，请重新填写 API Key" {
+			t.Fatalf("%s another address without key = %d %v", method, code, out)
+		}
+	}
+	if seen := second.seen(); len(seen) != 0 {
+		t.Fatalf("the saved key reached another address: %v", seen)
+	}
+	if c, _, _ := h.st.getRecognizer(); c.Endpoint != first.srv.URL+"/v1" || c.APIKey != "sk-first" {
+		t.Fatalf("refused move changed config: %+v", c)
+	}
+
+	moved["apiKey"] = "sk-second"
+	configureRecognizer(t, h, moved)
+	if c, _, _ := h.st.getRecognizer(); c.Endpoint != second.srv.URL+"/v1" || c.APIKey != "sk-second" {
+		t.Fatalf("new address with its own key = %+v", c)
+	}
+}
+
 func TestParseRecognition(t *testing.T) {
 	for _, text := range []string{
 		`{"albums":[]}`,

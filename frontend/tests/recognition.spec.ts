@@ -124,6 +124,14 @@ test("recognition 01 settings card saves, tests without saving and never shows t
   await expect(card.locator("#recognizer-msg")).toContainText("测试成功");
   sent = await fixtureRequests(page);
   expect(sent.at(-1)).toMatchObject({ authorization: "Bearer sk-fixture", reasoning: null });
+  // A compatible service at another address is another company too: nothing is sent.
+  await card.locator("#recognizer-endpoint").fill("http://127.0.0.1:9/v1");
+  await expect(card.locator("#recognizer-apiKey-hint")).toHaveText("只保存在服务器，保存后不会返回");
+  await card.locator("#recognizer-test").click();
+  await expect(card.locator("#recognizer-apiKey-error")).toHaveText("换了接口地址，请重新填写 API Key。");
+  expect(await fixtureRequests(page)).toHaveLength(sent.length);
+  await card.locator("#recognizer-endpoint").fill(fixture + "/v1/");
+  await expect(card.locator("#recognizer-apiKey-hint")).toHaveText("已保存，留空表示不修改");
   // Another company needs its own key.
   await card.locator("#recognizer-provider").click();
   await page.getByRole("option", { name: "Grok（xAI）", exact: true }).click();

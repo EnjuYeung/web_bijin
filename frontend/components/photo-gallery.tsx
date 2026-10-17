@@ -12,15 +12,29 @@ import { PhotoSharing } from "@/components/photo-sharing";
 import { BatchSharing } from "@/components/batch-sharing";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Field, FieldLabel } from "@/components/ui/field";
+import { onSharingChanged } from "@/lib/sharing";
 
 function photoHash() { const match = /^#p\/(\d+)$/.exec(location.hash); return match ? Number(match[1]) : null; }
 
 export function PhotoGallery({ album, sharing, onCount, onTitle }: { album: string | null; sharing: boolean; onCount: (total: number) => void; onTitle: (title: string) => void }) {
   const [sharingRevision, setSharingRevision] = useState(0);
-  const [sharedOnly, setSharedOnly] = useState(false);
-  // Only an album page with 管理分享 open can show shared photos alone.
-  useEffect(() => { setSharedOnly(sharing && new URLSearchParams(location.search).get("shared") === "1"); }, []);
-  useEffect(() => { let dirty = false; const changed = () => { if (photoHash()) { dirty = true; return; } setSharingRevision(n => n + 1); }; const closed = () => { if (dirty && !photoHash()) { dirty = false; setSharingRevision(n => n + 1); } }; addEventListener("bijin-sharing-changed", changed); addEventListener("popstate", closed); addEventListener("hashchange", closed); return () => { removeEventListener("bijin-sharing-changed", changed); removeEventListener("popstate", closed); removeEventListener("hashchange", closed); }; }, []);
+  // Only an album page with 管理分享 open can show shared photos alone. This
+  // renders in the browser only, so the address is read before the first load.
+  const [sharedOnly, setSharedOnly] = useState(() => sharing && new URLSearchParams(location.search).get("shared") === "1");
+  // A finished batch task changes which photos are shared: reload the shared
+  // list, after the open photo closes. The viewer's own copy and stop are
+  // already reflected in the list (see onStopped below).
+  const stale = useRef(false);
+  useEffect(() => onSharingChanged(source => {
+    if (source === "photo") return;
+    if (photoHash()) stale.current = true;
+    else setSharingRevision(n => n + 1);
+  }), []);
+  const closed = useCallback(() => {
+    if (!stale.current) return;
+    stale.current = false;
+    setSharingRevision(n => n + 1);
+  }, []);
   function showShared(checked: boolean) {
     setSharedOnly(checked);
     const url = new URL(location.href);
@@ -34,11 +48,17 @@ export function PhotoGallery({ album, sharing, onCount, onTitle }: { album: stri
       <BatchSharing albums={album === null ? [] : [album]} />
       <Field orientation="horizontal" className="sharing-check"><Checkbox id="shared-only" checked={sharedOnly} onCheckedChange={showShared} /><FieldLabel htmlFor="shared-only">只看已分享</FieldLabel></Field>
     </div>}
-    <Gallery key={`${album ?? "all"}:${sharedOnly}:${sharedOnly ? sharingRevision : 0}`} album={album} sharedOnly={sharedOnly} onCount={onCount} onTitle={onTitle} />
+    <Gallery key={`${album ?? "all"}:${sharedOnly}:${sharedOnly ? sharingRevision : 0}`} album={album} sharedOnly={sharedOnly} onCount={onCount} onTitle={onTitle} onClosed={closed} />
   </>;
 }
 
-function Gallery({ album, sharedOnly, onCount, onTitle }: { album: string | null; sharedOnly: boolean; onCount: (total: number) => void; onTitle: (title: string) => void }) {
+function Gallery({ album, sharedOnly, onCount, onTitle, onClosed }: {
+  album: string | null; sharedOnly: boolean; onCount: (total: number) => void; onTitle: (title: string) => void;
+  // Called once a photo has closed and its #p/ address is gone.
+  onClosed: () => void;
+}) {
+  const closed = useRef(onClosed);
+  closed.current = onClosed;
   const [photos, setPhotos] = useState<Photo[]>([]);
   const [loaded, setLoaded] = useState(false);
   const [notice, setNotice] = useState("");
@@ -133,8 +153,9 @@ function Gallery({ album, sharedOnly, onCount, onTitle }: { album: string | null
   const closePhoto = useCallback(() => {
     if (activeID === null) return;
     setActiveID(null);
+    // Going back ends in popstate, which sync() handles; replacing fires nothing.
     if (history.state?.bijinPhoto) history.back();
-    else history.replaceState(null, "", location.pathname + location.search);
+    else { history.replaceState(null, "", location.pathname + location.search); closed.current(); }
   }, [activeID]);
   const openPhoto = useCallback((photo: Photo, button?: HTMLButtonElement, replace = false) => {
     if (button) {
@@ -161,7 +182,7 @@ function Gallery({ album, sharedOnly, onCount, onTitle }: { album: string | null
       const id = photoHash();
       setActiveID(id);
       if (id) { setPreviewID(id); setInfoOpen(matchMedia("(min-width:720px)").matches); }
-      if (!id) requestAnimationFrame(() => scrollTo(0, history.state?.y ?? scroll.current));
+      if (!id) { requestAnimationFrame(() => scrollTo(0, history.state?.y ?? scroll.current)); closed.current(); }
     };
     sync();
     addEventListener("popstate", sync);
