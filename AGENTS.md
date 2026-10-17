@@ -9,7 +9,17 @@
 - 同时为其他网站提供公开的随机壁纸接口（2026-10-05 经用户批准并入原 nas-background）：公开 `/v1/backgrounds/random` 和它跳转到的壁纸成品 `/media/sha256/…webp`。另提供用户主动开启的单张原图分享链接（2026-10-13 经用户批准），持有者无需登录即可直接查看原图；分享可停止，同名替换、移动或删除使旧链接失效。相册页面、缩略图和普通原图查看入口始终要登录。
 - 单用户、低并发使用。
 - 用户不会写代码，也不会测试，用户可接受一键命令式的调试工作。
-- `AGENTS.md`是项目全局说明，`ARCHITECTURE.md`是技术架构，`CODE_MAP.md`是代码地图，`DECISIONS.md`是开发决策，`TESTING.md`是测试标准，`TEST_REPORT.md`是最近一次开发测试记录，`CHANGELOG.md`是迭代记录。
+- 项目文档分工如下；功能、界面或接口改变时，同步更新受影响的每一份：
+  - `AGENTS.md`：项目全局说明。
+  - `README.md`：给用户的使用、部署与开发说明。
+  - `ARCHITECTURE.md`：技术架构、现行行为与完整接口表。
+  - `CODE_MAP.md`：代码地图，各文件的职责。
+  - `DECISIONS.md`：开发决策。
+  - `CONTEXT.md`：术语表，界面文字与文档用它的叫法。
+  - `design.md`：界面设计约定，改界面前先读。
+  - `TESTING.md`：测试标准；`TEST_REPORT.md`：最近一次开发测试记录；`CHANGELOG.md`：迭代记录。
+  - `CODE_REVIEW.md`：最近一次代码审查及修复跟进。
+  - `docs/*-plan.md`：各功能当时与用户确认的方案与验收项，是历史记录；现行行为以 `ARCHITECTURE.md` 和 `DECISIONS.md` 为准。
 
 ## 用户约束
 
