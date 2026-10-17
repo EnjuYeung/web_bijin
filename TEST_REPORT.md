@@ -1,52 +1,45 @@
 # 最近一次测试报告
 
-2026-10-13 23:18:23 CST：分享管理默认收起（顶部「管理分享」按钮）。基线 `e4b414c`；用户要求相册首页的分享状态、勾选框不再默认显示，界面风格统一，测试通过后部署生产并推送。验收中顺带修复相册卡片勾选框被压窄、请求函数把读不出的成功响应当作空数据两个已有问题。
+2026-10-17 14:19:51 CST：修复名字下拉按 Esc 清空已保存的作者 / 模特。基线 master `7a56378`，只改 `frontend/components/person-picker.tsx` 与浏览器用例；未部署、未推送。
 
 ## 测试环境
 
-- netcup Debian 13，隔离目录 `/root/bijin-manage-test`（本地工作区的已跟踪文件副本），不连接生产数据库、照片或 RustFS。
-- 前端：`node:24-alpine`，Next.js 16.3.7；Go：`golang:1.27-alpine`，`-tags nodynamic`；浏览器：官方 `mcr.microsoft.com/playwright:v1.63.0-noble`，Chromium / WebKit。
-- 测试服务为同一份代码构建的 `output/bijin-ui-test`，仅监听 127.0.0.1:18092 / 18094，配合 `tests/s3_fixture.py`（127.0.0.1:18093）。每次完整复测前删除测试图片与数据库，由 `genphotos.go` 重建 58 张有效图片（含一个故意损坏文件）。
+- netcup Debian 13，隔离目录 `/root/bijin-esc-test`（本工作树已跟踪文件的副本），不连接生产数据库、照片或 RustFS，未触碰 `/opt/1panel/apps/web_bijin`。
+- 前端：`node:24-alpine`，Next.js 16.3.7，`@base-ui/react` 1.8.0；Go：`golang:1.27-alpine`，`-tags nodynamic`；浏览器：`mcr.microsoft.com/playwright:v1.63.0-noble`，Chromium / WebKit。
+- 测试服务为同一份代码构建的 `output/bijin-ui-test`（127.0.0.1:18092 / 18094）与 `tests/s3_fixture.py`（18093），均在 Playwright 容器自己的网络里运行，不占用宿主机端口。每次全量前删除测试图片与数据库，由 `genphotos.go` 重建 58 张有效图片（含一个故意损坏文件）。
 
 ## 方法与结果
 
 | 编号 | 实际方法 | 结果 |
 | --- | --- | --- |
-| T01 | `npm ci && npm run typecheck && npm run build` | 通过，静态导出完成；产物含 `share-toggle`、`sharing-panel` |
-| T02 | `npm run test:organizer` / `test:upload` / `test:names` | 15 / 21 / 3 项通过，0 失败 |
-| T03 | `go test -tags nodynamic -count=1 -json .` | 168 个顶层测试通过，0 失败；`TestQueryScale` 可选压测按默认跳过 |
-| T04 | 干净数据下 `npx playwright test`（全量） | Chromium / WebKit 共 94 项通过，0 失败，4.8 分钟 |
-| T05 | `npx playwright test tests/logout.spec.ts --repeat-each=10` | 两浏览器共 120 项通过，0 失败，5.6 分钟 |
-| T06 | 取回截图人工复核（桌面收起 / 打开、320 px 相册列表与单本页、暗色） | 收起时只剩封面、名称、数量；按下状态与侧栏当前项一致；手机只显示图标，无横向溢出；卡片勾选为 44 px 方块 |
-| T07 | 提交 `4dd9c14` 与隔离副本逐文件 SHA-256 比对 | 132 个非文档文件一致，部署的就是测试过的代码 |
-| T08 | 生产部署前：SQLite 在线备份并 `quick_check`，记录各表行数；当前镜像打回滚标签 | quick_check ok；photos 4025、photo_shares 4025、album_people 81、people 24、wallpapers 4070、storages 1、share_batches 0 |
-| T09 | 生产 `git pull --ff-only` 到 `4dd9c14`，`docker compose build && up -d` | 新镜像 `060e834b42e3`，约 9 秒 healthy；启动扫描 4025 张、0 失败；日志无 WARN / ERROR；镜像内含 `share-toggle` 与「响应不完整，请重试」 |
-| T10 | 公网核对 `https://csb.jgbman.cc` | health 200、登录页 200；未登录 `/api/albums`、`/api/share-batches` 401，`/?view=albums` 302 到登录；随机壁纸 302；线上 CSS 含按钮按下样式；现存 2 个分享许可保留，抽查公开原图 200（image/jpeg） |
-| T11 | 部署后各表行数与 quick_check | 与部署前完全一致，quick_check ok |
-| T12 | 清理隔离目录、日志、数据库备份、测试镜像与卷、旧镜像、构建缓存 | 回收 7391232000 字节（约 6.88 GiB）；netcup 仅剩 bijin / RustFS / OpenResty 三个容器与镜像，构建缓存 0 |
+| T01 | 未修改代码上运行新用例 `organize-saving.spec.ts` 「saving 07」 | 两浏览器均失败：点「添加「Probe Name」」显示已保存后按一次 Esc，模特变为 `[]` |
+| T02 | 未修改代码上临时探针（已删除，未提交）：作者选「Studio A」后按 Esc | Chromium 发送 `{"author":""}`，服务器作者变空；WebKit 第一次 Esc 只关闭仍开着的下拉 |
+| T03 | 未修改代码上临时探针：模特筛选选中后按两次 Esc | 两浏览器筛选条件都被清空，列表恢复「共 4 本」 |
+| T04 | 修复后 `npm run typecheck && npm run build` | 通过 |
+| T05 | `npm run test:organizer` / `test:upload` / `test:names` | 15 / 21 / 3 项通过，0 失败 |
+| T06 | `go vet`、`gofmt -l`、`go test -tags nodynamic -count=1 -json .` | vet / 格式无问题；168 个顶层测试通过，0 失败；`TestQueryScale` 可选压测按默认跳过 |
+| T07 | 干净数据下 `npx playwright test`（全量，最终版用例） | Chromium 57 / WebKit 39，共 96 项通过，0 失败、0 不稳定，4.7 分钟；修复前基线为 94 项 |
+| T08 | 本工作树与 netcup 副本的改动文件 SHA-256 比对 | `person-picker.tsx`、`organize-saving.spec.ts` 一致 |
 
 ## 业务验收
 
 | 编号 | 用户想做什么 | 操作与预期 | 证据 | 状态 |
 | --- | --- | --- | --- | --- |
-| M01 | 打开相册列表只看封面 | 默认无勾选框、无分享状态、无批量入口与任务结果；按钮 `aria-pressed=false` | `batch-sharing.spec.ts` 新增用例，两浏览器 | 通过 |
-| M02 | 需要时管理分享 | 点「管理分享」出现全选、卡片勾选、分享状态、批量按钮与最近任务结果 | 同上；原有 5 项批量用例改为先打开再操作，全部通过 | 通过 |
-| M03 | 收起后不留隐藏状态 | 收起清空相册勾选；照片页 / 单本页收起时取消「只看已分享」并去掉地址里的 `shared=1`，照片恢复全部 | 同上，照片页数量由 3 恢复为 58 | 通过 |
-| M04 | 收起期间跑完的任务打开后显示正确 | 收起时由接口完成 misc 开启，打开后显示「全部已分享 · 3/3」 | 同上 | 通过 |
-| M05 | 带「只看已分享」的链接仍可用 | `/?album=misc&shared=1` 自动打开管理，筛选生效 | `batch-sharing.spec.ts` 单本页用例、`sharing.spec.ts` 筛选用例 | 通过 |
-| M06 | 手机上好点 | 320 px 下按钮只显示图标、44 px；卡片勾选方块不小于 44 px，点边角即可选中且不进入相册；无横向溢出 | 新增用例与原手机用例 | 通过 |
-| M07 | 网络或离页中断不报错 | 设置读取返回 200 但内容不是 JSON 时显示「设置暂时读不出来 · 响应不完整，请重试」，重试后正常 | `album.spec.ts` 新增 08 | 通过 |
+| E01 | 新增模特后按 Esc 不丢失 | 模特框新增「Probe Name」→ 已保存 → Esc：模特仍在，不发送新的保存 | saving 07，两浏览器 | 通过 |
+| E02 | 作者框按 Esc 不丢失 | 回车选定「Studio A」后多次 Esc：输入框仍显示「Studio A」，不保存空作者 | saving 07 | 通过 |
+| E03 | Esc 取消正在输入的文字 | 模特框、作者框各输入「Draft」→ Esc 关闭下拉 → 再 Esc：模特框为空、作者框恢复「Studio A」，已选名字不变 | saving 07 | 通过 |
+| E04 | 没有多余写入 | 上述 Esc 期间 `POST /api/organize` 只有选名字的两次（`["Probe Name"]`、`"Studio A"`）；刷新后服务器资料不变 | saving 07 网络记录与 `/api/albums` | 通过 |
+| E05 | 筛选条件按 Esc 不清空 | 整理页模特筛选选中后按两次 Esc：筛选仍是「Probe Name」，仍只显示 1 本 | saving 07 | 通过 |
+| E06 | 原有键盘、删除、清除与筛选操作不变 | Backspace 删模特、✕ / 清除按钮、筛选后 Esc 关闭下拉等原有用例 | 全量 96 项 | 通过 |
 
 ## 失败、修复与复测记录
 
-- 第一次运行：从 Mac 打包带入 149 个 `._*` 元数据文件，Playwright 将其当作测试文件而无法加载，没有用例执行。删除后重跑。
-- 第二次运行 93 项全部通过。复核截图发现相册卡片「选择」框被 `FieldGroup` 的容器查询压成窄条、文字竖排溢出（生产已有问题），改为 44 px 勾选方块并新增点击范围断言。
-- 第三次运行 11 项失败：上一轮上传测试写入的 24 张图片残留在测试图片目录（82 张 / 22 本，而非 58 张 / 4 本）。删除并重建测试图片后复测，没有修改数量断言迎合残留。
-- 第四次运行 90 项通过、1 项失败、2 项未运行：WebKit「退出登录 04」页面错误 `e.local.photos`。重复 5 次再现（60 次中 1 次）。原因是设置页读取中退出，离页中断的成功响应被请求函数当作 `{}` 返回。修复为成功但内容不是完整 JSON 时报「响应不完整，请重试」，新增 08 用例；最终全量 94 项与退出登录重复 120 项全部通过。
+- 第一次运行（未修改代码）：saving 07 两浏览器在报告的那一步失败，作为复现证据；修复后两浏览器通过。
+- 用例补充筛选检查后，在上一轮全量留下的上传图片上单独运行，探针的「显示 1 / 4 本」断言因残留图片（共 22 本）不符；与 Esc 无关。重建测试图片后复测，并把用例改为只核对「显示 1 / …」，不依赖总本数。
+- 最终在干净数据上完整重跑全量 96 项通过。
 
 ## 限制与结论
 
-- 未开启 `TestQueryScale` 10 万 / 20 万条可选压测；本次为前端改动，接口与数据库结构未变。
-- 测试全部在隔离目录进行，没有读写生产数据库、照片和分享许可；生产只做只读核对。
-- 登录后的界面由用户本人在生产手机端确认无问题（2026-10-13 23:29:05 CST）；自动化覆盖来自隔离环境同一代码的浏览器测试。
-- 结论：功能与回归测试通过，已部署生产并推送 master，生产 healthy，原有数据、配置与分享保留。
+- 未开启 `TestQueryScale` 可选压测；本次只改前端名字下拉，接口与数据库结构未变。
+- 未在生产或真机手机上验证；未部署。合并回 master、部署需用户同意。
+- 结论：Esc 不再清空已选作者 / 模特或筛选条件，只关闭下拉或取消正在输入的文字；前端模块、Go 全量与两浏览器全量回归通过。
