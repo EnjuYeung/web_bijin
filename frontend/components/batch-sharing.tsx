@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Copy, Link2, Link2Off, RefreshCw, X } from "lucide-react";
+import { Copy, History, Link2, Link2Off, RefreshCw, X } from "lucide-react";
 import { api } from "@/lib/api";
 import { batchLabels, checkBatch, listBatches, readBatch, sharingChanged, type ShareBatch } from "@/lib/share-batches";
 import { Button } from "@/components/ui/button";
@@ -12,6 +12,10 @@ import { Field, FieldGroup, FieldLabel } from "@/components/ui/field";
 import { Textarea } from "@/components/ui/textarea";
 import { Spinner } from "@/components/ui/spinner";
 import { OptionSelect } from "@/components/option-select";
+
+// Tasks started, retried or cancelled on this page. A finished task opens by
+// itself only here; after leaving the page it waits behind 查看最近的批量任务.
+const startedHere = new Set<string>();
 
 export function BatchSharing({ albums }: { albums: string[] }) {
   const [tasks, setTasks] = useState<ShareBatch[]>([]);
@@ -27,10 +31,10 @@ export function BatchSharing({ albums }: { albums: string[] }) {
   const latestSelection = useRef(selection); latestSelection.current = selection;
   const refresh = useCallback(async (id?: string) => {
     const list = await listBatches(); if (!alive.current) return;
-    setTasks(list);
-    const chosen = id || list.find(t => t.status === "running")?.id || list[0]?.id;
-    if (chosen) { const task = await readBatch(chosen); if (alive.current) setCurrent(task); }
-    else setCurrent(null);
+    const chosen = id || list.find(t => t.status === "running")?.id || list.find(t => startedHere.has(t.id))?.id;
+    // Set together, so 查看最近的批量任务 does not flash before a chosen result.
+    const task = chosen ? await readBatch(chosen) : null; if (!alive.current) return;
+    setTasks(list); setCurrent(task);
   }, []);
   useEffect(() => { alive.current = true; refresh().catch(err => { if (alive.current) setError(err.message); }); return () => { alive.current = false; }; }, [refresh]);
   useEffect(() => { setPreview(null); }, [selection]);
@@ -64,12 +68,12 @@ export function BatchSharing({ albums }: { albums: string[] }) {
   }
   async function change(task: ShareBatch, action: "start" | "retry" | "cancel") {
     if (busy.current) return; busy.current = true; setPending(true); setError(""); setNotice(""); setManual([]);
-    try { const next = await readBatch(task.id + "/" + action, { method: "POST", body: JSON.stringify({ revision: task.revision }) }); if (!alive.current) return; setPreview(null); setCurrent(next); setTasks(list => [next, ...list.filter(t => t.id !== next.id)]); sharingChanged(); }
+    try { const next = await readBatch(task.id + "/" + action, { method: "POST", body: JSON.stringify({ revision: task.revision }) }); startedHere.add(next.id); if (!alive.current) return; setPreview(null); setCurrent(next); setTasks(list => [next, ...list.filter(t => t.id !== next.id)]); sharingChanged(); }
     catch (err) {
       if (!alive.current) return;
       setError(err instanceof Error ? err.message : "未能确认操作结果。");
       // A lost response is not a failed write. Inspect the same persisted task.
-      try { const next = await readBatch(task.id); if (!alive.current) return; if (next.status !== "prepared") { setPreview(null); setCurrent(next); setTasks(list => [next, ...list.filter(t => t.id !== next.id)]); } }
+      try { const next = await readBatch(task.id); if (next.status !== "prepared") startedHere.add(next.id); if (!alive.current) return; if (next.status !== "prepared") { setPreview(null); setCurrent(next); setTasks(list => [next, ...list.filter(t => t.id !== next.id)]); } }
       catch { /* retain the known id and offer verification */ }
     } finally { busy.current = false; if (alive.current) setPending(false); }
   }
@@ -104,6 +108,7 @@ export function BatchSharing({ albums }: { albums: string[] }) {
       <Button variant="outline" disabled={pending || running} onClick={() => prepare("stop")}><Link2Off data-icon="inline-start" aria-hidden="true" />批量停止分享</Button>
       {pending && <Spinner aria-label="正在核对" />}
     </div>}
+    {!current && tasks.length > 0 && <Button variant="ghost" className="self-start" disabled={pending} onClick={() => { setError(""); refresh(tasks[0].id).catch(err => setError(err.message)); }}><History data-icon="inline-start" aria-hidden="true" />查看最近的批量任务</Button>}
     {current && <div className="batch-result">
       <div className="flex flex-wrap items-center gap-2"><Badge variant="secondary">{batchLabels[current.status]}</Badge><span>{current.mode === "open" ? "开启" : "停止"}分享 · {current.albums.length} 本相册</span></div>
       {tasks.length > 1 && <OptionSelect id="share-task" label="查看批量任务" disabled={pending} value={current.id} choices={tasks.map(t => ({ value: t.id, label: `${new Date(t.created * 1000).toLocaleString("zh-CN")} · ${t.mode === "open" ? "开启" : "停止"} · ${batchLabels[t.status]}` }))} onChange={id => { setManual([]); setNotice(""); refresh(id).catch(err => setError(err.message)); }} />}

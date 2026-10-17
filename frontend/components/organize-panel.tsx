@@ -225,7 +225,7 @@ export default function OrganizePanel() {
       {waiting.has(album.id) ? <Spinner aria-hidden="true" /> : <Sparkles aria-hidden="true" />}
     </Button>;
   }
-  const status = recognizer && !recognizer.configured ? <>还没有配置识别服务，<a href="/?view=settings">去设置页配置</a>。</>
+  const status = recognizer && !recognizer.configured ? <>还没有配置识别服务，<a href="/?view=settings&tab=recognizer">去设置页配置</a>。</>
     : recognizing.running ? `识别中 ${recognizing.done} / ${recognizing.total}` : recognizing.summary;
   const acceptable = withSuggestions.length > 0 && !recognizing.running;
   const hint = !!status || recognizing.failures.length > 0 || acceptable;

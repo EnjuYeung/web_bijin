@@ -10,8 +10,8 @@ async function current(page: Page, id: number): Promise<Share> {
   return res.json();
 }
 
-async function openFirst(page: Page) {
-  await page.goto("/");
+async function openFirst(page: Page, path = "/") {
+  await page.goto(path);
   const card = page.locator(".sheet").first();
   await expect(card).toBeVisible();
   const id = Number(await card.getAttribute("data-id")); ids.add(id);
@@ -108,8 +108,8 @@ test("lost or malformed creation answer is verified without creating another sha
   expect((await current(page, id)).path).toBe(shared.path);
 });
 
-test("shared filter works in gallery and album, stopping removes it and resets paging", async ({ page }) => {
-  const id = await openFirst(page);
+test("shared filter works in an album, stopping removes it and resets paging", async ({ page }) => {
+  const id = await openFirst(page, "/?album=misc");
   await page.getByRole("button", { name: "复制分享链接", exact: true }).click();
   await expect(page.getByRole("button", { name: "停止分享", exact: true })).toBeVisible();
   await page.locator("#lb-close").click();

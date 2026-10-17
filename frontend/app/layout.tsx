@@ -2,8 +2,9 @@ import type { Metadata, Viewport } from "next";
 import type { ReactNode } from "react";
 import "./globals.css";
 
+// No title here: the album app renders its own page title, and a layout title
+// would be put back over it once Next.js finishes loading.
 export const metadata: Metadata = {
-  title: "Juen's",
   description: "家里的照片，和云端的回忆。",
   robots: { index: false, follow: false },
   icons: { icon: "/favicon.svg" },

@@ -72,7 +72,7 @@ test.afterEach(async ({ page }) => {
 });
 
 test("recognition 01 settings card saves, tests without saving and never shows the key", async ({ page }) => {
-  await page.goto("/?view=settings");
+  await page.goto("/?view=settings&tab=recognizer");
   const card = page.locator("#recognizer-card");
   await expect(card.locator("#recognizer-state")).toHaveText("未配置");
   await card.locator("#recognizer-add").click();
@@ -282,7 +282,9 @@ test("recognition 03 without a service there is no recognize column and the hint
   await expect(page.locator(".organize-head-ai")).toHaveCount(0);
   await expect(page.locator("#recognize-status")).toContainText("还没有配置识别服务");
   await page.locator("#recognize-status a").click();
-  await expect(page).toHaveURL(/view=settings/);
+  await expect(page).toHaveURL(/view=settings&tab=recognizer/);
+  await expect(page.getByRole("tab", { name: "识别服务", exact: true })).toHaveAttribute("aria-selected", "true");
+  await expect(page.locator("#recognizer-state")).toBeVisible();
   await expect(page.locator("#recognizer-state")).toHaveText("未配置");
 });
 

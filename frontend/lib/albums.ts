@@ -67,20 +67,29 @@ export function peopleText(album: AlbumPeople) {
   return [album.author?.name, album.models.map(model => model.name).join("、")].filter(Boolean).join(" · ");
 }
 
-// Album filters: any of the chosen authors, and any of the chosen models.
-export interface AlbumFilter { authors: string[]; models: string[] }
+// How many of an album's photos are shared: none, some or all.
+export type ShareState = "none" | "partial" | "full";
+export const shareLabels: Record<ShareState, string> = { none: "未分享", partial: "部分已分享", full: "全部已分享" };
+export function shareState(album: Pick<Album, "count" | "shared">): ShareState {
+  return album.shared <= 0 ? "none" : album.shared >= album.count ? "full" : "partial";
+}
+
+// Album filters: any of the chosen authors, any of the chosen models, and one
+// sharing state on the album page.
+export interface AlbumFilter { authors: string[]; models: string[]; shared?: ShareState }
 export const emptyFilter: AlbumFilter = { authors: [], models: [] };
 // What is still missing; used by the organize page.
 export type FillState = "all" | "empty" | "noAuthor" | "noModel";
 export const fillLabels: Record<FillState, string> = { all: "全部相册", empty: "作者和模特都没填", noAuthor: "没填作者", noModel: "没填模特" };
 
 export function filtering(filter: AlbumFilter, state: FillState = "all") {
-  return state !== "all" || filter.authors.length > 0 || filter.models.length > 0;
+  return state !== "all" || filter.authors.length > 0 || filter.models.length > 0 || !!filter.shared;
 }
 export function matchesFilter(album: Album, filter: AlbumFilter, state: FillState = "all") {
   if (state === "empty" && (album.author || album.models.length)) return false;
   if (state === "noAuthor" && album.author) return false;
   if (state === "noModel" && album.models.length) return false;
+  if (filter.shared && shareState(album) !== filter.shared) return false;
   const authors = new Set(filter.authors.map(nameIdentity)), models = new Set(filter.models.map(nameIdentity));
   if (authors.size && !(album.author && authors.has(nameIdentity(album.author.name)))) return false;
   if (models.size && !album.models.some(model => models.has(nameIdentity(model.name)))) return false;
@@ -110,7 +119,8 @@ export function readAlbumFilter(): AlbumFilter {
   try {
     const saved = JSON.parse(sessionStorage.getItem(filterKey) || "null");
     const names = (value: unknown) => Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : [];
-    if (saved && typeof saved === "object") return { authors: names(saved.authors), models: names(saved.models) };
+    const shared = typeof saved?.shared === "string" && Object.hasOwn(shareLabels, saved.shared) ? saved.shared as ShareState : undefined;
+    if (saved && typeof saved === "object") return { authors: names(saved.authors), models: names(saved.models), ...(shared && { shared }) };
   } catch { /* Start without a filter. */ }
   return emptyFilter;
 }

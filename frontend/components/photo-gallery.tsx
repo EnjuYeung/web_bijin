@@ -18,7 +18,8 @@ function photoHash() { const match = /^#p\/(\d+)$/.exec(location.hash); return m
 export function PhotoGallery({ album, sharing, onCount, onTitle }: { album: string | null; sharing: boolean; onCount: (total: number) => void; onTitle: (title: string) => void }) {
   const [sharingRevision, setSharingRevision] = useState(0);
   const [sharedOnly, setSharedOnly] = useState(false);
-  useEffect(() => { setSharedOnly(new URLSearchParams(location.search).get("shared") === "1"); }, []);
+  // Only an album page with 管理分享 open can show shared photos alone.
+  useEffect(() => { setSharedOnly(sharing && new URLSearchParams(location.search).get("shared") === "1"); }, []);
   useEffect(() => { let dirty = false; const changed = () => { if (photoHash()) { dirty = true; return; } setSharingRevision(n => n + 1); }; const closed = () => { if (dirty && !photoHash()) { dirty = false; setSharingRevision(n => n + 1); } }; addEventListener("bijin-sharing-changed", changed); addEventListener("popstate", closed); addEventListener("hashchange", closed); return () => { removeEventListener("bijin-sharing-changed", changed); removeEventListener("popstate", closed); removeEventListener("hashchange", closed); }; }, []);
   function showShared(checked: boolean) {
     setSharedOnly(checked);

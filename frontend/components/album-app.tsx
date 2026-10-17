@@ -24,7 +24,8 @@ export function AlbumApp() {
   const [ready, setReady] = useState(false);
   const [timezone, setTimezone] = useState("Asia/Shanghai");
   const [leaving, setLeaving] = useState(false);
-  // Sharing controls stay out of the way until asked for, once per visit.
+  // Sharing controls stay out of the way until asked for, once per visit. The
+  // photos page is a plain gallery and has none.
   const [sharing, setSharing] = useState(false);
   const { expanded, mode, toggleSidebar, cycleMode } = usePreferences(timezone);
   const brand = useRef<HTMLButtonElement>(null);
@@ -38,7 +39,7 @@ export function AlbumApp() {
     const next: View = query.has("album") ? "album" : page === "albums" || page === "settings" || page === "upload" || page === "organize" ? page : "photos";
     setAlbum(folder);
     setView(next);
-    setSharing(next !== "albums" && query.get("shared") === "1");
+    setSharing(next === "album" && query.get("shared") === "1");
     setTitle(next === "album" ? folder === "." ? "根目录" : folder?.split("/").pop() || "相册" : titles[next]);
     setReady(true);
     const controller = new AbortController();
@@ -47,7 +48,6 @@ export function AlbumApp() {
     }).catch(() => {});
     return () => controller.abort();
   }, []);
-  useEffect(() => { document.title = title + " · Juen's"; }, [title]);
   useEffect(() => {
     // Logging out in another tab, or before Back brought this page back from
     // the browser's memory, sends this page to the login page too.
@@ -84,6 +84,7 @@ export function AlbumApp() {
   const ThemeIcon = mode === "night" ? Moon : mode === "day" ? Sun : Contrast;
 
   return <>
+    <title>{title + " · Juen's"}</title>
     <a className="skip-link" href="#main-content">跳到主要内容</a>
     <button id="nav-scrim" className="nav-scrim" tabIndex={-1} aria-label="收起导航" onClick={() => toggleSidebar(false)} />
     <aside id="sidebar" className="sidebar" aria-label="图库导航">
@@ -115,7 +116,7 @@ export function AlbumApp() {
           {view !== "settings" && view !== "upload" && view !== "organize" && <p id="count" aria-live="polite" aria-atomic="true" aria-label={count === null ? "正在读取数量" : `${count} ${view === "albums" ? "个相册" : "张照片"}`}>{count === null ? "—" : count.toLocaleString("zh-CN")}</p>}
         </div>
         <div className="top-actions">
-          {(view === "photos" || albumsActive) && <Button id="share-toggle" variant="ghost" aria-pressed={sharing} aria-label="管理分享" title={sharing ? "管理分享：已打开；点击收起" : "管理分享：点击打开"} onClick={() => setSharing(on => !on)}><Link2 data-icon="inline-start" aria-hidden="true" /><span>管理分享</span></Button>}
+          {albumsActive && <Button id="share-toggle" variant="ghost" aria-pressed={sharing} aria-label="管理分享" title={sharing ? "管理分享：已打开；点击收起" : "管理分享：点击打开"} onClick={() => setSharing(on => !on)}><Link2 data-icon="inline-start" aria-hidden="true" /><span>管理分享</span></Button>}
           <Button id="theme-btn" variant="ghost" size="icon" aria-label={`显示模式：${modeLabels[mode]}；点击切换`} title={`显示模式：${modeLabels[mode]}；点击切换`} onClick={cycleMode}><ThemeIcon aria-hidden="true" /></Button>
         </div>
       </header>

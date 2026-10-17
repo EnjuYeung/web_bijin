@@ -1,9 +1,9 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { ArrowDownWideNarrow, ArrowUpNarrowWide, FolderHeart, RefreshCw, SearchX, X } from "lucide-react";
+import { ArrowDownWideNarrow, ArrowUpNarrowWide, FolderHeart, Link2, RefreshCw, SearchX, X } from "lucide-react";
 import { api, type AlbumPage, type Person } from "@/lib/api";
-import { albumNames, defaultSort, directionLabel, emptyFilter, filtering, matchesFilter, peopleText, readAlbumFilter, readAlbumSort, sortAlbums, sortFor, sortLabels, writeAlbumFilter, writeAlbumSort, type AlbumFilter, type AlbumSort, type AlbumSortKey } from "@/lib/albums";
+import { albumNames, defaultSort, directionLabel, emptyFilter, filtering, matchesFilter, peopleText, readAlbumFilter, readAlbumSort, shareLabels, shareState, sortAlbums, sortFor, sortLabels, writeAlbumFilter, writeAlbumSort, type AlbumFilter, type AlbumSort, type AlbumSortKey, type ShareState } from "@/lib/albums";
 import { nameIdentity } from "@/lib/names";
 import { GallerySkeleton } from "@/components/gallery-skeleton";
 import { OptionSelect } from "@/components/option-select";
@@ -17,6 +17,7 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "@/components/ui/empty";
 
 const sortChoices = (Object.keys(sortLabels) as AlbumSortKey[]).map(key => ({ value: key, label: sortLabels[key] }));
+const shareChoices: { value: ShareState | "all"; label: string }[] = [{ value: "all", label: "全部分享状态" }, ...(["full", "partial", "none"] as ShareState[]).map(value => ({ value, label: shareLabels[value] }))];
 // A remembered filter forgets names that are no longer used by any album.
 const known = (chosen: string[], list: Person[]) => chosen.filter(name => list.some(person => nameIdentity(person.name) === nameIdentity(name)));
 
@@ -41,7 +42,7 @@ export function Albums({ sharing, onCount }: { sharing: boolean; onCount: (count
   // Opening reads fresh sharing counts; closing drops the hidden selection.
   useEffect(() => { if (sharing) setRevision(n => n + 1); else setSelected([]); }, [sharing]);
   const names = useMemo(() => albumNames(data?.albums ?? []), [data]);
-  const active = useMemo(() => data ? { authors: known(filter.authors, names.authors), models: known(filter.models, names.models) } : filter, [data, filter, names]);
+  const active = useMemo(() => data ? { ...filter, authors: known(filter.authors, names.authors), models: known(filter.models, names.models) } : filter, [data, filter, names]);
   const albums = useMemo(() => data ? sortAlbums(data.albums.filter(album => matchesFilter(album, active)), sort) : [], [data, active, sort]);
   function change(next: AlbumSort) { setSort(next); writeAlbumSort(next); }
   function changeFilter(next: AlbumFilter) { setSelected([]); setFilter(next); writeAlbumFilter(next); }
@@ -57,6 +58,7 @@ export function Albums({ sharing, onCount }: { sharing: boolean; onCount: (count
       <div className="album-filters">
         <PersonPicker label="按作者筛选" placeholder="全部作者" multiple create={false} people={names.authors} value={active.authors} onChange={authors => changeFilter({ ...active, authors })} />
         <PersonPicker label="按模特筛选" placeholder="全部模特" multiple create={false} people={names.models} value={active.models} onChange={models => changeFilter({ ...active, models })} />
+        <OptionSelect id="album-share-filter" label="按分享状态筛选" value={active.shared ?? "all"} choices={shareChoices} onChange={value => changeFilter({ authors: active.authors, models: active.models, ...(value !== "all" && { shared: value }) })} />
       </div>
       <div className="album-sort">
         <span aria-hidden="true">排序</span>
@@ -74,11 +76,15 @@ export function Albums({ sharing, onCount }: { sharing: boolean; onCount: (count
     {albums.length ? <div id="album-grid" className="album-grid">
       {albums.map(album => {
         const people = peopleText(album);
-        return <div key={album.id} className="album-select-card">{sharing && <span className="album-checkbox"><Checkbox id={"album-choice-" + album.id} aria-label={"选择相册「" + album.id + "」"} checked={selected.includes(album.id)} onCheckedChange={checked => setSelected(list => checked ? [...list, album.id] : list.filter(id => id !== album.id))} /></span>}<a className="album-card" href={"/?album=" + encodeURIComponent(album.id)} title={album.id === "." ? album.name : album.id} aria-label={`${album.name}，${album.count} 张照片${people ? "，" + people : ""}`}>
+        const state = shareState(album);
+        const shareText = state === "partial" ? `部分已分享，${album.shared} / ${album.count} 张` : shareLabels[state];
+        return <div key={album.id} className="album-select-card">{sharing && <span className="album-checkbox"><Checkbox id={"album-choice-" + album.id} aria-label={"选择相册「" + album.id + "」"} checked={selected.includes(album.id)} onCheckedChange={checked => setSelected(list => checked ? [...list, album.id] : list.filter(id => id !== album.id))} /></span>}<a className="album-card" href={"/?album=" + encodeURIComponent(album.id)} title={album.id === "." ? album.name : album.id} aria-label={`${album.name}，${album.count} 张照片${people ? "，" + people : ""}${sharing || state !== "none" ? "，" + shareText : ""}`}>
           <img src={album.cover.thumb} alt="" width={album.cover.w} height={album.cover.h} loading="lazy" decoding="async" />
-          <span className="album-meta"><strong>{album.name}</strong>{people && <span className="album-people">{people}</span>}<small>{album.count.toLocaleString("zh-CN")} 张照片</small>{sharing && <Badge variant="secondary" className="max-w-full whitespace-normal">{album.shared === 0 ? "未分享" : album.shared === album.count ? "全部已分享" : "部分已分享"} · {album.shared}/{album.count}</Badge>}</span>
+          {/* While 管理分享 is open the check takes this corner and the badge below shows the state. */}
+          {!sharing && state !== "none" && <span className="album-share-mark" data-state={state} title={shareText} aria-hidden="true"><Link2 />{state === "partial" && <span>{album.shared}/{album.count}</span>}</span>}
+          <span className="album-meta"><strong>{album.name}</strong>{people && <span className="album-people">{people}</span>}<small>{album.count.toLocaleString("zh-CN")} 张照片</small>{sharing && <Badge variant="secondary" className="max-w-full whitespace-normal">{shareLabels[state]} · {album.shared}/{album.count}</Badge>}</span>
         </a></div>;
       })}
-    </div> : <Empty><EmptyHeader><EmptyMedia variant="icon"><SearchX aria-hidden="true" /></EmptyMedia><EmptyTitle>没有符合条件的相册</EmptyTitle><EmptyDescription>换一个作者或模特试试，或者清除筛选。</EmptyDescription></EmptyHeader></Empty>}
+    </div> : <Empty><EmptyHeader><EmptyMedia variant="icon"><SearchX aria-hidden="true" /></EmptyMedia><EmptyTitle>没有符合条件的相册</EmptyTitle><EmptyDescription>换个筛选条件试试，或者清除筛选。</EmptyDescription></EmptyHeader></Empty>}
   </>;
 }

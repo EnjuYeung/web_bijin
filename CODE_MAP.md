@@ -50,11 +50,11 @@
 
 | 文件 | 作用 |
 |---|---|
-| `frontend/app/layout.tsx` | Next.js 页面外壳、元数据和首屏主题/侧栏偏好脚本，不请求用户数据。 |
-| `frontend/app/page.tsx`、`frontend/app/login/page.tsx` | 首页与登录页静态导出入口。 |
-| `frontend/components/album-app.tsx` | 标题、导航、网站标题折叠交互、按需加载设置页、上传页、整理页与视图选择；顶部「管理分享」开关（默认收起）；侧栏底部退出登录，其他标签页退出或返回键恢复旧页面时转到登录页。 |
+| `frontend/app/layout.tsx` | Next.js 页面外壳、元数据（不含标题）和首屏主题/侧栏偏好脚本，不请求用户数据。 |
+| `frontend/app/page.tsx`、`frontend/app/login/page.tsx` | 首页与登录页静态导出入口；登录页标题「Juen's」，首页标题由 `album-app.tsx` 按当前页面渲染。 |
+| `frontend/components/album-app.tsx` | 标题、导航、网站标题折叠交互、按需加载设置页、上传页、整理页与视图选择；顶部「管理分享」开关（只在相册列表与单本相册页，默认收起）；侧栏底部退出登录，其他标签页退出或返回键恢复旧页面时转到登录页。 |
 | `frontend/components/photo-gallery.tsx` | 游标分页、虚拟瀑布流、hash 大图、键盘/触摸切换、焦点和滚动恢复；已分享筛选切换重置分页，停止后移出筛选结果。 |
-| `frontend/components/albums.tsx` | 文件夹相册封面、数量、「作者 · 模特」、作者 / 模特多选筛选（本次访问内保留）、排序工具（名称 / 作者 / 模特 / 添加日期与升降序）、空态与重试。 |
+| `frontend/components/albums.tsx` | 文件夹相册封面、数量、「作者 · 模特」、封面左上角分享标记、作者 / 模特多选与分享状态单选筛选（本次访问内保留）、排序工具（名称 / 作者 / 模特 / 添加日期与升降序）、空态与重试。 |
 | `frontend/components/option-select.tsx` | 基于 Base UI Select 的单选下拉，与名字下拉同一套弹层样式；用于相册排序、整理页的填写情况、设置页的寻址方式和上传页的保存位置；项目里不再使用原生下拉。 |
 | `frontend/lib/album-organizer.ts` | 整理相册 deep module：已确认资料 + 未确认意图的最新预览、临时人物身份、页面内统一顺序、明确拒绝、待确认 / 核对 / 原编号重试与保存状态。 |
 | `frontend/lib/organize-http.ts` | 正式 HTTP adapter：读取资料、统一保存、回执核对与失败分类；验证返回的编号和资料格式。 |
@@ -65,7 +65,7 @@
 | `frontend/lib/albums.ts` | 相册排序规则（中文排序器、没填的排最后）、作者 / 模特与填写情况筛选、按相册统计名单、排序与筛选偏好的读写（整理页的排序和视图另存）和「作者 · 模特」文字。 |
 | `frontend/lib/names.ts` | 名字清理与比较：身份与服务器同一规则（只忽略英文字母大小写），输入筛选忽略全部大小写；整理 module、名字下拉、相册筛选共用。 |
 | `frontend/components/photo-sharing.tsx` | 大图中的原图分享：状态、复制 / 停止、Safari 点击内发起的异步剪贴板、手动复制、响应协议校验与写回答丢失后的核对、关闭 / 切图取消旧操作。 |
-| `frontend/components/settings-panel.tsx` | 来源卡片、校验表单、添加/编辑/测试/删除对象存储、大图直连与浏览器访问地址、上传通知状态、识别服务卡片、随机壁纸卡片（数量与可复制的接口地址）；扫描中短时刷新。 |
+| `frontend/components/settings-panel.tsx` | 四个子页（本地图库 / 对象存储 / 识别服务 / 随机壁纸）：标准标签页键盘操作、地址 `tab` 参数、扫描失败标记，未选中的卡片只隐藏；来源卡片、校验表单、添加/编辑/测试/删除对象存储、大图直连与浏览器访问地址、上传通知状态、识别服务卡片、随机壁纸卡片（数量与可复制的接口地址）；扫描中短时刷新。 |
 | `frontend/components/recognizer-settings.tsx` | 设置页「识别服务」卡片：服务、接口地址、只写的 API Key、模型名、推理强度；测试（不保存）、保存、删除。 |
 | `frontend/components/upload-panel.tsx` | 上传页：读取保存位置、选择 / 拖入文件、显示批次与操作；离开提醒读取 module 的待完成事实。 |
 | `frontend/lib/upload-batch.ts` | 上传批次 module：名单与位置、四路执行、停止、保存核对、续查 / 处理重试、失效与旧回调隔离；`hold()` 协调浏览器离开决定，暂缓后续请求。 |
@@ -101,6 +101,7 @@
 | `assets_test.go` | 验证导出资源的门禁边界，以及 gzip 解压内容、MIME、缓存与拒绝压缩时的回退。 |
 | `frontend/tests/album.spec.ts`、`frontend/playwright.config.ts` | Playwright 实际浏览器回归：登录、照片/相册、大图、设置表单（含大图直连：浏览器跟随 302 直接向存储取原图）、主题/品牌交互与响应式、随机壁纸卡片与复制、别的网站无 Cookie 引用壁纸、登录页背景为壁纸、成功但内容读不出的响应显示重试。 |
 | `frontend/tests/recognition.spec.ts` | 设置页识别服务卡片（测试不保存、Key 不返回、同服务沿用、换服务需重填、删除、320 px）与整理页识别建议（所选相册弹窗确认与按页面顺序发送、单本识别、勾选时点未勾相册只识别它、已填满 / 根目录不可点、取消不发送、超过 100 本的提示、只补空项、新名字标记、接受 / 忽略 / 全部接受、手动填写后隐藏、未配置时无识别列、进度、转圈与失败不改资料）。 |
+| `frontend/tests/settings.spec.ts` | 设置页子页：默认本地图库、切换只显示一张卡片且不增加历史、地址直达与回退、键盘与读屏、宽屏竖排居中与侧栏同款选中样式、窄屏一排四等分（320 / 375 / 768 px，双主题）、滚动时固定与切换回顶部、只标扫描失败、切换不丢表单与进行中的测试、读取中与读取失败。 |
 | `frontend/tests/recognizer_fixture.py` | 仅监听本机 127.0.0.1:18095 的 OpenAI 格式假识别服务，按模型名正常 / 延迟 / 回答非 JSON，并记录收到的请求。 |
 | `frontend/tests/s3_fixture.py` | 仅监听本机的 S3 浏览器测试服务，使用生成的测试图片，接受预签名读写、条件写入与任务元数据，并按 `response-*` 参数返回响应头，不连接真实桶。 |
 | `upload_test.go` | 上传核心验收：保存/索引/缩略图/壁纸、本地保存的文件为 0644、身份与来源检查、非法路径/图片、传输中断、并发同名不覆盖、符号链接、S3 现有凭据与坏图误报回归。 |
@@ -165,7 +166,7 @@
 
 ## 批量分享前端与回归
 
-- `frontend/components/batch-sharing.tsx`：相册列表与单本页共用的核对、提交、进度、任务恢复、取消、重试、复制和手动复制界面。
+- `frontend/components/batch-sharing.tsx`：相册列表与单本页共用的核对、提交、进度、任务恢复、取消、重试、复制和手动复制界面；已结束的任务只在本页发起时自动显示，否则收在「查看最近的批量任务」后面。
 - `frontend/lib/share-batches.ts`：任务响应校验、读取及分享变化通知。
-- `frontend/components/albums.tsx`：打开「管理分享」后显示相册勾选、当前筛选全选与分享状态；`photo-gallery.tsx` 打开后显示单本入口与「只看已分享」，收起时取消该筛选；`photo-sharing.tsx` 协调单图状态。
-- `batch_sharing_test.go`：真实 HTTP、来源、SQLite、并发交错、重启与原图字节回归；`frontend/tests/batch-sharing.spec.ts`：Chromium / WebKit 的批量操作、复制、恢复、筛选、「管理分享」默认收起与收起清理及手机布局。
+- `frontend/components/albums.tsx`：封面始终标出部分 / 全部已分享，可按分享状态筛选；打开「管理分享」后显示相册勾选、当前筛选全选与带数量的分享状态；`photo-gallery.tsx` 在单本相册页打开后显示单本入口与「只看已分享」，收起时取消该筛选；`photo-sharing.tsx` 协调单图状态。
+- `batch_sharing_test.go`：真实 HTTP、来源、SQLite、并发交错、重启与原图字节回归；`frontend/tests/batch-sharing.spec.ts`：Chromium / WebKit 的批量操作、复制、恢复、筛选、「管理分享」默认收起与收起清理、照片页没有「管理分享」、封面分享标记与分享状态筛选、已结束结果只在发起页自动显示及手机布局。

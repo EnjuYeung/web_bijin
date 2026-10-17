@@ -57,6 +57,7 @@ test("01 login errors, safe return URL and access gate", async ({ page }) => {
   await page.context().clearCookies();
   await page.goto("/?view=settings");
   await expect(page).toHaveURL(/\/login\?next=/);
+  await expect(page).toHaveTitle("Juen's");
   await page.locator("#login-user").fill("ui-test");
   await page.locator("#login-password").fill("wrong-password");
   await page.getByRole("button", { name: "进入相册" }).click();
@@ -65,6 +66,7 @@ test("01 login errors, safe return URL and access gate", async ({ page }) => {
   await page.locator("#login-password").fill("fixture-password");
   await page.getByRole("button", { name: "进入相册" }).click();
   await expect(page.locator("#page-title")).toHaveText("设置");
+  await expect(page).toHaveTitle("设置 · Juen's");
   await expect(page.locator("#local-count")).toContainText("58 张照片");
   await page.context().clearCookies();
   for (const path of ["/api/photos", "/api/albums", "/api/settings", "/thumb/1", "/original/1"]) {
@@ -126,7 +128,7 @@ test("02 photos, virtual scrolling, lightbox and folder albums", async ({ page }
 });
 
 test("03 settings form validation, test, save, edit and delete", async ({ page }) => {
-  await page.goto("/?view=settings");
+  await page.goto("/?view=settings&tab=storage");
   await expect(page.locator("#events-note")).toContainText("自动扫描");
   await expect(page.locator("#local-count")).toContainText("58 张照片");
   await expect(page.locator("#local-count")).toContainText("1 个文件无法显示");
@@ -190,6 +192,7 @@ test("03 settings form validation, test, save, edit and delete", async ({ page }
   await page.locator("#nav-photos").click();
   await expect(page.locator("#count")).toHaveText("60");
   await page.locator("#nav-settings").click();
+  await page.getByRole("tab", { name: "对象存储", exact: true }).click();
   page.once("dialog", dialog => dialog.dismiss());
   await page.getByRole("button", { name: "删除 家庭照片备份" }).click();
   await expect(page.locator(".storage-row")).toHaveCount(1);
@@ -204,7 +207,7 @@ test("03 settings form validation, test, save, edit and delete", async ({ page }
 });
 
 test("04 brand keyboard toggle, preference persistence and white text contrast", async ({ page }) => {
-  await page.goto("/?view=settings");
+  await page.goto("/?view=settings&tab=storage");
   await expect(page.locator("#s3-add")).toBeVisible();
   await expect(page.locator("#sidebar-toggle")).toHaveCount(0);
   await page.locator("#sidebar-brand").focus();
@@ -237,7 +240,7 @@ test("05 responsive layout, mobile navigation, metadata and reduced motion", asy
   await page.addInitScript(() => { localStorage.removeItem("juens-sidebar"); localStorage.setItem("juens-theme", "night"); });
   for (const width of [320, 375, 414, 768, 1280, 1440]) {
     await page.setViewportSize({ width, height: 812 });
-    await page.goto("/?view=settings");
+    await page.goto("/?view=settings&tab=storage");
     await expect(page.locator("#s3-add")).toBeVisible();
     await noOverflow(page);
     const box = await page.locator("#s3-add").boundingBox(); expect(box!.height).toBeGreaterThanOrEqual(44);
@@ -247,7 +250,7 @@ test("05 responsive layout, mobile navigation, metadata and reduced motion", asy
     await noOverflow(page);
     await page.locator("#s3-cancel").click();
   }
-  await page.setViewportSize({ width: 375, height: 812 }); await page.goto("/?view=settings");
+  await page.setViewportSize({ width: 375, height: 812 }); await page.goto("/?view=settings&tab=storage");
   await expect(page.locator("#sidebar-brand")).toHaveAttribute("aria-expanded", "false");
   const margin = await page.locator(".app-main").evaluate(element => getComputedStyle(element).marginLeft);
   await page.locator("#sidebar-brand").click();
@@ -272,7 +275,7 @@ test("05 responsive layout, mobile navigation, metadata and reduced motion", asy
   expect(await page.locator(".sheet img").first().evaluate(image => getComputedStyle(image).scale)).toBe("1");
   await page.screenshot({ path: screenshots + "/after-gallery-mobile.png" });
   await page.setViewportSize({ width: 812, height: 375 });
-  await page.goto("/?view=settings"); await expect(page.locator("#s3-add")).toBeVisible(); await noOverflow(page);
+  await page.goto("/?view=settings&tab=storage"); await expect(page.locator("#s3-add")).toBeVisible(); await noOverflow(page);
 });
 
 test("06 mobile photo bookmarks, browser back and touch swipe", async ({ page }) => {
@@ -307,7 +310,7 @@ test("06 mobile photo bookmarks, browser back and touch swipe", async ({ page })
 test("07 random wallpapers: settings card, public API and login background", async ({ page, browser }) => {
   const origin = "http://127.0.0.1:18092";
   await page.context().grantPermissions(["clipboard-read", "clipboard-write"], { origin });
-  await page.goto("/?view=settings");
+  await page.goto("/?view=settings&tab=wallpaper");
   await expect(page.locator("#wall-ready")).toContainText("57 / 57 张");
   await expect(page.locator("#wall-url-landscape")).toHaveText(origin + "/v1/backgrounds/random?orientation=landscape");
   await expect(page.locator("#wall-url-portrait")).toHaveText(origin + "/v1/backgrounds/random?orientation=portrait");

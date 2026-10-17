@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"html"
 	"image/color"
 	"io"
 	"net/http"
@@ -265,7 +266,8 @@ func TestLoginThenHomeAndList(t *testing.T) {
 		t.Fatalf("home %d", res.StatusCode)
 	}
 	page, _ := io.ReadAll(res.Body)
-	if !bytes.Contains(page, []byte("Juen's")) || !bytes.Contains(page, []byte("theme-btn")) {
+	// The page title may write the apostrophe as an HTML entity.
+	if !strings.Contains(html.UnescapeString(string(page)), "Juen's") || !bytes.Contains(page, []byte("theme-btn")) {
 		t.Fatal("home missing title or theme button")
 	}
 	req, _ = http.NewRequest(http.MethodGet, srv.URL+"/api/photos?limit=10", nil)
