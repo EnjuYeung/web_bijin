@@ -98,3 +98,26 @@ test("an empty list or a second press while running does nothing", async () => {
   calls[0].resolve({ recognized: 1, skipped: 0, suggestions: [] });
   await run;
 });
+
+test("albums wait until their own batch ends, failed or not", async () => {
+  const { recognition, calls, state } = harness();
+  const run = recognition.run(ids(45));
+  await tick();
+  assert.deepEqual(state().waiting, ids(45));
+  calls[0].resolve({ recognized: 20, skipped: 0, suggestions: [] });
+  await tick();
+  assert.deepEqual(state().waiting, ids(45).slice(20));
+  calls[1].reject(new Error("识别服务暂时不可用"));
+  await tick();
+  assert.deepEqual(state().waiting, ids(45).slice(40));
+  calls[2].resolve({ recognized: 5, skipped: 0, suggestions: [] });
+  await run;
+  assert.deepEqual(state().waiting, []);
+
+  const again = recognition.run(ids(3));
+  await tick();
+  recognition.stop();
+  assert.deepEqual(state().waiting, [], "a stopped run leaves nothing waiting");
+  calls[3].resolve({ recognized: 3, skipped: 0, suggestions: [] });
+  await again;
+});

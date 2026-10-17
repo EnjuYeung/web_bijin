@@ -322,24 +322,40 @@ html[data-sidebar="collapsed"] .nav-item { justify-content: center; padding: 0; 
 .album-people { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; font-size: var(--text-xs); }
 
 /* Organize: functional panels like settings and upload. */
-.organize-shell { display: grid; gap: var(--space-md); max-width: 76rem; margin: 0 auto; min-width: 0; }
+.organize-shell { --organize-top: calc(4.5rem + env(safe-area-inset-top)); display: grid; gap: var(--space-md); max-width: 76rem; margin: 0 auto; min-width: 0; }
 .organize-content { display: grid; gap: var(--space-sm); min-width: 0; }
-.organize-tools { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2xs) var(--space-md); }
-.organize-filters { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 11rem) minmax(0, 1fr) minmax(0, 1fr); align-items: start; gap: var(--space-2xs); }
+/* Column flow puts 清除筛选 at the end of the filter row only when it is there. */
+.organize-filters { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 11rem) minmax(0, 1fr) minmax(0, 1fr); grid-auto-flow: column; grid-auto-columns: auto; align-items: start; gap: var(--space-2xs); }
 .organize-filter { min-width: 0; }
 .organize-filters .option-trigger { width: 100%; }
-.organize-toggle[data-orientation="horizontal"], .sharing-check[data-orientation="horizontal"] { width: auto; min-height: var(--control-size); align-items: center; gap: var(--space-2xs); }
-.organize-toggle [data-slot="field-label"], .sharing-check [data-slot="field-label"] { min-height: var(--control-size); align-items: center; font-size: var(--text-sm); }
-.organize-count { margin-left: auto; color: var(--color-muted); font-size: var(--text-sm); font-variant-numeric: tabular-nums; }
-.organize-batch { display: grid; gap: var(--space-xs); padding: var(--space-sm); border: 1px solid var(--color-rule-2); border-radius: var(--radius-sm); background: var(--color-accent-soft); }
-.organize-batch > p { font-size: var(--text-sm); color: var(--color-ink-2); }
-.organize-batch > p strong { font-weight: 600; color: var(--color-ink); }
-.organize-batch-fields { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.4fr); gap: var(--space-xs); }
-.organize-head, .organize-row { display: grid; grid-template-columns: var(--control-size) 3.5rem minmax(0, 1fr) minmax(0, 14rem) minmax(0, 18rem); align-items: center; column-gap: var(--space-sm); }
-.organize-head { padding-bottom: var(--space-3xs); border-bottom: 1px solid var(--color-divider); color: var(--color-muted); font-size: var(--text-xs); }
-.organize-head > span:first-child { grid-column: 3; }
+.sharing-check[data-orientation="horizontal"] { width: auto; min-height: var(--control-size); align-items: center; gap: var(--space-2xs); }
+.sharing-check [data-slot="field-label"] { min-height: var(--control-size); align-items: center; font-size: var(--text-sm); }
+.organize-views { display: flex; gap: var(--space-3xs); }
+.organize-views [aria-pressed="true"] { background: var(--color-accent-soft); color: var(--color-ink); }
+/* The hint line: recognition progress, results and failures, only when there are some. */
+.organize-recognize { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-3xs) var(--space-sm); }
+.organize-recognize[hidden], .organize-recognize .form-message:empty { display: none; }
+.recognize-failures { flex-basis: 100%; margin: 0; padding-left: 1.25rem; color: var(--color-error); font-size: var(--text-sm); overflow-wrap: anywhere; }
+
+/* Wide lists: the column titles share the rows' columns and stay under the top bar. */
+/* The album column keeps room for its title and count; the pickers give way first. */
+.organize-content { --organize-columns: var(--control-size) 3.5rem minmax(10rem, 1fr) minmax(0, 14rem) minmax(0, 18rem); --organize-areas: "check cover album author models"; }
+.organize-content[data-recognize] { --organize-columns: var(--control-size) 3.5rem minmax(10rem, 1fr) minmax(0, 14rem) minmax(0, 18rem) var(--control-size); --organize-areas: "check cover album author models ai"; }
+.organize-head { position: sticky; top: var(--organize-top); z-index: calc(var(--z-raised) - 1); display: grid; grid-template-columns: var(--organize-columns); grid-template-areas: var(--organize-areas); align-items: center; column-gap: var(--space-sm); border-bottom: 1px solid var(--color-divider); background: var(--card); color: var(--color-muted); font-size: var(--text-xs); }
+.organize-sorts { display: contents; }
+.organize-sort-label { display: none; }
+/* Each title sits over its column, its text lined up with the column below; the count ends the album column. */
+.organize-sort { margin-left: calc(-1 * var(--space-2xs)); padding-inline: var(--space-2xs); color: var(--color-muted); font-size: var(--text-xs); }
+.organize-sort[aria-pressed="true"] { color: var(--color-ink); }
+#organize-sort-name { grid-area: album; justify-self: start; }
+#organize-sort-author { grid-area: author; justify-self: start; }
+#organize-sort-model { grid-area: models; justify-self: start; }
+.organize-count { grid-area: album; justify-self: end; color: var(--color-muted); font-size: var(--text-xs); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.organize-head-ai { grid-area: ai; display: flex; align-items: center; justify-content: center; }
+.organize-head-ai svg { width: 1rem; height: 1rem; }
 .organize-list { list-style: none; margin: 0; padding: 0; }
-.organize-row { grid-template-areas: "check cover album author models"; row-gap: var(--space-2xs); padding: var(--space-2xs) 0; border-bottom: 1px solid var(--color-divider); }
+.organize-row { display: grid; align-items: center; column-gap: var(--space-sm); row-gap: var(--space-2xs); padding: var(--space-2xs) 0; border-bottom: 1px solid var(--color-divider); }
+.organize-content[data-view="list"] .organize-row { grid-template-columns: var(--organize-columns); grid-template-areas: var(--organize-areas); }
 .organize-check { grid-area: check; display: flex; align-items: center; justify-content: center; width: var(--control-size); height: var(--control-size); }
 .organize-check [data-slot="checkbox"]::after { inset: -14px; }
 .organize-cover { grid-area: cover; width: 3.5rem; height: 3.5rem; object-fit: cover; border-radius: var(--radius-xs); background: var(--color-paper-3); }
@@ -348,14 +364,36 @@ html[data-sidebar="collapsed"] .nav-item { justify-content: center; padding: 0; 
 .organize-album > small { margin-top: var(--space-3xs); color: var(--color-muted); font-size: var(--text-xs); overflow-wrap: anywhere; }
 .organize-author { grid-area: author; min-width: 0; }
 .organize-models { grid-area: models; min-width: 0; }
+.organize-ai { grid-area: ai; display: flex; align-items: center; justify-content: center; }
+.organize-ai-button[aria-disabled="true"] { opacity: .4; cursor: not-allowed; }
 .organize-status { display: flex; align-items: center; gap: var(--space-3xs); min-width: 0; font-size: var(--text-xs); color: var(--color-muted); overflow-wrap: anywhere; }
 .organize-status:not(:empty) { margin-top: var(--space-3xs); }
 .organize-status svg { width: .875rem; height: .875rem; flex-shrink: 0; }
 .organize-status[data-kind="saved"] { color: var(--color-success); }
 .organize-status[data-kind="error"] { color: var(--color-error); }
-.organize-recognize { display: grid; gap: var(--space-3xs); }
-.organize-recognize .form-message:empty { display: none; }
-.recognize-failures { margin: 0; padding-left: 1.25rem; color: var(--color-error); font-size: var(--text-sm); overflow-wrap: anywhere; }
+
+/* Grid view: bigger covers laid out like the album page, the same controls on each card. */
+.organize-content[data-view="grid"] .organize-list { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: var(--space-md) var(--grid-gap); }
+.organize-content[data-view="grid"] .organize-row { position: relative; grid-template-columns: minmax(0, 1fr); grid-template-areas: "cover" "album" "author" "models"; align-items: start; align-content: start; padding: 0; border-bottom: 0; }
+.organize-content[data-view="grid"] .organize-cover { width: 100%; height: auto; aspect-ratio: 4/3; }
+.organize-content[data-view="grid"] :is(.organize-row > .organize-check, .organize-ai) { position: absolute; top: var(--space-2xs); z-index: 1; }
+.organize-content[data-view="grid"] .organize-row > .organize-check { left: var(--space-2xs); width: var(--control-size); border: 1px solid var(--color-rule-2); border-radius: var(--radius-sm); background: var(--color-paper-2); }
+.organize-content[data-view="grid"] .organize-ai { right: var(--space-2xs); }
+.organize-content[data-view="grid"] .organize-ai-button { border-color: var(--color-rule-2); border-radius: var(--radius-sm); background: var(--color-paper-2); }
+/* Without columns to line up with (grid view, narrow screens) the titles become one bar. */
+.organize-content[data-view="grid"] .organize-head { display: flex; flex-wrap: wrap; align-items: center; gap: 0 var(--space-2xs); }
+.organize-content[data-view="grid"] .organize-count { flex: 1 1 0; min-width: 3.5rem; white-space: normal; }
+.organize-content[data-view="grid"] .organize-sorts { display: flex; flex: none; align-items: center; gap: var(--space-3xs); }
+.organize-content[data-view="grid"] .organize-sort-label { display: block; }
+.organize-content[data-view="grid"] .organize-sort { margin-left: 0; }
+.organize-content[data-view="grid"] .organize-head-ai { display: none; }
+
+/* The batch bar stays at the bottom of the screen while albums are selected. */
+.organize-batch { position: sticky; bottom: 0; z-index: calc(var(--z-raised) - 1); display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2xs) var(--space-xs); padding: var(--space-xs) var(--space-sm) max(var(--space-xs), env(safe-area-inset-bottom)); border: 1px solid var(--color-rule-2); border-radius: var(--radius-sm); background: var(--color-accent-soft); box-shadow: 0 -.25rem 1rem var(--color-shadow); }
+.organize-batch-fields { display: grid; flex: 1 1 24rem; grid-template-columns: minmax(0, 1fr) minmax(0, 1.4fr); gap: var(--space-2xs); min-width: 0; }
+.organize-batch-actions { display: contents; }
+.organize-batch-count { order: -1; font-size: var(--text-sm); font-weight: 600; white-space: nowrap; }
+.organize-batch > .form-message { flex: 1 1 12rem; min-height: 0; }
 /* A suggestion is dashed: it is not saved until accepted. */
 .suggestion { display: flex; align-items: center; gap: var(--space-3xs); margin-top: var(--space-3xs); padding-left: var(--space-2xs); border: 1px dashed var(--color-accent); border-radius: var(--radius-sm); background: var(--color-accent-soft); min-width: 0; }
 .suggestion-label { flex-shrink: 0; color: var(--color-muted); font-size: var(--text-xs); }
@@ -416,20 +454,42 @@ html[data-sidebar="collapsed"] .nav-item { justify-content: center; padding: 0; 
 .people-none { color: var(--color-muted); font-size: var(--text-sm); }
 
 @media (max-width: 1100px) {
-  .organize-filters { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .organize-head { display: none; }
-  .organize-row { grid-template-columns: var(--control-size) 3.5rem minmax(0, 1fr) minmax(0, 1.4fr); grid-template-areas: "check cover album album" ". author author models"; }
+  .organize-filters { grid-template-columns: repeat(2, minmax(0, 1fr)); grid-auto-flow: row; }
+  .organize-content { --organize-columns: var(--control-size) 3.5rem minmax(0, 1fr) minmax(0, 1.4fr); --organize-areas: "check cover album album" ". author author models"; }
+  .organize-content[data-recognize] { --organize-columns: var(--control-size) 3.5rem minmax(0, 1fr) minmax(0, 1.4fr) var(--control-size); --organize-areas: "check cover album album ai" ". author author models models"; }
+  .organize-content[data-view="grid"] .organize-list { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .organize-head { display: flex; flex-wrap: wrap; align-items: center; gap: 0 var(--space-2xs); }
+  .organize-count { flex: 1 1 0; min-width: 3.5rem; white-space: normal; }
+  .organize-sorts { display: flex; flex: none; align-items: center; gap: var(--space-3xs); }
+  .organize-sort-label { display: block; }
+  .organize-sort { margin-left: 0; }
+  .organize-head-ai { display: none; }
 }
 @media (max-width: 719px) {
   .album-filters { flex-basis: 100%; max-width: none; grid-template-columns: minmax(0, 1fr); }
   .album-sort { width: 100%; margin-left: 0; }
   .album-sort .option-trigger { flex: 1; }
+  .organize-shell { --organize-top: calc(4rem + env(safe-area-inset-top)); }
   .organize-filters { grid-template-columns: minmax(0, 1fr); }
-  .organize-tools { gap: 0 var(--space-sm); }
-  .organize-count { margin-left: 0; }
-  .organize-batch-fields, .people-columns { grid-template-columns: minmax(0, 1fr); }
-  .organize-row { grid-template-columns: var(--control-size) 3rem minmax(0, 1fr); grid-template-areas: "check cover album" "author author author" "models models models"; }
-  .organize-cover { width: 3rem; height: 3rem; }
+  .people-columns { grid-template-columns: minmax(0, 1fr); }
+  /* A narrower check column and gaps leave the album name room beside the recognize button;
+     the checkbox keeps its 44 px hit area. */
+  .organize-check { width: 2rem; }
+  .organize-content { --organize-columns: 2rem 3rem minmax(0, 1fr); --organize-areas: "check cover album" "author author author" "models models models"; }
+  .organize-content[data-recognize] { --organize-columns: 2rem 3rem minmax(0, 1fr) var(--control-size); --organize-areas: "check cover album ai" "author author author author" "models models models models"; }
+  .organize-content[data-view="list"] .organize-row { column-gap: var(--space-2xs); }
+  .organize-content[data-view="list"] .organize-cover { width: 3rem; height: 3rem; }
+  .organize-content[data-view="grid"] .organize-list { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .organize-content[data-view="grid"] .organize-cover { aspect-ratio: 3/4; }
+  /* Phones keep the title bar on one line: tighter titles, no 排序 label. */
+  .organize-sort-label, .organize-content[data-view="grid"] .organize-sort-label { display: none; }
+  .organize-sort { gap: .125rem; padding-inline: var(--space-3xs); }
+  .organize-sort svg { width: .75rem; height: .75rem; }
+  /* Phones: the two pickers side by side, then the count and the buttons. */
+  .organize-unselect-text { display: none; }
+  .organize-batch { padding-inline: var(--space-xs); }
+  .organize-batch-fields { flex-basis: 100%; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .organize-batch-actions { display: flex; flex: 1 1 100%; flex-wrap: wrap; align-items: center; gap: var(--space-3xs) var(--space-2xs); }
 }
 
 /* Album selection and sharing follow the existing paper and ink tokens. */

@@ -203,7 +203,7 @@ test("organize 02 filters by fill status, authors and models, then batch setting
   // Batch: only the albums without an author get one; their models stay.
   await choose(page, fill, "没填作者");
   await page.getByRole("checkbox", { name: "全选当前列表" }).click();
-  await expect(page.locator("#organize-batch")).toContainText("已选 2 本相册");
+  await expect(page.locator("#organize-batch")).toContainText("已选 2 本");
   await page.locator("#organize-apply").click();
   await expect(page.locator("#organize-batch-message")).toHaveText("先选择作者或模特。");
   await pick(page, page.getByRole("combobox", { name: "批量设置作者" }), "Fantasy Factory", "添加「Fantasy Factory」");
@@ -430,4 +430,187 @@ test("organize 06 album page filters by authors and models and keeps them for th
   await fresh.goto("/?view=albums");
   await expect(fresh.locator(".album-card")).toHaveCount(4);
   await fresh.close();
+});
+
+test("organize 07 one title row: select all, sort by column, rows stay put while filled, filters drop the selection", async ({ page }) => {
+  await setPeople(page, ["."], { author: "Zeta Studio", models: ["Ann"] });
+  await setPeople(page, ["子目录"], { author: "alpha", models: ["Zoe", "Ann"] });
+  await setPeople(page, ["misc"], { models: ["Mia"] });
+  await setPeople(page, ["batch"], { author: "Beta" });
+  await page.goto("/?view=organize");
+  const names = () => page.locator(".organize-row .organize-album > strong").allTextContents();
+  const head = page.locator("#organize-head");
+  const all = page.getByRole("checkbox", { name: "全选当前列表" });
+  // The old select-all line and recognize button are gone; their parts moved.
+  await expect(page.locator(".organize-tools, #recognize-start")).toHaveCount(0);
+  await expect(head.getByRole("checkbox", { name: "全选当前列表" })).toBeVisible();
+  await expect(head.locator("#organize-count")).toHaveText("共 4 本");
+  await expect(page.locator("[data-slot=card-header] #organize-view-list")).toHaveAttribute("aria-pressed", "true");
+  await expect(page.locator("#organize-clear")).toHaveCount(0);
+  // The titles line up with their columns.
+  for (const [title, column] of [["#organize-sort-author", ".organize-author"], ["#organize-sort-model", ".organize-models"]]) {
+    const text = (await page.locator(title).boundingBox())!, cell = (await page.locator(column).first().boundingBox())!;
+    expect(Math.abs(text.x + 8 - cell.x), title).toBeLessThan(2);
+  }
+
+  // Album names A→Z by default, then each title sorts, twice for the other way.
+  const collated = await page.evaluate(list => {
+    const collator = new Intl.Collator("zh-CN", { numeric: true, sensitivity: "base" });
+    return [...list].sort((a, b) => collator.compare(a.name, b.name) || collator.compare(a.id, b.id)).map(album => album.name);
+  }, (await albums(page)).map(({ id, name }) => ({ id, name })));
+  await expect.poll(names).toEqual(collated);
+  await expect(page.locator("#organize-sort-name")).toHaveAttribute("aria-label", "按相册排序：正序，点击改为倒序");
+  await page.locator("#organize-sort-name").click();
+  await expect.poll(names).toEqual([...collated].reverse());
+  await page.locator("#organize-sort-author").click();
+  await expect(page.locator("#organize-sort-author")).toHaveAttribute("aria-pressed", "true");
+  await expect(page.locator("#organize-sort-name")).toHaveAttribute("aria-label", "按相册排序");
+  await expect.poll(names).toEqual(["子目录", "batch", "根目录", "misc"]);
+  await page.locator("#organize-sort-author").click();
+  await expect.poll(names).toEqual(["根目录", "batch", "子目录", "misc"]);
+  await page.locator("#organize-sort-model").click();
+  await expect.poll(names).toEqual(["根目录", "misc", "子目录", "batch"]);
+  await page.locator("#organize-sort-model").click();
+  await expect.poll(names).toEqual(["子目录", "misc", "根目录", "batch"]);
+
+  // A row filled in keeps its place until the next sort, filter change or reload.
+  await page.locator("#organize-sort-author").click();
+  await expect.poll(names).toEqual(["子目录", "batch", "根目录", "misc"]);
+  const save = saved(page);
+  await pick(page, row(page, "misc").getByRole("combobox", { name: "「misc」的作者" }), "Aaron", "添加「Aaron」");
+  expect((await save).status()).toBe(200);
+  await expect(row(page, "misc").locator(".organize-status")).toHaveText("已保存");
+  expect(await names()).toEqual(["子目录", "batch", "根目录", "misc"]);
+  await page.locator("#organize-filter").fill("i");
+  await page.locator("#organize-filter").fill("");
+  await expect.poll(names).toEqual(["misc", "子目录", "batch", "根目录"]);
+  // Remembered on this device, apart from the album page's order.
+  await page.reload();
+  await expect(page.locator("#organize-sort-author")).toHaveAttribute("aria-pressed", "true");
+  await expect.poll(names).toEqual(["misc", "子目录", "batch", "根目录"]);
+  await page.goto("/?view=albums");
+  await expect(page.locator("#album-sort")).toHaveText("名称");
+  await page.goto("/?view=organize");
+
+  // Select all covers the list; sorting keeps the selection, every filter change drops it.
+  await row(page, "misc").getByRole("checkbox").check();
+  await expect(all).toHaveAttribute("aria-checked", "mixed");
+  await all.click();
+  await expect(all).toHaveAttribute("aria-checked", "true");
+  await expect(page.locator("#organize-selected")).toHaveText("已选 4 本");
+  await page.locator("#organize-sort-name").click();
+  await expect(page.locator("#organize-selected")).toHaveText("已选 4 本");
+  const dropped = async () => {
+    await expect(page.locator("#organize-batch")).toHaveCount(0);
+    await expect(all).toHaveAttribute("aria-checked", "false");
+  };
+  await page.locator("#organize-filter").fill("目录");
+  await dropped();
+  await expect(page.locator(".organize-filters #organize-clear")).toBeVisible();
+  await all.click();
+  await expect(page.locator("#organize-selected")).toHaveText("已选 2 本");
+  await page.locator("#organize-clear").click();
+  await dropped();
+  await row(page, "batch").getByRole("checkbox").check();
+  await choose(page, page.locator("#organize-fill"), "没填模特");
+  await dropped();
+  await choose(page, page.locator("#organize-fill"), "全部相册");
+  await row(page, "batch").getByRole("checkbox").check();
+  await filterBy(page, page.getByRole("combobox", { name: "按作者筛选" }), /^Beta/);
+  await dropped();
+  await all.click();
+  await filterBy(page, page.getByRole("combobox", { name: "按模特筛选" }), /^Ann/);
+  await dropped();
+});
+
+test("organize 08 grid view, the compact title bar and the bars that stay on screen", async ({ page }) => {
+  await setPeople(page, ["misc"], { author: "Pure Media", models: ["Mia"] });
+  await page.goto("/?view=organize");
+  await page.locator("#organize-view-grid").click();
+  await expect(page.locator("#organize-view-grid")).toHaveAttribute("aria-pressed", "true");
+  await expect(page.locator(".organize-sort-label")).toBeVisible();
+  // Cards edit like rows.
+  const sub = row(page, "子目录");
+  const save = saved(page);
+  await pick(page, sub.getByRole("combobox", { name: "「子目录」的作者" }), "Pure", /^Pure Media/);
+  expect((await save).status()).toBe(200);
+  await expect(sub.locator(".organize-status")).toHaveText("已保存");
+  // The compact bar sorts like the titles: albums without a model last.
+  await page.locator("#organize-sort-model").click();
+  await expect(page.locator(".organize-row .organize-album > strong").first()).toHaveText("misc");
+  // Remembered after a reload.
+  await page.reload();
+  await expect(page.locator("#organize-view-grid")).toHaveAttribute("aria-pressed", "true");
+
+  const perRow = async () => {
+    const tops = await page.locator(".organize-cover").evaluateAll(list => list.map(item => Math.round(item.getBoundingClientRect().top)));
+    return tops.filter(top => top === tops[0]).length;
+  };
+  for (const mode of ["night", "day"] as const) {
+    await page.addInitScript(value => localStorage.setItem("juens-theme", value), mode);
+    for (const [width, columns, ratio] of [[320, 2, 3 / 4], [375, 2, 3 / 4], [768, 3, 4 / 3], [1024, 3, 4 / 3], [1440, 4, 4 / 3]]) {
+      await page.setViewportSize({ width, height: 900 });
+      await page.reload();
+      await expect(page.locator(".organize-row")).toHaveCount(4);
+      await noOverflow(page);
+      expect(await perRow(), "cards per row at " + width).toBe(columns);
+      const cover = (await page.locator(".organize-cover").first().boundingBox())!;
+      expect(Math.abs(cover.width / cover.height - ratio), "cover at " + width).toBeLessThan(0.02);
+      // The check sits on the cover's top-left corner, 44 px like everywhere else.
+      const check = (await sub.locator(".organize-check").boundingBox())!, subCover = (await sub.locator(".organize-cover").boundingBox())!;
+      expect(check.height).toBeGreaterThanOrEqual(44);
+      expect(check.x - subCover.x).toBeLessThan(12);
+      expect(check.y - subCover.y).toBeLessThan(12);
+      if (width === 375 || width === 1440) await page.screenshot({ path: `${screenshots}/organize-grid-${width}-${mode}.png`, fullPage: true });
+    }
+  }
+
+  // Lists on narrow screens use the same compact bar.
+  await page.locator("#organize-view-list").click();
+  await page.setViewportSize({ width: 768, height: 900 });
+  await expect(page.locator(".organize-sort-label")).toBeVisible();
+  await expect(page.locator(".organize-row")).toHaveCount(4);
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await expect(page.locator(".organize-sort-label")).toBeHidden();
+
+  // On a short screen the titles stay under the top bar and the batch bar at the bottom.
+  for (const [width, height] of [[1440, 380], [375, 520]]) {
+    await page.setViewportSize({ width, height });
+    await page.reload();
+    await row(page, "misc").getByRole("checkbox").check();
+    const bar = page.locator("#organize-batch");
+    let box = (await bar.boundingBox())!;
+    expect(Math.abs(box.y + box.height - height), "batch bar at " + width).toBeLessThan(2);
+    const head = page.locator("#organize-head");
+    const top = await page.locator("header.top").evaluate(element => element.getBoundingClientRect().height);
+    await head.evaluate((element, top) => scrollTo(0, element.getBoundingClientRect().top + scrollY - top + 40), top);
+    expect(Math.abs((await head.boundingBox())!.y - top), "titles at " + width).toBeLessThan(2);
+    box = (await bar.boundingBox())!;
+    expect(Math.abs(box.y + box.height - height), "batch bar after scrolling at " + width).toBeLessThan(2);
+    if (width === 375) {
+      // Phones: the two pickers side by side, the count and buttons on the next line.
+      const fields = page.locator("#organize-batch .person-field");
+      const author = (await fields.nth(0).boundingBox())!, models = (await fields.nth(1).boundingBox())!;
+      expect(Math.abs(author.y - models.y)).toBeLessThan(2);
+      expect((await page.locator("#organize-apply").boundingBox())!.y).toBeGreaterThan(author.y + author.height - 1);
+      await page.screenshot({ path: `${screenshots}/organize-batch-375.png` });
+    }
+    // At the end of the list the bar sits after the last album instead of covering it.
+    await page.locator("#people-card").scrollIntoViewIfNeeded();
+    const last = (await page.locator(".organize-row").last().boundingBox())!;
+    expect(last.y + last.height).toBeLessThanOrEqual((await bar.boundingBox())!.y + 1);
+    await page.locator("#organize-unselect").click();
+  }
+
+  // After applying, the bar keeps only the result until closed.
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await row(page, "batch").getByRole("checkbox").check();
+  await pick(page, page.getByRole("combobox", { name: "批量设置作者" }), "Pure", /^Pure Media/);
+  const applied = saved(page);
+  await page.locator("#organize-apply").click();
+  expect((await applied).status()).toBe(200);
+  await expect(page.locator("#organize-batch-message")).toHaveText("已设置 1 本相册。");
+  await expect(page.locator("#organize-batch .person-field")).toHaveCount(0);
+  await page.locator("#organize-batch-close").click();
+  await expect(page.locator("#organize-batch")).toHaveCount(0);
 });

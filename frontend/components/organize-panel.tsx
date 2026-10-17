@@ -1,13 +1,13 @@
 "use client";
 
 import { useEffect, useMemo, useState, useSyncExternalStore } from "react";
-import { Check, ChevronDown, ChevronUp, CircleAlert, Eraser, Pencil, RefreshCw, Sparkles, Trash2, UserRoundPen, Users, X } from "lucide-react";
+import { ArrowDown, ArrowUp, Check, ChevronDown, ChevronUp, CircleAlert, Eraser, LayoutGrid, List, Pencil, RefreshCw, Sparkles, Trash2, UserRoundPen, Users, X } from "lucide-react";
 import { api, type Album, type Person, type RecognizerView } from "@/lib/api";
 import { createAlbumOrganizer, type Change, type Message, type Role, type RowState } from "@/lib/album-organizer";
 import { organizeHTTP } from "@/lib/organize-http";
 import { createRecognition, recognizeLimit, type Field as SuggestionField, type SuggestedName } from "@/lib/recognition";
 import { recognitionHTTP } from "@/lib/recognition-http";
-import { albumNames, emptyFilter, fillLabels, filtering, matchesFilter, nameCollator, type AlbumFilter, type FillState } from "@/lib/albums";
+import { albumNames, directionLabel, emptyFilter, fillLabels, filtering, matchesFilter, nameCollator, readOrganizeSort, readOrganizeView, sortAlbums, sortFor, writeOrganizeSort, writeOrganizeView, type AlbumFilter, type AlbumSort, type AlbumSortKey, type FillState, type OrganizeView } from "@/lib/albums";
 import { cleanName, nameIdentity, searchKey } from "@/lib/names";
 import { OptionSelect } from "@/components/option-select";
 import { PersonPicker } from "@/components/person-picker";
@@ -15,7 +15,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardAction, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
-import { Field, FieldLabel } from "@/components/ui/field";
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "@/components/ui/empty";
@@ -23,6 +23,9 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Spinner } from "@/components/ui/spinner";
 
 const fillChoices = (Object.keys(fillLabels) as FillState[]).map(value => ({ value, label: fillLabels[value] }));
+const columnLabels: Partial<Record<AlbumSortKey, string>> = { name: "相册", author: "作者", model: "模特" };
+// The root album's name says nothing about its people.
+const recognizable = (album: Album) => album.id !== "." && (!album.author || !album.models.length);
 
 function RowStatus({ state }: { state?: RowState }) {
   return <p className="organize-status" data-kind={state?.kind} role="status">
@@ -46,6 +49,9 @@ function SuggestionChip({ album, field, names, onAccept, onDismiss }: {
   </div>;
 }
 
+// What the confirmation says before recognizing the selected albums.
+interface Asking { total: number; targets: string[]; skipped: number; root: boolean }
+
 export default function OrganizePanel() {
   const [organizer] = useState(() => createAlbumOrganizer(organizeHTTP));
   const state = useSyncExternalStore(organizer.subscribe, organizer.getSnapshot, organizer.getSnapshot);
@@ -53,6 +59,11 @@ export default function OrganizePanel() {
   const [recognition] = useState(() => createRecognition(recognitionHTTP));
   const recognizing = useSyncExternalStore(recognition.subscribe, recognition.getSnapshot, recognition.getSnapshot);
   const [recognizer, setRecognizer] = useState<RecognizerView | null>(null);
+  const [asking, setAsking] = useState<Asking | null>(null);
+  const [view, setView] = useState<OrganizeView>(readOrganizeView);
+  const [sort, setSort] = useState<AlbumSort>(readOrganizeSort);
+  // Album order as last arranged; filling in a row does not move it.
+  const [order, setOrder] = useState<string[] | null>(null);
   const [filter, setFilter] = useState("");
   const [fill, setFill] = useState<FillState>("all");
   const [peopleFilter, setPeopleFilter] = useState<AlbumFilter>(emptyFilter);
@@ -83,11 +94,22 @@ export default function OrganizePanel() {
     api<RecognizerView>("/api/recognizer").then(view => { if (alive) setRecognizer(view); }, () => { if (alive) setRecognizer(null); });
     return () => { alive = false; recognition.stop(); };
   }, [recognition]);
+  useEffect(() => { if (albums && !order) setOrder(sortAlbums(albums, sort).map(album => album.id)); }, [albums, order, sort]);
+
+  function arrange(next: AlbumSort = sort) {
+    if (albums) setOrder(sortAlbums(albums, next).map(album => album.id));
+  }
+  function sortBy(key: AlbumSortKey) {
+    const next: AlbumSort = sort.key === key ? { key, direction: sort.direction === "asc" ? "desc" : "asc" } : sortFor(key);
+    setSort(next); writeOrganizeSort(next); arrange(next);
+  }
+  function changeView(next: OrganizeView) { setView(next); writeOrganizeView(next); }
 
   function saveRow(album: Album, change: Change) {
     organizer.submit({ kind: "assign", albums: [album.id], ...change });
   }
 
+  function clearSelection() { setSelected([]); setBatchAuthor([]); setBatchModels([]); }
   function applyBatch() {
     const change: Change = {};
     if (batchAuthor.length) change.author = batchAuthor[0];
@@ -95,7 +117,7 @@ export default function OrganizePanel() {
     if (!selected.length || (!change.author && !change.models)) { setBatchMessage({ text: "先选择作者或模特。", kind: "err" }); return; }
     setBatchError(null);
     organizer.submit({ kind: "assign", albums: selected, batch: true, ...change });
-    setSelected([]); setBatchAuthor([]); setBatchModels([]);
+    clearSelection();
   }
 
   // Only empty fields get suggestions; a field filled meanwhile hides its own.
@@ -154,12 +176,13 @@ export default function OrganizePanel() {
 
   const visible = useMemo(() => {
     const wanted = searchKey(filter);
-    return (albums ?? []).filter(album => (!wanted || searchKey(album.name).includes(wanted) || searchKey(album.id).includes(wanted)) && (!matching || matching.has(album.id)));
-  }, [albums, filter, matching]);
+    const listed = (albums ?? []).filter(album => (!wanted || searchKey(album.name).includes(wanted) || searchKey(album.id).includes(wanted)) && (!matching || matching.has(album.id)));
+    // Albums new since the last arrange go after the arranged ones.
+    const rank = new Map((order ?? []).map((id, index) => [id, index]));
+    return sortAlbums(listed, sort).sort((a, b) => (rank.get(a.id) ?? rank.size) - (rank.get(b.id) ?? rank.size));
+  }, [albums, filter, matching, order, sort]);
   const names = useMemo(() => albumNames(albums ?? []), [albums]);
   const visibleIds = visible.map(album => album.id);
-  // The root album's name says nothing about its people.
-  const unfilled = visible.filter(album => album.id !== "." && (!album.author || !album.models.length));
   const withSuggestions = visible.filter(album => { const suggestion = shown(album); return suggestion.author || suggestion.models; });
   const allSelected = visibleIds.length > 0 && visibleIds.every(id => selected.includes(id));
   const someSelected = !allSelected && visibleIds.some(id => selected.includes(id));
@@ -171,11 +194,50 @@ export default function OrganizePanel() {
     setBatchMessage(null);
     setSelected(previous => allSelected ? previous.filter(id => !visibleIds.includes(id)) : [...new Set([...previous, ...visibleIds])]);
   }
+  // Any filter change drops the selection, so what is selected is always on screen.
+  function filtered() { clearSelection(); setBatchMessage(null); arrange(); }
   function applyFilter(nextFill: FillState, nextFilter: AlbumFilter) {
-    setFill(nextFill); setPeopleFilter(nextFilter); setBatchMessage(null);
+    setFill(nextFill); setPeopleFilter(nextFilter); filtered();
     setMatching(filtering(nextFilter, nextFill) && albums ? new Set(albums.filter(album => matchesFilter(album, nextFilter, nextFill)).map(album => album.id)) : null);
   }
   function clearFilters() { setFilter(""); applyFilter("all", emptyFilter); }
+
+  // Recognition: a selected album's button covers the whole selection after a
+  // confirmation; any other album's button covers only that album.
+  const canRecognize = !!recognizer?.configured;
+  const waiting = new Set(recognizing.waiting);
+  function recognizeFrom(album: Album) {
+    if (selected.length < 2 || !selected.includes(album.id)) { void recognition.run([album.id]); return; }
+    const chosen = visible.filter(item => selected.includes(item.id));
+    const targets = chosen.filter(recognizable).map(item => item.id);
+    setAsking({ total: chosen.length, targets, skipped: chosen.length - targets.length, root: chosen.some(item => item.id === ".") });
+  }
+  function startAsked() {
+    if (asking) void recognition.run(asking.targets);
+    setAsking(null);
+  }
+  function recognizeButton(album: Album) {
+    const many = selected.length > 1 && selected.includes(album.id);
+    const reason = album.id === "." ? "根目录相册不识别" : recognizable(album) ? "" : "作者和模特都已填写";
+    const title = reason || (many ? `识别所选的 ${selected.length} 本相册` : "识别这本相册");
+    return <Button variant="ghost" size="icon" className="organize-ai-button" disabled={!!reason || recognizing.running} focusableWhenDisabled
+      aria-label={reason ? `「${album.name}」${reason}` : many ? title : `识别「${album.name}」`} title={title} onClick={() => recognizeFrom(album)}>
+      {waiting.has(album.id) ? <Spinner aria-hidden="true" /> : <Sparkles aria-hidden="true" />}
+    </Button>;
+  }
+  const status = recognizer && !recognizer.configured ? <>还没有配置识别服务，<a href="/?view=settings">去设置页配置</a>。</>
+    : recognizing.running ? `识别中 ${recognizing.done} / ${recognizing.total}` : recognizing.summary;
+  const acceptable = withSuggestions.length > 0 && !recognizing.running;
+  const hint = !!status || recognizing.failures.length > 0 || acceptable;
+
+  function sortButton(key: AlbumSortKey) {
+    const active = sort.key === key;
+    const flipped: AlbumSort = { key, direction: sort.direction === "asc" ? "desc" : "asc" };
+    const label = active ? `按${columnLabels[key]}排序：${directionLabel(sort)}，点击改为${directionLabel(flipped)}` : `按${columnLabels[key]}排序`;
+    return <Button id={"organize-sort-" + key} variant="ghost" className="organize-sort" aria-pressed={active} aria-label={label} title={label} onClick={() => sortBy(key)}>
+      {columnLabels[key]}{active && (sort.direction === "asc" ? <ArrowUp data-icon="inline-end" aria-hidden="true" /> : <ArrowDown data-icon="inline-end" aria-hidden="true" />)}
+    </Button>;
+  }
 
   function nameList(title: string, role: "author" | "model", list: Person[]) {
     return <section className="people-list" aria-labelledby={"people-" + role}>
@@ -209,48 +271,35 @@ export default function OrganizePanel() {
     </AlertDescription></Alert>}
     {state.rejection && <Alert variant="destructive" id="organize-rejection"><CircleAlert aria-hidden="true" /><AlertTitle>有一项修改未保存</AlertTitle><AlertDescription>{state.rejection}。该项已恢复，后续填写仍保留。</AlertDescription></Alert>}
     {albums && people && <>
-      <Card className="source-card">
-        <CardHeader><CardTitle><h2><UserRoundPen aria-hidden="true" />整理相册</h2></CardTitle><CardDescription>给相册填写作者和模特：从下拉里选已有的名字，或输入新名字后按回车。修改会立即保存。</CardDescription></CardHeader>
-        <CardContent className="organize-content">
+      {/* Visible overflow lets the column titles and the batch bar stick to the screen. */}
+      <Card className="source-card overflow-visible">
+        <CardHeader>
+          <CardTitle><h2><UserRoundPen aria-hidden="true" />整理相册</h2></CardTitle><CardDescription>给相册填写作者和模特：从下拉里选已有的名字，或输入新名字后按回车。修改会立即保存。</CardDescription>
+          {albums.length > 0 && <CardAction><div className="organize-views" role="group" aria-label="显示方式">
+            <Button id="organize-view-list" variant="ghost" size="icon" aria-pressed={view === "list"} aria-label="列表视图" title="列表视图" onClick={() => changeView("list")}><List aria-hidden="true" /></Button>
+            <Button id="organize-view-grid" variant="ghost" size="icon" aria-pressed={view === "grid"} aria-label="网格视图" title="网格视图" onClick={() => changeView("grid")}><LayoutGrid aria-hidden="true" /></Button>
+          </div></CardAction>}
+        </CardHeader>
+        <CardContent className="organize-content" data-view={view} data-recognize={canRecognize || undefined}>
           {!albums.length ? <Empty><EmptyHeader><EmptyMedia variant="icon"><UserRoundPen aria-hidden="true" /></EmptyMedia><EmptyTitle>还没有相册</EmptyTitle><EmptyDescription>照片进入相册后，就可以在这里填写作者和模特。</EmptyDescription></EmptyHeader></Empty> : <>
             <div className="organize-filters">
-              <Input id="organize-filter" className="organize-filter" type="search" aria-label="按相册名筛选" placeholder="按相册名筛选" value={filter} onChange={event => setFilter(event.target.value)} />
+              <Input id="organize-filter" className="organize-filter" type="search" aria-label="按相册名筛选" placeholder="按相册名筛选" value={filter} onChange={event => { setFilter(event.target.value); filtered(); }} />
               <OptionSelect id="organize-fill" label="按填写情况筛选" value={fill} choices={fillChoices} onChange={value => applyFilter(value, peopleFilter)} />
               <PersonPicker label="按作者筛选" placeholder="全部作者" multiple create={false} people={names.authors} value={peopleFilter.authors} onChange={authors => applyFilter(fill, { ...peopleFilter, authors })} />
               <PersonPicker label="按模特筛选" placeholder="全部模特" multiple create={false} people={names.models} value={peopleFilter.models} onChange={models => applyFilter(fill, { ...peopleFilter, models })} />
-            </div>
-            <div className="organize-tools">
-              <Field orientation="horizontal" className="organize-toggle"><Checkbox id="organize-select-all" checked={allSelected} indeterminate={someSelected} disabled={!visible.length} onCheckedChange={toggleAll} /><FieldLabel htmlFor="organize-select-all">全选当前列表</FieldLabel></Field>
-              <p id="organize-count" className="organize-count" aria-live="polite">{visible.length === albums.length ? `共 ${albums.length} 本` : `显示 ${visible.length} / ${albums.length} 本`}</p>
               {(filter || matching) && <Button id="organize-clear" variant="ghost" onClick={clearFilters}><X data-icon="inline-start" aria-hidden="true" />清除筛选</Button>}
             </div>
-            <div id="organize-recognize" className="organize-recognize">
-              <div className="form-actions">
-                <Button id="recognize-start" variant="outline" disabled={!recognizer?.configured || recognizing.running || !unfilled.length} onClick={() => void recognition.run(unfilled.map(album => album.id))}>
-                  {recognizing.running ? <Spinner data-icon="inline-start" aria-hidden="true" /> : <Sparkles data-icon="inline-start" aria-hidden="true" />}识别未填写的相册{unfilled.length ? `（${Math.min(unfilled.length, recognizeLimit)} 本）` : ""}
-                </Button>
-                {withSuggestions.length > 0 && !recognizing.running && <Button id="recognize-accept-all" onClick={() => acceptAll(withSuggestions)}><Check data-icon="inline-start" aria-hidden="true" />接受全部建议（{withSuggestions.length} 本）</Button>}
-              </div>
-              <p id="recognize-status" className="form-message" data-kind={recognizing.running ? "wait" : recognizing.failures.length ? "err" : recognizing.summary ? "ok" : undefined} role="status" aria-live="polite">
-                {recognizer && !recognizer.configured ? <>还没有配置识别服务，<a href="/?view=settings">去设置页配置</a>。</>
-                  : recognizing.running ? `识别中 ${recognizing.done} / ${recognizing.total}`
-                  : recognizing.summary || (unfilled.length > recognizeLimit ? `当前列表有 ${unfilled.length} 本未填写，每次识别前 ${recognizeLimit} 本。` : "")}
-              </p>
+            <div id="organize-recognize" className="organize-recognize" hidden={!hint}>
+              <p id="recognize-status" className="form-message" data-kind={recognizing.running ? "wait" : recognizing.failures.length ? "err" : recognizing.summary ? "ok" : undefined} role="status" aria-live="polite">{status}</p>
+              {acceptable && <Button id="recognize-accept-all" onClick={() => acceptAll(withSuggestions)}><Check data-icon="inline-start" aria-hidden="true" />接受全部建议（{withSuggestions.length} 本）</Button>}
               {recognizing.failures.length > 0 && <ul id="recognize-failures" className="recognize-failures">{recognizing.failures.map(text => <li key={text}>{text}</li>)}</ul>}
             </div>
-            {selected.length > 0 && <div id="organize-batch" className="organize-batch" role="group" aria-label="批量设置所选相册">
-              <p><strong>已选 {selected.length} 本相册</strong>：选好作者和 / 或模特后应用，留空的一项保持不变。</p>
-              <div className="organize-batch-fields">
-                <PersonPicker id="batch-author" label="批量设置作者" placeholder="作者" people={people.authors} value={batchAuthor} onChange={setBatchAuthor} />
-                <PersonPicker id="batch-models" label="批量设置模特" placeholder="模特（可多位）" multiple people={people.models} value={batchModels} onChange={setBatchModels} />
-              </div>
-              <div className="form-actions">
-                <Button id="organize-apply" onClick={() => void applyBatch()}>应用到所选相册</Button>
-                <Button variant="ghost" onClick={() => { setSelected([]); setBatchMessage(null); }}><X data-icon="inline-start" aria-hidden="true" />取消选择</Button>
-              </div>
-            </div>}
-            {batchMessage && <p id="organize-batch-message" className="form-message" data-kind={batchMessage.kind} role="status">{batchMessage.text}</p>}
-            <div className="organize-head" aria-hidden="true"><span>相册</span><span>作者</span><span>模特</span></div>
+            <div id="organize-head" className="organize-head" role="group" aria-label="全选与排序">
+              <span className="organize-check"><Checkbox id="organize-select-all" aria-label="全选当前列表" checked={allSelected} indeterminate={someSelected} disabled={!visible.length} onCheckedChange={toggleAll} /></span>
+              <span id="organize-count" className="organize-count" aria-live="polite">{visible.length === albums.length ? `共 ${albums.length} 本` : `显示 ${visible.length} / ${albums.length} 本`}</span>
+              <span className="organize-sorts"><span className="organize-sort-label" aria-hidden="true">排序</span>{sortButton("name")}{sortButton("author")}{sortButton("model")}</span>
+              {canRecognize && <span className="organize-head-ai" role="img" aria-label="识别建议" title="识别建议"><Sparkles aria-hidden="true" /></span>}
+            </div>
             <ul id="organize-list" className="organize-list" aria-label="相册的作者与模特">
               {visible.map(album => <li key={album.id} className="organize-row">
                 <span className="organize-check"><Checkbox checked={selected.includes(album.id)} onCheckedChange={checked => toggle(album.id, checked)} aria-label={`选择「${album.name}」`} /></span>
@@ -260,12 +309,35 @@ export default function OrganizePanel() {
                   {shown(album).author && <SuggestionChip album={album} field="author" names={[shown(album).author!]} onAccept={() => accept(album, "author")} onDismiss={() => recognition.drop(album.id, "author")} />}</div>
                 <div className="organize-models"><PersonPicker label={`「${album.name}」的模特`} placeholder="模特" multiple people={people.models} value={album.models.map(model => model.name)} onChange={names => saveRow(album, { models: names })} />
                   {shown(album).models && <SuggestionChip album={album} field="models" names={shown(album).models!} onAccept={() => accept(album, "models")} onDismiss={() => recognition.drop(album.id, "models")} />}</div>
+                {canRecognize && <span className="organize-ai">{recognizeButton(album)}</span>}
               </li>)}
             </ul>
             {!visible.length && <p className="note">没有符合条件的相册。</p>}
+            {(selected.length > 0 || batchMessage) && <div id="organize-batch" className="organize-batch" role="group" aria-label="批量设置所选相册">
+              {selected.length > 0 && <>
+                <div className="organize-batch-fields">
+                  <PersonPicker id="batch-author" label="批量设置作者" placeholder="作者" people={people.authors} value={batchAuthor} onChange={setBatchAuthor} />
+                  <PersonPicker id="batch-models" label="批量设置模特" placeholder="模特（可多位）" multiple people={people.models} value={batchModels} onChange={setBatchModels} />
+                </div>
+                <div className="organize-batch-actions">
+                  <strong id="organize-selected" className="organize-batch-count">已选 {selected.length} 本</strong>
+                  <Button id="organize-apply" title="留空的一项保持不变" onClick={applyBatch}>应用到所选相册</Button>
+                  <Button id="organize-unselect" variant="ghost" aria-label="取消选择" title="取消选择" onClick={() => { clearSelection(); setBatchMessage(null); }}><X data-icon="inline-start" aria-hidden="true" /><span className="organize-unselect-text">取消选择</span></Button>
+                </div>
+              </>}
+              {batchMessage && <p id="organize-batch-message" className="form-message" data-kind={batchMessage.kind} role="status">{batchMessage.text}</p>}
+              {!selected.length && <Button id="organize-batch-close" variant="ghost" size="icon" aria-label="关闭提示" title="关闭" onClick={() => setBatchMessage(null)}><X aria-hidden="true" /></Button>}
+            </div>}
           </>}
         </CardContent>
       </Card>
+      <Dialog open={!!asking} onOpenChange={open => { if (!open) setAsking(null); }}>
+        <DialogContent id="recognize-confirm">
+          {asking && <><DialogHeader><DialogTitle>识别所选的 {asking.total} 本相册？</DialogTitle>
+            <DialogDescription>{asking.skipped ? `其中 ${asking.targets.length} 本有空着的作者或模特，会发给识别服务；${asking.skipped} 本${asking.root ? "已填满或是根目录" : "已填满"}，跳过。` : `这 ${asking.total} 本都有空着的作者或模特，会发给识别服务。`}{asking.targets.length > recognizeLimit && `每次最多 ${recognizeLimit} 本，按当前顺序识别前 ${recognizeLimit} 本。`}</DialogDescription></DialogHeader>
+            <DialogFooter><Button variant="outline" onClick={() => setAsking(null)}>取消</Button><Button id="recognize-confirm-start" onClick={startAsked}><Sparkles data-icon="inline-start" aria-hidden="true" />开始识别</Button></DialogFooter></>}
+        </DialogContent>
+      </Dialog>
       <Card className="source-card" id="people-card">
         <CardHeader>
           <CardTitle><h2><Users aria-hidden="true" />作者与模特名单</h2></CardTitle>

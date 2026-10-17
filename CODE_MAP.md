@@ -58,11 +58,11 @@
 | `frontend/components/option-select.tsx` | 基于 Base UI Select 的单选下拉，与名字下拉同一套弹层样式；用于相册排序、整理页的填写情况、设置页的寻址方式和上传页的保存位置；项目里不再使用原生下拉。 |
 | `frontend/lib/album-organizer.ts` | 整理相册 deep module：已确认资料 + 未确认意图的最新预览、临时人物身份、页面内统一顺序、明确拒绝、待确认 / 核对 / 原编号重试与保存状态。 |
 | `frontend/lib/organize-http.ts` | 正式 HTTP adapter：读取资料、统一保存、回执核对与失败分类；验证返回的编号和资料格式。 |
-| `frontend/components/organize-panel.tsx` | 整理页的筛选、选中相册、名单编辑与展示；通过整理相册 module 的 interface 提交操作，展示最新预览及核对 / 重试入口，未完成时离开提醒；「识别未填写的相册」、进度与汇总、行内识别建议（接受 / 忽略）和「接受全部建议」。 |
-| `frontend/lib/recognition.ts` | 识别建议 module：当前列表前 100 本、每 20 本一批顺序请求、进度、单批失败不影响其他批、汇总文字、忽略 / 接受后丢弃、离开即停止。 |
+| `frontend/components/organize-panel.tsx` | 整理页：筛选（改筛选清空勾选）、表头（全选、计数、按相册 / 作者 / 模特排序，窄屏与网格变精简栏，吸顶）、列表 / 网格视图、底部批量栏、名单编辑；通过整理相册 module 的 interface 提交操作，展示最新预览及核对 / 重试入口，未完成时离开提醒；每行识别按钮（单本，或已勾选时弹窗确认后识别所选）、提示行（进度、汇总、失败、「接受全部建议」）与行内识别建议。 |
+| `frontend/lib/recognition.ts` | 识别建议 module：所给相册的前 100 本、每 20 本一批顺序请求、进度与还在等待的相册、单批失败不影响其他批、汇总文字、忽略 / 接受后丢弃、离开即停止。 |
 | `frontend/lib/recognition-http.ts` | 识别建议的 HTTP adapter：`POST /api/recognize` 并检查响应格式。 |
 | `frontend/components/person-picker.tsx` | 基于 Base UI Combobox 的名字下拉：筛选、复用已有名字、输入新建（用作筛选时只选不建），作者单选、模特多选，可全程用键盘操作。 |
-| `frontend/lib/albums.ts` | 相册排序规则（中文排序器、没填的排最后）、作者 / 模特与填写情况筛选、按相册统计名单、排序与筛选偏好的读写和「作者 · 模特」文字。 |
+| `frontend/lib/albums.ts` | 相册排序规则（中文排序器、没填的排最后）、作者 / 模特与填写情况筛选、按相册统计名单、排序与筛选偏好的读写（整理页的排序和视图另存）和「作者 · 模特」文字。 |
 | `frontend/lib/names.ts` | 名字清理与比较：身份与服务器同一规则（只忽略英文字母大小写），输入筛选忽略全部大小写；整理 module、名字下拉、相册筛选共用。 |
 | `frontend/components/photo-sharing.tsx` | 大图中的原图分享：状态、复制 / 停止、Safari 点击内发起的异步剪贴板、手动复制、响应协议校验与写回答丢失后的核对、关闭 / 切图取消旧操作。 |
 | `frontend/components/settings-panel.tsx` | 来源卡片、校验表单、添加/编辑/测试/删除对象存储、大图直连与浏览器访问地址、上传通知状态、识别服务卡片、随机壁纸卡片（数量与可复制的接口地址）；扫描中短时刷新。 |
@@ -89,18 +89,18 @@
 | `recognizer_test.go` | 识别服务：配置校验与门禁、Key 只写不读 / 同服务沿用 / 换服务重填、假 OpenAI 格式服务上的请求内容（无 temperature、JSON Schema、推理强度）与逐条检查、去掉 JSON Schema 重试、各类失败与 50 秒期限、假 Claude 服务上的 Messages API 请求、测试不保存。 |
 | `organize_test.go` | 作者 / 模特（全部经 `applyOrganize` / `POST /api/organize`）：名字规范化、替换 / 顺序 / 清空 / 大小写复用、重开数据库后仍在、改名合并与删除、登录 / 同源 / JSON 门禁、第一版逐项写接口已删除、非法输入、失效记录与清理。 |
 | `organize_receipts_test.go` | 回执与资料原子提交、失败回滚、并发重复请求、重启、丢失 HTTP 响应后核对、名字 / 同源 / 登录校验、容量 / 时间上限及旧编号不重做。 |
-| `frontend/tests/recognition.test.mjs` | 受控 adapter 验证识别建议 module：每 20 本一批、最多 100 本、顺序与进度、单批失败、替换旧建议、丢弃字段、停止后忽略迟到回答；`npm run test:recognition`。 |
+| `frontend/tests/recognition.test.mjs` | 受控 adapter 验证识别建议 module：每 20 本一批、最多 100 本、顺序与进度、等待中的相册、单批失败、替换旧建议、丢弃字段、停止后忽略迟到回答；`npm run test:recognition`。 |
 | `frontend/tests/album-organizer.test.mjs` | 受控响应 adapter，通过 module 的 interface 验证连续选择、三类操作顺序、名单投影、临时名字、失败恢复、读取交错、Unicode 身份及离开后停止发送；`npm run test:organizer`。 |
 | `frontend/tests/names.test.mjs` | 名字清理与身份规则和服务器一致（`Élise` / `élise` 是两个人），输入筛选忽略大小写；`npm run test:names`。 |
 | `frontend/tests/organize-saving.spec.ts` | Chromium / WebKit + 真实 Go / SQLite：延迟旧响应、批量 / 单行 / 名单交错、断线核对、原编号重试、明确拒绝、保存中的切页 / 关标签页 / 退出登录。 |
-| `frontend/tests/organize.spec.ts` | 整理页与相册页：新建与复用名字、填写情况 / 作者 / 模特筛选与批量设置、名单折叠与改名 / 合并 / 删除、行内错误、自绘排序下拉与刷新后保持、相册页筛选（打开相册返回后仍在、新标签页清空）、键盘操作、320–1470 px 双主题与已选项对勾同行。 |
+| `frontend/tests/organize.spec.ts` | 整理页与相册页：新建与复用名字、填写情况 / 作者 / 模特筛选与批量设置、名单折叠与改名 / 合并 / 删除、行内错误、自绘排序下拉与刷新后保持、相册页筛选（打开相册返回后仍在、新标签页清空）、键盘操作、320–1470 px 双主题与已选项对勾同行；表头全选与按列排序、填写后不跳位、排序与视图记忆、改筛选清空勾选、网格视图与精简栏、吸顶表头与底部批量栏。 |
 | `auth_test.go` | 测试登录（含无脚本表单登录、请求体上限、不从网址读账号密码）、登录后返回地址只留在本站、HTTPS 下 Cookie 带 Secure 与 HSTS、公开健康检查只给 `ok` 与时区、退出登录（只退当前设备、只清缓存、未登录可退、拒绝别的网站与 GET）、Cookie、访问保护和相关 HTTP 行为。 |
 | `two_step_test.go` | 测试 RFC 6238 官方样例、时间容差、密钥格式与拒绝启动、动态码单次使用、按 IP 锁定与解锁、旧登录失效、终端二维码逐点还原和开启确认流程。 |
 | `frontend/tests/logout.spec.ts` | 退出登录（Chromium 与 WebKit 各跑一遍）：侧栏底部位置与收起/手机布局、提示与重新登录回首页、偏好保留、返回键不回相册、真实浏览器配置下缓存的缩略图被清掉、其他标签页跟着退出、上传中先询问且选留下不退出、已过期时可退出、别的网站不能让人退出。 |
 | `frontend/tests/two-step.spec.ts` | 两步验证登录页：只用密码时不显示动态码框；开启时必填、错码提示、用过的码被拒、下一个码可用、按 IP 锁定与提示，桌面与手机截图。 |
 | `assets_test.go` | 验证导出资源的门禁边界，以及 gzip 解压内容、MIME、缓存与拒绝压缩时的回退。 |
 | `frontend/tests/album.spec.ts`、`frontend/playwright.config.ts` | Playwright 实际浏览器回归：登录、照片/相册、大图、设置表单（含大图直连：浏览器跟随 302 直接向存储取原图）、主题/品牌交互与响应式、随机壁纸卡片与复制、别的网站无 Cookie 引用壁纸、登录页背景为壁纸、成功但内容读不出的响应显示重试。 |
-| `frontend/tests/recognition.spec.ts` | 设置页识别服务卡片（测试不保存、Key 不返回、同服务沿用、换服务需重填、删除、320 px）与整理页识别建议（只补空项、新名字标记、接受 / 忽略 / 全部接受、手动填写后隐藏、未配置、进度与失败不改资料）。 |
+| `frontend/tests/recognition.spec.ts` | 设置页识别服务卡片（测试不保存、Key 不返回、同服务沿用、换服务需重填、删除、320 px）与整理页识别建议（所选相册弹窗确认与按页面顺序发送、单本识别、勾选时点未勾相册只识别它、已填满 / 根目录不可点、取消不发送、超过 100 本的提示、只补空项、新名字标记、接受 / 忽略 / 全部接受、手动填写后隐藏、未配置时无识别列、进度、转圈与失败不改资料）。 |
 | `frontend/tests/recognizer_fixture.py` | 仅监听本机 127.0.0.1:18095 的 OpenAI 格式假识别服务，按模型名正常 / 延迟 / 回答非 JSON，并记录收到的请求。 |
 | `frontend/tests/s3_fixture.py` | 仅监听本机的 S3 浏览器测试服务，使用生成的测试图片，接受预签名读写、条件写入与任务元数据，并按 `response-*` 参数返回响应头，不连接真实桶。 |
 | `upload_test.go` | 上传核心验收：保存/索引/缩略图/壁纸、本地保存的文件为 0644、身份与来源检查、非法路径/图片、传输中断、并发同名不覆盖、符号链接、S3 现有凭据与坏图误报回归。 |

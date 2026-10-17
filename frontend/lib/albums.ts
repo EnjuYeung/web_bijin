@@ -13,15 +13,30 @@ export const defaultSort: AlbumSort = { key: "name", direction: "asc" };
 // Chinese, Korean and English names alike; numbers inside names compare by value.
 export const nameCollator = new Intl.Collator("zh-CN", { numeric: true, sensitivity: "base" });
 
-export function readAlbumSort(): AlbumSort {
+function readSort(storage: string, keys: AlbumSortKey[]): AlbumSort {
   try {
-    const [key, direction] = (localStorage.getItem(storageKey) || "").split(":");
-    if ((Object.keys(sortLabels) as string[]).includes(key) && (direction === "asc" || direction === "desc")) return { key: key as AlbumSortKey, direction };
+    const [key, direction] = (localStorage.getItem(storage) || "").split(":");
+    if ((keys as string[]).includes(key) && (direction === "asc" || direction === "desc")) return { key: key as AlbumSortKey, direction };
   } catch { /* Use the default order. */ }
   return defaultSort;
 }
-export function writeAlbumSort(sort: AlbumSort) {
-  try { localStorage.setItem(storageKey, sort.key + ":" + sort.direction); } catch { /* The order still applies for this visit. */ }
+function writeSort(storage: string, sort: AlbumSort) {
+  try { localStorage.setItem(storage, sort.key + ":" + sort.direction); } catch { /* The order still applies for this visit. */ }
+}
+export const readAlbumSort = () => readSort(storageKey, Object.keys(sortLabels) as AlbumSortKey[]);
+export const writeAlbumSort = (sort: AlbumSort) => writeSort(storageKey, sort);
+
+// The organize page sorts by its three columns and remembers its own order and view.
+const organizeSortKeys: AlbumSortKey[] = ["name", "author", "model"];
+export const readOrganizeSort = () => readSort("juens-organize-sort", organizeSortKeys);
+export const writeOrganizeSort = (sort: AlbumSort) => writeSort("juens-organize-sort", sort);
+export type OrganizeView = "list" | "grid";
+export function readOrganizeView(): OrganizeView {
+  try { if (localStorage.getItem("juens-organize-view") === "grid") return "grid"; } catch { /* Start with the list. */ }
+  return "list";
+}
+export function writeOrganizeView(view: OrganizeView) {
+  try { localStorage.setItem("juens-organize-view", view); } catch { /* The view still applies for this visit. */ }
 }
 // A new sort key starts in its natural direction: names A→Z, dates newest first.
 export function sortFor(key: AlbumSortKey): AlbumSort {

@@ -17,12 +17,14 @@ export interface RecognitionAdapter {
 export interface RecognitionSnapshot {
   suggestions: Record<string, Suggestion>;
   running: boolean; done: number; total: number;
+  // Albums of the current run still waiting for their batch to end.
+  waiting: string[];
   // Summary of the last finished run, and why batches failed.
   summary: string; failures: string[];
 }
 
 export function createRecognition(adapter: RecognitionAdapter) {
-  let snapshot: RecognitionSnapshot = { suggestions: {}, running: false, done: 0, total: 0, summary: "", failures: [] };
+  let snapshot: RecognitionSnapshot = { suggestions: {}, running: false, done: 0, total: 0, waiting: [], summary: "", failures: [] };
   const listeners = new Set<() => void>();
   let controller: AbortController | null = null;
   function publish(next: Partial<RecognitionSnapshot>) {
@@ -36,7 +38,7 @@ export function createRecognition(adapter: RecognitionAdapter) {
     if (!targets.length) return;
     const current = new AbortController();
     controller = current;
-    publish({ running: true, done: 0, total: targets.length, summary: "", failures: [] });
+    publish({ running: true, done: 0, total: targets.length, waiting: targets, summary: "", failures: [] });
     let recognized = 0, suggested = 0, skipped = 0, failed = 0;
     const failures: string[] = [];
     for (let start = 0; start < targets.length; start += recognizeBatch) {
@@ -53,12 +55,12 @@ export function createRecognition(adapter: RecognitionAdapter) {
           suggested += (suggestion.author ? 1 : 0) + (suggestion.models?.length ? 1 : 0);
         }
         recognized += answer.recognized; skipped += answer.skipped;
-        publish({ suggestions, done: start + batch.length });
+        publish({ suggestions, done: start + batch.length, waiting: targets.slice(start + batch.length) });
       } catch (err) {
         if (current.signal.aborted) return;
         failed += batch.length;
         failures.push(`第 ${start / recognizeBatch + 1} 批（${batch.length} 本）：${err instanceof Error ? err.message : "识别失败"}`);
-        publish({ done: start + batch.length, failures: [...failures] });
+        publish({ done: start + batch.length, waiting: targets.slice(start + batch.length), failures: [...failures] });
       }
     }
     controller = null;
@@ -87,7 +89,7 @@ export function createRecognition(adapter: RecognitionAdapter) {
     // stop ends a run when the page goes away; answers still on the way are ignored.
     stop() {
       controller?.abort(); controller = null;
-      if (snapshot.running) publish({ running: false });
+      if (snapshot.running) publish({ running: false, waiting: [] });
     },
   };
 }
