@@ -13,6 +13,7 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "@/components/ui/empty";
 import { Spinner } from "@/components/ui/spinner";
 import { OptionSelect } from "@/components/option-select";
+import { RecognizerCard } from "@/components/recognizer-settings";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Separator } from "@/components/ui/separator";
 
@@ -240,6 +241,7 @@ export default function SettingsPanel() {
         </CardContent>
         <CardFooter><details className="source-guide"><summary>支持哪些存储服务？</summary><div className="source-guide-body"><p>支持 Amazon S3 兼容服务，包括 Cloudflare R2、AWS S3、MinIO、Backblaze B2、Wasabi、阿里云 OSS 和腾讯云 COS。可以添加多个来源。</p><p>上传页复用这里的 Key 和桶配置上传图片；已有同名文件会跳过。</p></div></details></CardFooter>
       </Card>
+      <RecognizerCard initial={settings.recognizer} />
       <WallpaperCard stats={settings.wallpapers} busy={settings.scan.scanning || settings.scan.queued} />
     </>}
   </div>;

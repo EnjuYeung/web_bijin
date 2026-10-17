@@ -54,7 +54,14 @@ export interface WallpaperStats { photos: number; ready: number; landscape: numb
 export interface Settings {
   local: { hostDir: string; containerDir: string; photos: number; broken: number; status?: SourceStatus };
   storages: Storage[]; scan: ScanState; scanEvery: number; events: EventState; wallpapers: WallpaperStats;
+  recognizer: RecognizerView;
 }
+
+export type RecognizerProvider = "claude" | "openai" | "gemini" | "grok" | "custom";
+export type Reasoning = "" | "low" | "medium" | "high";
+// The recognition service as the server shows it: never the key itself.
+export interface RecognizerView { configured: boolean; provider: RecognizerProvider | ""; endpoint: string; model: string; reasoning: Reasoning; hasKey: boolean }
+export interface RecognizerInput { provider: RecognizerProvider; endpoint: string; apiKey: string; model: string; reasoning: Reasoning }
 
 export function humanSize(value: number) {
   if (value >= 1073741824) return (value / 1073741824).toFixed(2) + " GB";

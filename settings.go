@@ -60,6 +60,14 @@ func (a *settingsAPI) get(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "读取壁纸数量失败"})
 		return
 	}
+	// The recognition service card comes with the page, without its key.
+	recognizer := recognizerView{}
+	if c, ok, err := a.store.getRecognizer(); err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "读取识别服务设置失败"})
+		return
+	} else if ok {
+		recognizer = c.view()
+	}
 	statuses := a.scanner.sourceStatuses()
 	status := func(id string) *sourceStatus {
 		if st, ok := statuses[id]; ok {
@@ -86,6 +94,7 @@ func (a *settingsAPI) get(w http.ResponseWriter, r *http.Request) {
 		"scanEvery":  int(cfg.ScanEvery.Seconds()),
 		"events":     a.scanner.eventSnapshot(),
 		"wallpapers": walls,
+		"recognizer": recognizer,
 	})
 }
 

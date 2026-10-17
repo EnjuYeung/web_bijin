@@ -4,6 +4,8 @@
 
 同一进程还提供公开的随机壁纸接口（2026-10-05 并入原 nas-background）：相册照片（GIF 除外）各生成屏幕尺寸的 WebP，供其他网站当背景。用户主动开启的原图分享提供独立公开地址；普通原图入口和相册其余部分仍要登录。
 
+整理页可选用外部识别服务（2026-10-17 用户确认）：只在用户点「识别」或「测试」时，把相册路径和作者 / 模特名单发给设置页配置的 Claude、OpenAI、Gemini、Grok 或其他兼容服务，换回识别建议；这是唯一主动访问的外部服务，不配置时不发出任何请求。
+
 ## 技术栈
 
 ### 原图分享（2026-10-13 用户确认）
@@ -24,6 +26,7 @@
 - 构建：Docker 的 Node 构建阶段执行 `npm ci` 和静态导出（锁文件指向官方 npm 源），Go 1.27 构建阶段内嵌导出的 `web/`。前端源码与锁文件放在 `frontend/`，生成资源不提交 Git。
 - 静态资源：构建时同时生成 JavaScript / CSS 的 gzip 文件；Go 按浏览器的 `Accept-Encoding` 提供，保留原文件作为回退，并设置 `Vary` 与一年不可变缓存。压缩计算只发生在构建阶段。
 - 运行：一个 Docker Compose 文件、一个容器、一个进程。容器加入 1Panel 的 `1panel-network`，与 RustFS 走容器内网；`5001` 只映射到宿主机 `127.0.0.1`，由用户在 1Panel 网站中配置的 OpenResty 反代以 `https://csb.jgbman.cc` 提供；`5002` 是上传通知端口，只在容器网内可达，不映射。容器限 6 核、4 GB。
+- 识别服务：Claude 用官方 Go SDK `github.com/anthropics/anthropic-sdk-go` 调 Messages API；OpenAI / Gemini / Grok / 其他兼容服务共用标准库手写的 OpenAI 格式请求。配置在设置页，存 SQLite。
 - 图片来源：始终读取容器内 `/photos`（可写挂载，由 `.env` 的 `PHOTOS_DIR` 决定）；另可在网页「设置」中添加任意个兼容 Amazon S3 接口的对象存储，配置保存在 SQLite。所有来源聚合到同一索引和图片接口，浏览器拿到照片 id；开启「大图直连」的存储，原图改由浏览器凭短期预签名地址直接读取。
 
 ## 部署与流量
@@ -36,6 +39,7 @@
                                               └─ /original/{id}：校验登录 → 302 预签名 https://s3.jgbman.cc/...
 浏览器 ─HTTPS（预签名）─► OpenResty（s3.jgbman.cc）─► RustFS ─（已转存对象）─► uks3.jgbman.cc（xHosts，英国）
 RustFS ─webhook http://bijin:5002/s3-events（容器内网，Bearer 令牌）─► bijin：后台同步这一个对象
+bijin ─HTTPS（仅点「识别」/「测试」时）─► 识别服务（api.anthropic.com / api.openai.com / generativelanguage.googleapis.com / api.x.ai / 自定义地址）
 其他网站 ─HTTPS（<img> / CSS，无 Cookie）─► OpenResty（csb.jgbman.cc）─► bijin :5001
                                               ├─ /v1/backgrounds/random：随机选一张 → 302
                                               └─ /media/sha256/…webp：读 /data/wallpapers（公开，不可变缓存）
@@ -60,7 +64,7 @@ bijin 进程
  ├─ 壁纸生成：与缩略图同一次读取，在同一个名额里接着做
  ├─ 从照片相对路径即时聚合相册
  └─ /data
-    ├─ bijin.db（照片索引 + 对象存储配置 + 相册作者/模特 + 短期修改回执，0600）
+    ├─ bijin.db（照片索引 + 对象存储与识别服务配置 + 相册作者/模特 + 短期修改回执，0600）
     ├─ session.key
     ├─ thumbs/
     └─ wallpapers/（随机壁纸 WebP）
@@ -117,6 +121,8 @@ Compose 另提供 `HOST_PORT`、`PHOTOS_DIR`、`DATA_DIR`（宿主机路径）�
 19. 左侧导航「整理」：按相册填写作者（1 位）和模特（可多位）。下拉列出已填过的名字，可输入筛选，输入新名字回车即新增；改动立即保存。可按相册名、填写情况（全部 / 都没填 / 没填作者 / 没填模特）、作者（多选）、模特（多选）筛选，条件叠加后全选批量设置；名单默认折叠，展开后可改名（改成已有的名字即合并）和删除。
 20. 「相册」页可按作者、模特筛选（都可多选，条件在本次访问内保留），并按名称、作者、模特（第一位）、添加日期排序、切换升降序，没填的排最后，排序选择保存在浏览器；排序下拉为自绘样式。相册封面在名称下显示「作者 · 模特」。添加日期是相册里最早一张照片的时间（对象存储为上传时间）。
 
+21. 整理页「识别未填写的相册」：用设置页配置的识别服务，为当前列表中没填的作者 / 模特给出识别建议，逐项或全部接受后才保存；设置页「识别服务」卡片配置服务、Key、模型名与推理强度，可先测试。
+
 根目录内的图片归入一个名为「根目录」的特殊相册。子目录相册以完整相对目录作为内部标识，避免不同层级的同名文件夹混淆；界面名称仍只显示直接文件夹名。相册封面取该目录中修改时间最新的可显示图片，结果稳定且无需额外配置。
 
 支持扩展名：`.jpg` `.jpeg` `.png` `.webp` `.gif`（大小写不敏感）。路径中任一段以 `.` 开头的文件或目录跳过。
@@ -145,7 +151,7 @@ Compose 另提供 `HOST_PORT`、`PHOTOS_DIR`、`DATA_DIR`（宿主机路径）�
 | `DELETE /api/photos/{id}/share` | 停止指定修改代次的分享，旧请求不影响新的许可（需登录、同源 JSON） |
 | `GET` / `HEAD /i/{name}` | 凭随机分享身份返回完整原图；发送前核对来源与内容，no-store，支持 Range / ETag |
 | `OPTIONS /i/{name}` | 与公开壁纸一致的 GET / HEAD 跨域预检 |
-| `GET /api/settings` | 本地图库说明、对象存储列表、各来源照片数与扫描状态、上传通知状态，不含 Secret Key（需登录） |
+| `GET /api/settings` | 本地图库说明、对象存储列表、各来源照片数与扫描状态、上传通知状态、识别服务配置，不含 Secret Key 与 API Key（需登录） |
 | `POST /api/storages` | 添加对象存储，只接受 JSON（需登录） |
 | `PUT /api/storages/{id}` | 修改对象存储，Secret Key 留空沿用（需登录） |
 | `DELETE /api/storages/{id}` | 删除对象存储配置，不删除存储里的文件（需登录） |
@@ -160,6 +166,11 @@ Compose 另提供 `HOST_PORT`、`PHOTOS_DIR`、`DATA_DIR`（宿主机路径）�
 | `GET /api/people` | 作者与模特名单、各自的相册数，以及失效关联数（需登录） |
 | `POST /api/organize` | 当前整理页统一保存：填写、批量、名单修改与失效清理；固定编号去重（需登录、同源 JSON） |
 | `GET /api/organize/receipts/{operation}` | 按原编号核对 `committed` / `missing` / `expired`（需登录、no-store） |
+| `GET /api/recognizer` | 识别服务配置（整理页用）：是否已配置、服务、接口地址、模型名、推理强度、是否已保存 Key，不含 Key（需登录） |
+| `PUT /api/recognizer` | 保存识别服务配置；Key 留空且服务未变时沿用（需登录、同源 JSON） |
+| `DELETE /api/recognizer` | 删除识别服务配置（需登录、同源） |
+| `POST /api/recognizer/test` | 用表单内容发一次极小的真实请求，不保存（需登录、同源 JSON） |
+| `POST /api/recognize` | 对最多 20 本相册请求识别建议，只返回空项的建议（需登录、同源 JSON） |
 
 上传通知端口（`EVENTS_LISTEN`）只有两个路径：`GET`/`HEAD /` 给 RustFS 健康检查，`POST /s3-events` 接收通知（Bearer 令牌，恒定时间比较）。
 
@@ -207,7 +218,7 @@ Compose 另提供 `HOST_PORT`、`PHOTOS_DIR`、`DATA_DIR`（宿主机路径）�
 
 ## 非目标
 
-OAuth / 多用户、手工建相册、搜索、自由标签（相册只有作者、模特两个固定字段）、HEIC/RAW、多容器、RPC、持久消息队列、除 SQLite 以外的数据库；壁纸目录或列表接口、发布审核与回滚、按相册挑选壁纸、应用内限流（需要时在 1Panel 网站里开流量限制）。
+OAuth / 多用户、手工建相册、搜索、自由标签（相册只有作者、模特两个固定字段）、HEIC/RAW、多容器、RPC、持久消息队列、除 SQLite 以外的数据库；壁纸目录或列表接口、发布审核与回滚、按相册挑选壁纸、应用内限流（需要时在 1Panel 网站里开流量限制）；人脸识别、按照片元数据识别作者、上传或扫描后自动识别、保存识别建议、同时配置多个识别服务。
 
 
 ## GUI 上传（2026-10-06 13:53:53 CST）
@@ -249,3 +260,15 @@ OAuth / 多用户、手工建相册、搜索、自由标签（相册只有作者
 - `/api/share-batches/prepare` 创建核对范围；`/{id}/start`、`retry`、`cancel` 修改该任务；GET 列表、详情与链接用于恢复和核对。准备记录暂存 10 分钟，完成 / 取消 / 中断记录按 48 小时按需清理；未运行时没有原图读取或后台清理轮询。
 - 相册计数复用已分享查询缓存，任务列表汇总逐项数量，不读原图。复制前核对当前许可身份与来源元数据，公开读取仍完整验证内容；后续重新开启的另一份许可不会混入旧任务链接。
 - 分享管理界面默认收起：照片页、相册列表、单本相册页顶部共用「管理分享」按钮（`album-app.tsx` 持有开关，仅本次页面有效；地址带 `shared=1` 时自动打开）。收起时不渲染勾选、分享状态、批量入口与任务结果，并清空勾选、取消「只看已分享」；打开时重新读取相册分享数量。纯前端改动，接口不变。
+
+## 识别建议（2026-10-17 12:53:18 CST）
+
+用户确认 Q1–Q21，完整行为与验收项见 `docs/album-recognition-plan.md`。
+
+- 配置：SQLite 表 `recognizer` 只有一行（服务 `claude` / `openai` / `gemini` / `grok` / `custom`、接口地址、API Key、模型名、推理强度）。前四个服务的地址固定，`custom` 填 http(s) 地址。Key 只写不读：留空且服务未变时沿用，换服务必须重填。保存、删除立即生效。
+- 推理强度：默认 / 低 / 中 / 高。默认不发送参数；Claude 映射到 `output_config.effort`，其余映射到 `reasoning_effort`。两路都不发送 `temperature`。
+- 一次识别：`POST /api/recognize` 最多 20 本，服务器读取当前相册、名单与关联，跳过不存在、已填满或根目录的相册；把规则、名单、已填相册示例（最多 300 本）和待识别相册及缺项发给识别服务，整批期限 50 秒（OpenResty 默认读超时 60 秒）。Claude 用 `output_config.format` 约束 JSON；OpenAI 格式发送 JSON Schema 的 `response_format`，服务以 400 拒绝该字段时去掉重试一次。
+- 逐条检查：相册在本批且对应项仍空；名字按整理规则清理（1–40 字、无控制字符），模特去重且最多 10 位；与名单同角色、身份相同（只忽略英文大小写）的改用名单写法，否则标为新名字。不合格条目丢弃并计数；整体不是所要求的 JSON 时整批失败。
+- 错误：Key 无效、找不到模型或地址、限流或额度不足、服务不可用、超时、回答格式不对，各自返回中文原因及服务原始错误摘要（最多 200 字）。日志只记服务、模型、状态、耗时和相册数，不记 Key 与提示词。
+- 前端：`frontend/components/recognizer-settings.tsx`（设置页卡片）；`frontend/lib/recognition.ts`（整理页识别建议：当前列表前 100 本空项相册、每 20 本一批顺序请求、进度与汇总、离开即停止）。建议只在页面内存，只在对应项仍为空时显示；接受经现有整理保存 module 提交，相同组合合并为一次批量保存。
+- 不新增容器、进程、后台任务或队列；识别服务只在用户点「识别」或「测试」时被访问。

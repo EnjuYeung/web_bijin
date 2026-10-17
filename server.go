@@ -34,6 +34,7 @@ func newRouter(st *store, sc *scanner, thumbs *thumbCache, sources *sourceSet, t
 	sharing.routes(mux, gate)
 	newBatchAPI(sharing).routes(mux, gate)
 	(&organizeAPI{store: st}).routes(mux, gate)
+	newRecognizerAPI(st).routes(mux, gate)
 	// Public for Compose and the page's time zone only. Scan progress and its
 	// errors name internal hosts and files, so they stay behind login.
 	mux.Handle("GET /api/health", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

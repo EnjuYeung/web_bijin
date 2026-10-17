@@ -18,10 +18,11 @@ export default defineConfig({
   projects: [
     { name: "chromium", use: { browserName: "chromium", launchOptions: { args: ["--no-sandbox"] } } },
     // Safari's engine, for what logging out leaves behind on iPhones and Macs.
-    { name: "webkit", use: { browserName: "webkit" }, testMatch: /(logout|organize-saving|upload|upload-recovery|sharing)\.spec\.ts/ },
+    { name: "webkit", use: { browserName: "webkit" }, testMatch: /(logout|organize-saving|upload|upload-recovery|sharing|recognition)\.spec\.ts/ },
   ],
   webServer: [
     { command: "python3 tests/s3_fixture.py", port: 18093, reuseExistingServer: false },
+    { command: "python3 tests/recognizer_fixture.py", port: 18095, reuseExistingServer: false },
     {
       command: "../output/bijin-ui-test",
       url: "http://127.0.0.1:18092/api/health",

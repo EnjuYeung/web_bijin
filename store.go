@@ -45,7 +45,8 @@ func openStore(path string) (*store, error) {
 		db.Close()
 		return nil, err
 	}
-	// The database holds object storage keys, so keep it owner-only like session.key.
+	// The database holds object storage and recognition service keys, so keep it
+	// owner-only like session.key.
 	for _, p := range []string{path, path + "-wal", path + "-shm"} {
 		if err := os.Chmod(p, 0o600); err != nil && !os.IsNotExist(err) {
 			db.Close()
@@ -108,6 +109,9 @@ DROP INDEX IF EXISTS photos_mtime;
 		return err
 	}
 	if err := s.migratePeople(); err != nil {
+		return err
+	}
+	if err := s.migrateRecognizer(); err != nil {
 		return err
 	}
 	if err := s.migrateWallpapers(); err != nil {

@@ -353,6 +353,17 @@ html[data-sidebar="collapsed"] .nav-item { justify-content: center; padding: 0; 
 .organize-status svg { width: .875rem; height: .875rem; flex-shrink: 0; }
 .organize-status[data-kind="saved"] { color: var(--color-success); }
 .organize-status[data-kind="error"] { color: var(--color-error); }
+.organize-recognize { display: grid; gap: var(--space-3xs); }
+.organize-recognize .form-message:empty { display: none; }
+.recognize-failures { margin: 0; padding-left: 1.25rem; color: var(--color-error); font-size: var(--text-sm); overflow-wrap: anywhere; }
+/* A suggestion is dashed: it is not saved until accepted. */
+.suggestion { display: flex; align-items: center; gap: var(--space-3xs); margin-top: var(--space-3xs); padding-left: var(--space-2xs); border: 1px dashed var(--color-accent); border-radius: var(--radius-sm); background: var(--color-accent-soft); min-width: 0; }
+.suggestion-label { flex-shrink: 0; color: var(--color-muted); font-size: var(--text-xs); }
+/* Names flow as text: break-word (unlike anywhere) never lets the minimum width
+   shrink a name to one letter per line. */
+.suggestion-names { flex: 1; min-width: 0; padding: var(--space-3xs) 0; font-size: var(--text-sm); line-height: 1.6; overflow-wrap: break-word; }
+.suggestion-new { margin-left: var(--space-3xs); vertical-align: middle; font-size: var(--text-xs); }
+.suggestion-actions { display: flex; flex-shrink: 0; }
 
 /* Name pickers: a filterable list that can add the typed name. */
 .person-field { display: flex; align-items: center; width: 100%; min-width: 0; min-height: var(--control-size); border: 1px solid var(--color-rule); border-radius: var(--radius-sm); background: var(--background); color: var(--color-ink); }
