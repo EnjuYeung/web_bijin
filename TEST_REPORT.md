@@ -1,26 +1,40 @@
 # 最近一次测试报告
 
-2026-10-17 17:08:38 CST：整理页新布局（表头操作、按列排序、网格视图、按单本 / 所选相册识别、底部批量栏）隔离验收。方案见 `docs/organize-layout-plan.md`，基线 `e496f6b`，改动尚未提交、推送和部署。
+2026-10-17 17:34:19 CST：整理页新布局（表头操作、按列排序、网格视图、按单本 / 所选相册识别、底部批量栏）发布验收、推送与生产部署。方案见 `docs/organize-layout-plan.md`，提交 `d2235b3`，基线 `e496f6b`。用户已授权：提交 master，在新隔离目录按提交重跑全量测试，通过后推送、备份数据库、部署生产并清理。
 
 ## 测试环境
 
-- netcup Debian 13，隔离目录 `/root/bijin-layout-test/src`：本地工作区按 `git ls-files -co --exclude-standard` 打包的 159 个文件（`e496f6b` 加本次未提交改动）。不连接生产数据库、照片、RustFS 或任何真实 AI 服务。
+- netcup Debian 13（主机在 16:29 左右重启过一次，与本次改动无关，各容器自动恢复）。开发验收在 `/root/bijin-layout-test/src`（工作区打包），发布验收在新目录 `/root/bijin-release-test/src`，内容为 `git archive d2235b3`（159 个文件）。两者都不连接生产数据库、照片、RustFS 或任何真实 AI 服务。
 - Go：`golang:1.27-alpine`，`-tags nodynamic`；前端与浏览器：`mcr.microsoft.com/playwright:v1.63.0-noble`（Node、Chromium、WebKit），Next.js 16.3.7，`@base-ui/react` 1.8.0。
 - 测试服务为同一份代码构建的 `output/bijin-ui-test`（127.0.0.1:18092 / 18094），配合 `tests/s3_fixture.py`（18093）和 `tests/recognizer_fixture.py`（18095，OpenAI 格式假识别服务）。测试图片由 `genphotos.go` 新建；超过 100 本的弹窗提示用 Playwright 拦截 `/api/albums` 返回 105 本虚构相册。
 
 ## 方法与结果
+
+开发验收（未提交的工作区）：
+
+| 编号 | 实际方法 | 结果 |
+| --- | --- | --- |
+| D01 | 整理页与识别的浏览器测试（`organize`、`recognition`、`organize-saving`），边改边跑 | 第一次 17 通过 1 失败，第二次 18 通过，第三次 32 通过；过程见下文 |
+| D02 | 截图人工复核：列表 1440 / 375 / 320 px、网格 1440 / 375 px、双主题、确认弹窗、手机批量栏 | 表头与各列对齐；精简栏在 375 px 一行、320 px 排序按钮整组换行；网格每行 4 / 3 / 2 张；弹窗与批量分享确认框同一风格；无横向溢出 |
+| D03 | 干净数据下全量 `npx playwright test` | 108 项通过，之后删除该隔离目录与测试镜像 |
+
+发布验收（提交 `d2235b3`，17:19:25–17:30:42）与部署：
 
 | 编号 | 实际方法 | 结果 |
 | --- | --- | --- |
 | T01 | `npm ci && npm run typecheck && npm run build` | 通过，静态导出完成 |
 | T02 | `npm run test:organizer` / `test:upload` / `test:names` / `test:recognition` | 15 / 21 / 3 / 6 项通过，0 失败（识别 module 新增「等待中的相册」1 项） |
 | T03 | `go vet` 后 `go test -tags nodynamic -count=1 -json .` | 176 个顶层测试通过，0 失败；`TestQueryScale` 可选压测按默认跳过 |
-| T04 | 整理页与识别的浏览器测试（`organize`、`recognition`、`organize-saving`），边改边跑 | 第一次 17 通过 1 失败，第二次 18 通过，第三次 32 通过；过程见下文 |
-| T05 | 删除 `photos/`、`output/ui-data*` 后重新生成图片，`npx playwright test`（全量） | Chromium / WebKit 共 108 项通过，0 失败、0 不稳定、0 跳过，5.4 分钟（原 104 项，新增 organize 07、08 和 recognition 05 两浏览器） |
-| T06 | 截图人工复核：列表 1440 / 375 / 320 px、网格 1440 / 375 px、双主题、确认弹窗、手机批量栏 | 表头与各列对齐；精简栏在 375 px 一行、320 px 排序按钮整组换行；网格每行 4 / 3 / 2 张；弹窗与批量分享确认框同一风格；无横向溢出 |
-| T07 | 清理 | 已删除隔离目录、两个 Go 缓存卷、Playwright 与 Go 测试镜像和构建缓存；生产容器与数据未动 |
+| T04 | `CGO_ENABLED=1 go test -race`（同上） | 176 通过、1 跳过，无 DATA RACE |
+| T05 | 干净数据下 `npx playwright test`（全量） | Chromium / WebKit 共 108 项通过，0 失败、0 不稳定、0 跳过，5.8 分钟（原 104 项，新增 organize 07、08 和 recognition 05 两浏览器） |
+| T06 | 推送：`git push origin master` | GitHub master 为 `d2235b3` |
+| T07 | 部署前：SQLite 在线备份到 `/root/bijin-backup-20261017-1735-predeploy.db`（0600）并 `quick_check`，记录各表行数；当前镜像打回滚标签 | quick_check ok；photos 4288、photo_shares 4288、album_people 94、people 30、wallpapers 4333、storages 1、share_batches 3、share_batch_items 455、organize_receipts 15、recognizer 1 |
+| T08 | 生产 `git pull --ff-only` 到 `d2235b3`，`docker compose build && up -d` | 新镜像 `ee7e3fbecafe`，启动后 healthy、重启 0 次；启动扫描 4288 张、0 失败；日志只有 INFO；程序内含「识别这本相册」「识别所选的」，不再含「识别未填写的相册」 |
+| T09 | 部署后数据库核对 | quick_check ok；各表行数与部署前一致；识别服务配置仍在；数据库仍为 0600 |
+| T10 | 公网核对 `https://csb.jgbman.cc` | health 200、登录页 200；未登录首页 302 到登录；`/api/recognizer`、`/api/recognize`、`/api/settings`、`/api/albums` 401；随机壁纸 302；503 个分享许可中随机抽 3 个，HEAD 均 200 image/jpeg（第一次抽查误抽到未开启分享的行而得到 404，改为只抽已开启的分享后复查） |
+| T11 | 清理 | 删除两个隔离目录、Playwright / Go 测试镜像、测试卷、回滚镜像（旧 `9b4e2fd4b4c3`）与构建缓存，回收约 7.7 GiB；netcup 只剩 bijin / RustFS / OpenResty；两份部署前数据库备份保留 |
 
-未运行：`go test -race` 与退出登录重复测试——本次没有改 Go 代码和退出登录相关代码，Go 测试结果只用来确认内嵌的新前端能正常构建和运行。
+未运行：退出登录重复测试——本次没有改退出登录相关代码。
 
 ## 业务验收
 
@@ -44,13 +58,13 @@
 
 ## 失败、修复与复测记录
 
-- T04 第一次：organize 08 失败——测试比较的是两个下拉框里输入框的位置，模特框有名字标签，输入框位置不同；改为比较下拉框本身（实际两个下拉框并排）。同一张失败截图显示：手机上表头的「模特」被单独挤到第二行，「取消选择」被挤到第三行。改为三个排序按钮合成一组，手机上不显示「排序」二字、按钮收紧，「取消选择」只显示 ✕ 图标；复测 18 项通过。
+- D01 第一次：organize 08 失败——测试比较的是两个下拉框里输入框的位置，模特框有名字标签，输入框位置不同；改为比较下拉框本身（实际两个下拉框并排）。同一张失败截图显示：手机上表头的「模特」被单独挤到第二行，「取消选择」被挤到第三行。改为三个排序按钮合成一组，手机上不显示「排序」二字、按钮收紧，「取消选择」只显示 ✕ 图标；复测 18 项通过。
 - 截图复核：320 px 时加了识别列，相册名被挤成一个字一行（「batc / h」）。手机列表的勾选列收窄为 2rem、列间距缩小（勾选点击范围仍为 44 px），并在测试里加了相册名至少 64 px 宽的检查；复测 32 项通过。
-- 补测：网格视图的识别按钮和「不出现 AI」原先没有被检查，补进 recognition 02、05 后单独复测 10 项通过，再在干净数据上重跑全量（T05）。
+- 补测：网格视图的识别按钮和「不出现 AI」原先没有被检查，补进 recognition 02、05 后单独复测 10 项通过，再在干净数据上重跑全量（D03）。
 - 原有测试的改写只针对按方案改变的行为：「识别未填写的相册」按钮改为单本 / 所选识别，「已选 2 本相册」改为「已选 2 本」。没有为了通过而修改断言，也没有删除失败的测试。
 
 ## 限制与结论
 
 - 未用真实 AI 服务测试：识别请求本身没有改，真实服务仍需你在设置页填入 Key 后验收。
 - 网格视图的鼠标悬停效果、iPhone 真机上的吸顶效果未实测，只在 Playwright 的 Chromium / WebKit 模拟宽度下验证。
-- 结论：整理页新布局按方案实现，功能与回归测试全部通过。改动尚未提交；推送与部署等你确认。
+- 结论：整理页新布局按方案实现，提交 `d2235b3` 的功能与回归测试全部通过；已推送并部署生产，生产 healthy，原有数据、配置与分享保留。
