@@ -43,7 +43,23 @@
 - 原有测试的调整都跟随这次功能变化，没有删除或放宽检查：上传测试不能再填子目录，改用唯一的文件名或文件夹名隔离，仍核对原图字节与子文件夹未上传；整理页计数由「共 4 本」改为「共 4 本相册」，名单人数由一句话改为两个计数；退出登录的位置改为对照侧栏底边（原来对照已删除的标语）；上传批次单元测试由 `destination` 改为 `target`，并核对准备请求只有三个字段。
 - 新增：浏览器 organize 09（长名称网格对齐）、organize 10（失效记录提示）；设置、上传、分享、退出登录测试里增加了对应界面的检查；Go 增加一个带 `directory` 的请求被拒绝的检查（在原有测试内）。
 
+## 发布与部署（2026-10-18 23:27:03 CST 记录）
+
+用户要求：测试通过后合并到 master 并发布，发布前照旧备份数据库、保留回滚镜像。
+
+| 编号 | 实际操作 | 结果 |
+| --- | --- | --- |
+| D01 | `git push origin master` | GitHub master 为 `7e8864e`（功能提交 `ade2962` 加验收记录） |
+| D02 | SQLite 在线备份到 `/root/bijin-backup-20261018-1723-predeploy.db`（服务器时间，CST 23:23），`quick_check`，记录各表行数；当前镜像另打标签 `bijin:rollback-20261018-predeploy` | 单个文件、0600、quick_check ok。photos 6758、photo_shares 6759（503 个已开启）、album_people 157、people 46、wallpapers 6806、storages 1、share_batches 3、share_batch_items 455、organize_receipts 82、recognizer 1 |
+| D03 | 部署目录 `git pull --ff-only` 到 `7e8864e`，`docker compose build && docker compose up -d` | 新镜像 `f67f9c2221cf` healthy，重启 0 次；启动扫描 6758 张、0 失败；日志只有 INFO |
+| D04 | 部署后只读核对数据库 | quick_check ok；各表行数与部署前完全一致，503 个分享与识别服务配置保留，数据库仍为 0600 |
+| D05 | 公网核对 `https://csb.jgbman.cc` | health 200；登录页 200、标题「Juen's」、不含「家里的回忆」；未登录访问首页 302 到登录页；`/api/settings`、`/api/albums`、`/api/photos`、`/api/upload-targets`、`/api/share-batches`、`/api/recognizer`、`/api/people` 与未登录的上传准备都是 401；随机壁纸 302 到 `/media/sha256/…webp`，取回 200 image/webp |
+| D06 | 随机抽 3 个已开启的分享链接 HEAD 与 GET；再试一个不存在的地址；检查部署后的程序 | 3 个都是 200（2 张 JPEG、1 张 PNG），GET 字节数与记录一致；不存在的地址 404。程序里已没有「目标子目录」「家里的回忆」「修改本地照片目录」「支持哪些存储服务」，新界面的标记都在；部署后无 WARN / ERROR |
+
+保留：本次部署前数据库备份、回滚镜像 `bijin:rollback-20261018-predeploy`，以及上一次的备份与 `bijin:rollback-20261017-predeploy`。测试目录、Go 与 Playwright 镜像和构建缓存已删除。
+
 ## 限制与结论
 
 - 视觉核对依据测试截图（上传页桌面与手机、整理页网格长名称、登录页、侧栏、设置页、相册页顶栏），没有在 iPhone 真机上看。
-- 结论：提交 `ade2962` 的构建、静态检查、Go（含 race）与两种浏览器的全量回归全部通过。
+- 登录后的新界面没有在生产上用真实账号点开看过（需要登录），以测试截图和程序内容核对代替；请在手机和电脑上各看一眼设置、整理、上传和相册页。
+- 结论：提交 `ade2962` 的构建、静态检查、Go（含 race）与两种浏览器的全量回归全部通过；已推送并部署生产，生产 healthy，数据与 503 个分享保留，部署前备份与回滚镜像已保留。
