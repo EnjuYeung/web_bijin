@@ -197,6 +197,11 @@ test("sharing controls stay hidden until 管理分享 is pressed; closing clears
   await page.goto("/?view=albums");
   await expect(page.locator(".album-card").first()).toBeVisible();
   await expect(toggle).toHaveAttribute("aria-pressed", "false");
+  // Only the chain icon on every screen width; the name stays for hover and screen readers.
+  await expect(toggle).toHaveText("");
+  await expect(toggle).toHaveAttribute("title", "管理分享：点击打开");
+  const button = (await toggle.boundingBox())!;
+  expect(Math.abs(button.width - button.height)).toBeLessThan(1);
   await expect(page.getByRole("checkbox")).toHaveCount(0);
   await expect(page.locator(".album-meta [data-slot=badge]")).toHaveCount(0);
   await expect(page.locator("#sharing-panel")).toHaveCount(0);

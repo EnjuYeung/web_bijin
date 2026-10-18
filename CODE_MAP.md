@@ -54,13 +54,13 @@
 |---|---|
 | `frontend/app/layout.tsx` | Next.js 页面外壳、元数据（不含标题）和首屏主题/侧栏偏好脚本，不请求用户数据。 |
 | `frontend/app/page.tsx`、`frontend/app/login/page.tsx` | 首页与登录页静态导出入口；登录页标题「Juen's」，首页标题由 `album-app.tsx` 按当前页面渲染。 |
-| `frontend/components/album-app.tsx` | 标题、导航、网站标题折叠交互、按需加载设置页、上传页、整理页与视图选择；顶部「管理分享」开关（只在相册列表与单本相册页，默认收起）；侧栏底部退出登录，其他标签页退出或返回键恢复旧页面时转到登录页。 |
+| `frontend/components/album-app.tsx` | 标题、导航、网站标题折叠交互、按需加载设置页、上传页、整理页与视图选择；顶部「管理分享」开关（只显示链条图标，只在相册列表与单本相册页，默认收起）；侧栏底部退出登录，其他标签页退出或返回键恢复旧页面时转到登录页。 |
 | `frontend/components/photo-gallery.tsx` | 游标分页、虚拟瀑布流、hash 大图、键盘/触摸切换、焦点和滚动恢复；已分享筛选切换重置分页，停止后移出筛选结果。 |
 | `frontend/components/albums.tsx` | 文件夹相册封面、数量、「作者 · 模特」、封面左上角分享标记、作者 / 模特多选与分享状态单选筛选（本次访问内保留）、排序工具（名称 / 作者 / 模特 / 添加日期与升降序）、空态与重试。 |
 | `frontend/components/option-select.tsx` | 基于 Base UI Select 的单选下拉，与名字下拉同一套弹层样式；用于相册排序、整理页的填写情况、设置页的寻址方式和上传页的保存位置；项目里不再使用原生下拉。 |
 | `frontend/lib/album-organizer.ts` | 整理相册 deep module：已确认资料 + 未确认意图的最新预览、临时人物身份、页面内统一顺序、明确拒绝、待确认 / 核对 / 原编号重试与保存状态。 |
 | `frontend/lib/organize-http.ts` | 正式 HTTP adapter：读取资料、统一保存、回执核对与失败分类；验证返回的编号和资料格式。 |
-| `frontend/components/organize-panel.tsx` | 整理页：筛选（改筛选清空勾选）、表头（全选、计数、按相册 / 作者 / 模特排序，窄屏与网格变精简栏，吸顶）、列表 / 网格视图、底部批量栏、名单编辑；通过整理相册 module 的 interface 提交操作，展示最新预览及核对 / 重试入口，未完成时离开提醒；每行识别按钮（单本，或已勾选时弹窗确认后识别所选）、提示行（进度、汇总、失败、「接受全部建议」）与行内识别建议。 |
+| `frontend/components/organize-panel.tsx` | 整理页：筛选（改筛选清空勾选）、卡片标题旁的图标数量（相册数、作者 / 模特人数、失效记录数）、表头（全选、按相册 / 作者 / 模特排序，窄屏与网格变精简栏，吸顶）、列表 / 网格视图（网格用 subgrid 对齐）、底部批量栏、名单编辑；通过整理相册 module 的 interface 提交操作，展示最新预览及核对 / 重试入口，未完成时离开提醒；每行识别按钮（单本，或已勾选时弹窗确认后识别所选）、提示行（进度、汇总、失败、「接受全部建议」）与行内识别建议。 |
 | `frontend/lib/recognition.ts` | 识别建议 module：所给相册的前 100 本、每 20 本一批顺序请求、进度与还在等待的相册、单批失败不影响其他批、汇总文字、忽略 / 接受后丢弃、离开即停止。 |
 | `frontend/lib/recognition-http.ts` | 识别建议的 HTTP adapter：`POST /api/recognize` 并检查响应格式。 |
 | `frontend/components/person-picker.tsx` | 基于 Base UI Combobox 的名字下拉：筛选、复用已有名字、输入新建（用作筛选时只选不建），作者单选、模特多选，可全程用键盘操作。 |
@@ -72,7 +72,7 @@
 | `frontend/lib/sharing.ts` | 单图与批量分享共用：分享地址格式、分享变化通知（区分来自大图还是批量任务）、点击时先占用剪贴板的复制。 |
 | `frontend/components/settings-panel.tsx` | 四个子页（本地图库 / 对象存储 / 识别服务 / 随机壁纸）：标准标签页键盘操作、地址 `tab` 参数、扫描失败标记，未选中的卡片只隐藏；来源卡片、校验表单、添加/编辑/测试/删除对象存储、大图直连与浏览器访问地址、上传通知状态、识别服务卡片、随机壁纸卡片（数量与可复制的接口地址）；扫描中短时刷新。 |
 | `frontend/components/recognizer-settings.tsx` | 设置页「识别服务」卡片：服务、接口地址、只写的 API Key、模型名、推理强度；测试（不保存）、保存、删除。 |
-| `frontend/components/upload-panel.tsx` | 上传页：读取保存位置、选择 / 拖入文件、显示批次与操作；离开提醒读取 module 的待完成事实。 |
+| `frontend/components/upload-panel.tsx` | 上传页：读取保存位置（标题右侧下拉）、选择 / 拖入文件、显示批次与操作；离开提醒读取 module 的待完成事实。 |
 | `frontend/lib/upload-batch.ts` | 上传批次 module：名单与位置、四路执行、停止、保存核对、续查 / 处理重试、失效与旧回调隔离；`hold()` 协调浏览器离开决定，暂缓后续请求。 |
 | `frontend/lib/upload-http.ts` | 上传 HTTP / XHR adapter：协议验证、有界请求和保存核对，向批次提供外部事实。 |
 | `frontend/lib/upload.ts` | 非递归文件选择 / 拖入读取，XHR 进度、取消及本地保存回执，取消等待。 |

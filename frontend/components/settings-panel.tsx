@@ -5,7 +5,7 @@ import { Check, CircleAlert, Cloud, Copy, FolderHeart, Pencil, Plus, RefreshCw, 
 import { api, formatTime, humanSize, type EventState, type Settings, type SourceStatus, type Storage, type StorageInput, type WallpaperStats } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { Card, CardAction, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardAction, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Field, FieldDescription, FieldError, FieldGroup, FieldLabel, FieldLegend, FieldSet } from "@/components/ui/field";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -71,7 +71,7 @@ function WallpaperCard({ stats, busy }: { stats: WallpaperStats; busy: boolean }
     catch { setCopied({ id, ok: false }); }
   }
   return <Card className="source-card" id="wall-card">
-    <CardHeader><CardTitle><h2><Shuffle aria-hidden="true" />随机壁纸</h2></CardTitle><CardDescription>其他网站可以直接引用，不用登录；每次打开随机换一张。</CardDescription><CardAction><Badge variant="outline">公开</Badge></CardAction></CardHeader>
+    <CardHeader><CardTitle><h2><Shuffle aria-hidden="true" />随机壁纸</h2></CardTitle><CardAction><Badge variant="outline">公开</Badge></CardAction></CardHeader>
     <CardContent>
       {busy && stats.ready < stats.photos && <p className="scan-note" role="status"><Spinner aria-hidden="true" />正在生成壁纸，完成后状态会自动更新。</p>}
       <dl className="source-facts">
@@ -90,11 +90,6 @@ function WallpaperCard({ stats, busy }: { stats: WallpaperStats; busy: boolean }
         </ul>{copied && !copied.ok && <p className="source-broken" role="status">复制失败，请手动选中地址复制。</p>}</dd></div>
       </dl>
     </CardContent>
-    <CardFooter><details className="source-guide"><summary>怎么用？</summary><div className="source-guide-body">
-      <p>在网页样式里写 <code>background-image: url(地址)</code>，或者 <code>&lt;img src=&quot;地址&quot;&gt;</code>；每次打开都会随机跳到一张壁纸。</p>
-      <p>横图最长 3840×2160，竖图最长 1440×2560，接近正方形的两种都有，不会放大原图。加上参数 <code>format=json</code> 会返回图片信息。</p>
-      <p>照片进入相册后自动生成壁纸，删除后几秒内不再出现；GIF 不做壁纸。原图不会公开。</p>
-    </div></details></CardFooter>
   </Card>;
 }
 
@@ -223,7 +218,9 @@ export default function SettingsPanel() {
 
   // Only a failed scan is flagged on its button; normal states stay quiet.
   const failed: Partial<Record<Tab, boolean>> = { local: !!settings?.local.status?.err, storage: !!settings?.storages.some(storage => storage.status?.err) };
-  const panel = (id: Tab) => ({ role: "tabpanel", id: "settings-panel-" + id, "aria-labelledby": "settings-tab-" + id, hidden: tab !== id });
+  // 本地图库 has no control inside, so its panel takes the Tab stop itself, as
+  // the tabs pattern asks; the other panels start with their own controls.
+  const panel = (id: Tab) => ({ role: "tabpanel", id: "settings-panel-" + id, "aria-labelledby": "settings-tab-" + id, hidden: tab !== id, tabIndex: id === "local" ? 0 : undefined });
   return <div id="settings" className="settings-shell">
     <div className="settings-layout">
       <div className="settings-tabs" role="tablist" aria-label="设置分类" onKeyDown={moveTab}>
@@ -237,17 +234,16 @@ export default function SettingsPanel() {
         {!settings && !loadError && <div aria-label="正在读取设置" role="status"><Skeleton className="h-64" /></div>}
         {settings && <>
           <div {...panel("local")}><Card className="source-card">
-            <CardHeader><CardTitle><h2><FolderHeart aria-hidden="true" />本地图库</h2></CardTitle><CardDescription>家里的照片，按文件夹整理成相册。</CardDescription><CardAction><Badge variant="outline">可上传</Badge></CardAction></CardHeader>
+            <CardHeader><CardTitle><h2><FolderHeart aria-hidden="true" />本地图库</h2></CardTitle><CardAction><Badge variant="outline">可上传</Badge></CardAction></CardHeader>
             <CardContent><dl className="source-facts">
               <div><dt>照片</dt><dd id="local-count"><Count photos={settings.local.photos} broken={settings.local.broken} /></dd></div>
               <div><dt>宿主机目录</dt><dd id="local-host">{settings.local.hostDir || "未提供，见服务器 PHOTOS_DIR 配置"}</dd></div>
               <div><dt>容器内目录</dt><dd id="local-container">{settings.local.containerDir || "/photos"}</dd></div>
               <div><dt>最近扫描</dt><dd id="local-scan"><SourceState status={settings.local.status} /></dd></div>
             </dl></CardContent>
-            <CardFooter><details className="source-guide"><summary>修改本地照片目录</summary><div className="source-guide-body"><p>在服务器项目目录的 <code>.env</code> 中修改 <code>PHOTOS_DIR</code>，再执行 <code>docker compose up -d</code>。</p><p>支持 jpg、jpeg、png、webp、gif；以点开头的文件和文件夹会跳过。上传页可将图片保存到这个目录，已有同名文件会跳过。</p><p>每 {scanInterval(settings.scanEvery)}自动扫描一次。</p></div></details></CardFooter>
           </Card></div>
           <div {...panel("storage")}><Card className="source-card">
-            <CardHeader><CardTitle><h2><Cloud aria-hidden="true" />对象存储</h2></CardTitle><CardDescription>云端照片与本地一起展示，同名文件夹合并为相册。</CardDescription><CardAction>{editing === undefined && <Button ref={addButton} id="s3-add" onClick={event => openEditor(null, event.currentTarget)} disabled={!!pending}><Plus data-icon="inline-start" aria-hidden="true" />添加对象存储</Button>}</CardAction></CardHeader>
+            <CardHeader><CardTitle><h2><Cloud aria-hidden="true" />对象存储</h2></CardTitle><CardAction>{editing === undefined && <Button ref={addButton} id="s3-add" onClick={event => openEditor(null, event.currentTarget)} disabled={!!pending}><Plus data-icon="inline-start" aria-hidden="true" />添加对象存储</Button>}</CardAction></CardHeader>
             <CardContent>
               <EventsNote events={settings.events} scanEvery={settings.scanEvery} />
               {(settings.scan.scanning || settings.scan.queued) && <p className="scan-note" role="status"><Spinner aria-hidden="true" />正在整理新照片，完成后状态会自动更新。</p>}
@@ -274,7 +270,7 @@ export default function SettingsPanel() {
                     <StorageField name="publicEndpoint" label="浏览器访问地址" value={values.publicEndpoint} onChange={change} helper="浏览器能打开的存储地址，留空则与 Endpoint 相同；Endpoint 填的是服务器内网地址时必须填写" disabled={!!pending} />
                   </FieldGroup>}
                 </FieldSet>
-                <details className="source-guide" open={advanced} onToggle={event => setAdvanced(event.currentTarget.open)}>
+                <details className="advanced-settings" open={advanced} onToggle={event => setAdvanced(event.currentTarget.open)}>
                   <summary>高级设置</summary><FieldSet className="advanced-fields"><FieldLegend className="sr-only">对象存储高级设置</FieldLegend><FieldGroup className="storage-fields">
                     <StorageField name="region" label="Region" value={values.region} onChange={change} helper="留空自动识别，服务商要求时再填写" disabled={!!pending} />
                     <Field data-disabled={!!pending}><FieldLabel htmlFor="s3-addressing">寻址方式</FieldLabel><OptionSelect id="s3-addressing" label="寻址方式" value={values.addressing} choices={addressingChoices} disabled={!!pending} onChange={value => change("addressing", value)} /><FieldDescription>自建服务通常选路径，OSS / COS 可选虚拟主机。</FieldDescription></Field>
@@ -284,7 +280,6 @@ export default function SettingsPanel() {
                 <Separator /><div className="form-actions"><Button id="s3-save" type="submit" disabled={!!pending}>{pending === "save" && <Spinner data-icon="inline-start" aria-label="正在保存" />}{pending === "save" ? "保存中…" : "保存"}</Button><Button id="s3-test" type="button" variant="outline" disabled={!!pending} onClick={test}>{pending === "test" && <Spinner data-icon="inline-start" aria-label="正在连接" />}{pending === "test" ? "连接中…" : "测试连接"}</Button><Button id="s3-cancel" type="button" variant="ghost" disabled={!!pending} onClick={closeEditor}>取消</Button></div>
               </form>}
             </CardContent>
-            <CardFooter><details className="source-guide"><summary>支持哪些存储服务？</summary><div className="source-guide-body"><p>支持 Amazon S3 兼容服务，包括 Cloudflare R2、AWS S3、MinIO、Backblaze B2、Wasabi、阿里云 OSS 和腾讯云 COS。可以添加多个来源。</p><p>上传页复用这里的 Key 和桶配置上传图片；已有同名文件会跳过。</p></div></details></CardFooter>
           </Card></div>
           <div {...panel("recognizer")}><RecognizerCard initial={settings.recognizer} /></div>
           <div {...panel("wallpaper")}><WallpaperCard stats={settings.wallpapers} busy={settings.scan.scanning || settings.scan.queued} /></div>

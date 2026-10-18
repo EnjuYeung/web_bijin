@@ -24,10 +24,9 @@ const uploadMaxBytes int64 = 50_000_000
 const uploadTaskTTL = time.Hour
 
 type uploadInput struct {
-	Target    string `json:"target"`
-	Directory string `json:"directory"`
-	Path      string `json:"path"`
-	Size      int64  `json:"size"`
+	Target string `json:"target"`
+	Path   string `json:"path"`
+	Size   int64  `json:"size"`
 }
 
 type uploadTask struct {
@@ -97,9 +96,6 @@ func uploadPath(in uploadInput) (string, string, error) {
 	if !valid(in.Path) || len(strings.Split(in.Path, "/")) > 2 {
 		return "", "", invalid("只允许图片或所选文件夹的直属图片，不能上传子文件夹")
 	}
-	if in.Directory != "" && !valid(in.Directory) {
-		return "", "", invalid("目标目录必须是存储内的相对目录")
-	}
 	kind := map[string]string{".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".png": "image/png", ".webp": "image/webp", ".gif": "image/gif"}[strings.ToLower(path.Ext(in.Path))]
 	if kind == "" {
 		return "", "", invalid("只支持 JPG、JPEG、PNG、WebP 和 GIF 图片")
@@ -107,14 +103,10 @@ func uploadPath(in uploadInput) (string, string, error) {
 	if in.Size < 1 || in.Size > uploadMaxBytes {
 		return "", "", invalid("每张图片必须大于 0 字节且不超过 50 MB")
 	}
-	rel := in.Path
-	if in.Directory != "" {
-		rel = in.Directory + "/" + rel
-	}
-	if len(rel) > 1024 {
+	if len(in.Path) > 1024 {
 		return "", "", invalid("图片路径过长")
 	}
-	return rel, kind, nil
+	return in.Path, kind, nil
 }
 
 // Check existing parents before opening a destination; os.Root still enforces

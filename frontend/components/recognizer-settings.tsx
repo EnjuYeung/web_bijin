@@ -5,7 +5,7 @@ import { CircleAlert, Pencil, Sparkles, Trash2 } from "lucide-react";
 import { api, type Reasoning, type RecognizerInput, type RecognizerProvider, type RecognizerView } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { Card, CardAction, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardAction, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Field, FieldDescription, FieldError, FieldGroup, FieldLabel } from "@/components/ui/field";
 import { Alert, AlertDescription } from "@/components/ui/alert";
@@ -108,7 +108,6 @@ export function RecognizerCard({ initial }: { initial: RecognizerView }) {
   return <Card className="source-card" id="recognizer-card">
     <CardHeader>
       <CardTitle><h2><Sparkles aria-hidden="true" />识别服务</h2></CardTitle>
-      <CardDescription>整理页用它根据文件夹名建议作者和模特；只在你点「识别」或「测试」时联网。</CardDescription>
       <CardAction><Badge variant="outline" id="recognizer-state">{view.configured ? "已配置" : "未配置"}</Badge></CardAction>
     </CardHeader>
     <CardContent>
@@ -135,10 +134,6 @@ export function RecognizerCard({ initial }: { initial: RecognizerView }) {
         <Separator /><div className="form-actions"><Button id="recognizer-save" type="submit" disabled={!!pending}>{pending === "save" && <Spinner data-icon="inline-start" aria-label="正在保存" />}{pending === "save" ? "保存中…" : "保存"}</Button><Button id="recognizer-test" type="button" variant="outline" disabled={!!pending} onClick={() => void test()}>{pending === "test" && <Spinner data-icon="inline-start" aria-label="正在测试" />}{pending === "test" ? "测试中…" : "测试"}</Button><Button id="recognizer-cancel" type="button" variant="ghost" disabled={!!pending} onClick={close}>取消</Button></div>
       </form>}
     </CardContent>
-    <CardFooter><details className="source-guide"><summary>会发送什么？</summary><div className="source-guide-body">
-      <p>每次识别发送相册的文件夹路径、现有的作者与模特名单，以及已填好的相册作为示例；不发送照片。</p>
-      <p>识别结果只作为建议显示在整理页，你确认后才保存。</p>
-    </div></details></CardFooter>
   </Card>;
 }
 

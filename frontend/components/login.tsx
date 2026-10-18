@@ -57,7 +57,7 @@ export function Login() {
     {/* Before the page script runs, the browser posts the form itself:
         method and action keep the password out of the address bar. */}
     <form id="gate" className="gate" method="post" action="/api/login" onSubmit={submit} aria-busy={busy}>
-      <h1>Juen&apos;s</h1><p className="gate-intro">把家里的回忆，留在这里。</p>
+      <h1>Juen&apos;s</h1>
       <FieldGroup>
         <Field><FieldLabel htmlFor="login-user">用户名</FieldLabel><Input id="login-user" name="user" required autoFocus autoComplete="username" spellCheck={false} disabled={busy} aria-invalid={!!error} /></Field>
         <Field><FieldLabel htmlFor="login-password">密码</FieldLabel><Input id="login-password" name="pass" type="password" required autoComplete="current-password" disabled={busy} aria-invalid={!!error} /></Field>

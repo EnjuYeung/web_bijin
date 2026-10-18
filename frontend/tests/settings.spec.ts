@@ -43,6 +43,8 @@ test("settings 01 opens on 本地图库; switching shows one card, keeps the add
     await expect(tab(page, name)).toHaveAttribute("aria-selected", "true");
     await shown(page, id);
     await expect(page.locator(visible)).toBeVisible();
+    // Each card has its title, state and contents only: no subtitle, no help to expand.
+    await expect(page.locator(`#settings-panel-${id} :is([data-slot=card-description], [data-slot=card-footer], details)`)).toHaveCount(0);
     await expect.poll(() => new URL(page.url()).searchParams.get("tab")).toBe(id);
     expect(new URL(page.url()).searchParams.get("view")).toBe("settings");
   }
@@ -211,6 +213,13 @@ test("settings 08 switching keeps a half-filled form and a running connection te
   await page.locator("#s3-bucket").fill("family");
   await page.locator("#s3-accessKey").fill("test-ak");
   await page.locator("#s3-secretKey").fill("test-sk");
+  // The only part left to expand in settings holds options, not help.
+  const advanced = page.locator("#settings details");
+  await expect(advanced).toHaveCount(1);
+  await expect(advanced.locator("summary")).toHaveText("高级设置");
+  await expect(page.locator("#s3-region")).toBeHidden();
+  await advanced.locator("summary").click();
+  await expect(page.locator("#s3-region")).toBeVisible();
   await page.locator("#s3-test").click();
   await expect(page.locator("#s3-msg")).toContainText("正在检查连接");
   await tab(page, "随机壁纸").click(); await shown(page, "wallpaper");

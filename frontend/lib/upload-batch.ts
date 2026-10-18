@@ -1,10 +1,9 @@
 import type { PreparedUpload, Selection, UploadTask } from "./upload";
 
 export type UploadPhase = "pending" | "uploading" | "processing" | "done" | "skipped" | "error" | "cancelled" | "uncertain" | "waiting" | "expired";
-export interface UploadDestination { target: string; directory: string }
 export interface UploadVerification { state: "saved" | "absent" | "pending" | "skipped" | "rejected"; task: UploadTask }
 export interface UploadAdapter {
-  prepare(input: UploadDestination & { path: string; size: number }, signal: AbortSignal): Promise<PreparedUpload>;
+  prepare(input: { target: string; path: string; size: number }, signal: AbortSignal): Promise<PreparedUpload>;
   transfer(plan: PreparedUpload, file: File, signal: AbortSignal, progress: (percent: number) => void): Promise<UploadTask | undefined>;
   status(id: string, signal: AbortSignal): Promise<UploadTask>;
   confirm(id: string, signal: AbortSignal): Promise<UploadTask>;
@@ -20,7 +19,7 @@ export interface UploadRowView {
   message: string; canResume: boolean; actionLabel: string;
 }
 export interface UploadBatchView {
-  rows: UploadRowView[]; destination: UploadDestination; running: boolean; reading: boolean;
+  rows: UploadRowView[]; target: string; running: boolean; reading: boolean;
   configurationLocked: boolean; hasPending: boolean; canStart: boolean;
   error: string; note: string; totalBytes: number; transferBytes: number; sentBytes: number; percent: number;
   ready: number; skipped: number; failed: number;
@@ -30,10 +29,10 @@ interface Row {
   task?: UploadTask; plan?: PreparedUpload; preparedAt: number;
   absent: boolean; blocked: boolean; active: boolean; queued: boolean; transferStarted: boolean;
 }
-interface Options { adapter: UploadAdapter; limits: { maxBytes: number; maxFiles: number }; initialDestination: UploadDestination; newID?: () => string }
+interface Options { adapter: UploadAdapter; limits: { maxBytes: number; maxFiles: number }; initialTarget: string; newID?: () => string }
 
-export function createUploadBatch({ adapter, limits, initialDestination, newID = () => crypto.randomUUID() }: Options) {
-  let rows: Row[] = [], destination = { ...initialDestination }, locked = false;
+export function createUploadBatch({ adapter, limits, initialTarget, newID = () => crypto.randomUUID() }: Options) {
+  let rows: Row[] = [], target = initialTarget, locked = false;
   let error = "", note = "", reading: AbortController | undefined;
   let epoch = 0, active = 0, queue: Row[] = [];
   const controllers = new Map<Row, AbortController>();
@@ -48,7 +47,7 @@ export function createUploadBatch({ adapter, limits, initialDestination, newID =
     const sentBytes = transferRows.reduce((sum, row) => sum + row.file.size * row.percent / 100, 0);
     return {
       rows: rows.map(row => ({ id: row.id, path: row.path, size: row.file.size, phase: row.phase, percent: row.percent, saved: row.saved, message: row.message, canResume: resumable(row), actionLabel: actionLabel(row) })),
-      destination: { ...destination }, running, reading: !!reading,
+      target, running, reading: !!reading,
       configurationLocked: locked || running || !!reading,
       hasPending: running || !!reading || rows.some(row => !row.saved && row.phase !== "done" && row.phase !== "skipped"),
       canStart: !reading && rows.some(resumable), error, note,
@@ -146,7 +145,7 @@ export function createUploadBatch({ adapter, limits, initialDestination, newID =
       if (row.task && !row.absent) { await recover(); return; }
       if (!row.plan || (row.task?.target !== "local" && adapter.now() - row.preparedAt >= 14 * 60_000)) {
         row.phase = "uploading"; row.percent = 0; row.message = "正在准备上传"; locked = true; emit();
-        const plan = await request(() => adapter.prepare({ ...destination, directory: destination.directory.trim(), path: row.path, size: row.file.size }, signal));
+        const plan = await request(() => adapter.prepare({ target, path: row.path, size: row.file.size }, signal));
         if (!valid()) return;
         row.plan = plan; row.preparedAt = adapter.now(); setTask(row, plan.task);
         if (plan.task.phase === "skipped" || plan.task.phase === "error" || plan.task.saved) { await finish(plan.task); return; }
@@ -216,7 +215,7 @@ export function createUploadBatch({ adapter, limits, initialDestination, newID =
   return {
     getSnapshot: () => view,
     subscribe(listener: () => void) { listeners.add(listener); return () => { listeners.delete(listener); }; },
-    setDestination(next: UploadDestination) { if (view.configurationLocked) return; destination = { ...next }; emit(); },
+    setTarget(next: string) { if (view.configurationLocked) return; target = next; emit(); },
     async select(read: (signal: AbortSignal) => Selection | Promise<Selection>) {
       if (view.running || reading) return;
       const controller = new AbortController(); reading = controller; emit();

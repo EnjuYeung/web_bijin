@@ -89,7 +89,10 @@ test("organize 01 new names, reuse from the list, persistence and album covers",
   await expect(page.locator("#page-title")).toHaveText("整理");
   await expect(page.locator("#nav-organize")).toHaveAttribute("aria-current", "page");
   await expect(page.locator(".organize-row")).toHaveCount(4);
-  await expect(page.locator("#organize-count")).toHaveText("共 4 本");
+  // The album count sits beside the card title as an icon and a number; no subtitle.
+  await expect(page.locator("[data-slot=card-header] #organize-count")).toHaveText("共 4 本相册");
+  await expect(page.locator("#organize-count")).toHaveAttribute("title", "共 4 本相册");
+  await expect(page.locator("#organize [data-slot=card-description]")).toHaveCount(0);
 
   // A new author: typed, then picked from 「添加」.
   const sub = row(page, "子目录");
@@ -133,8 +136,13 @@ test("organize 01 new names, reuse from the list, persistence and album covers",
   expect(people.models.map(person => [person.name, person.albums])).toEqual([["G.su", 2], ["Min.E (민이)", 1]]);
   await expect(page.locator("#people-content")).toHaveCount(0);
   await expect(page.locator("#people-toggle")).toHaveText("展开名单");
-  await expect(page.locator("#people-card")).toContainText("作者 1 位，模特 2 位");
+  await expect(page.locator("#people-authors-count")).toHaveText("作者 1 位");
+  await expect(page.locator("#people-authors-count")).toHaveAttribute("title", "作者 1 位");
+  await expect(page.locator("#people-models-count")).toHaveText("模特 2 位");
+  await expect(page.locator("#people-stale-count")).toHaveCount(0);
+  for (const id of ["#organize-count", "#people-authors-count", "#people-models-count"]) await expect(page.locator(id + " svg")).toHaveCount(1);
   await page.locator("#people-toggle").click();
+  await expect(page.locator("#people-card [data-slot=card-description]")).toHaveCount(0);
   await expect(page.locator("#people-toggle")).toHaveAttribute("aria-expanded", "true");
   await expect(page.locator("#people-card .people-name")).toHaveText(["LEEHEE EXPRESS", "G.su", "Min.E (민이)"]);
 
@@ -165,7 +173,7 @@ test("organize 02 filters by fill status, authors and models, then batch setting
 
   await page.locator("#organize-filter").fill("目录");
   await expect.poll(() => rowNames(page)).toEqual(["子目录", "根目录"].sort());
-  await expect(page.locator("#organize-count")).toHaveText("显示 2 / 4 本");
+  await expect(page.locator("#organize-count")).toHaveText("显示 2 / 4 本相册");
   await page.locator("#organize-filter").fill("");
   // Fill status: no author, no model, neither.
   await choose(page, fill, "没填作者");
@@ -175,7 +183,7 @@ test("organize 02 filters by fill status, authors and models, then batch setting
   await choose(page, fill, "作者和模特都没填");
   await expect.poll(() => rowNames(page)).toEqual(["根目录"]);
   await choose(page, fill, "全部相册");
-  await expect(page.locator("#organize-count")).toHaveText("共 4 本");
+  await expect(page.locator("#organize-count")).toHaveText("共 4 本相册");
 
   // One author, then a second one: either matches.
   await filterBy(page, authors, /^Pure Media/);
@@ -444,7 +452,8 @@ test("organize 07 one title row: select all, sort by column, rows stay put while
   // The old select-all line and recognize button are gone; their parts moved.
   await expect(page.locator(".organize-tools, #recognize-start")).toHaveCount(0);
   await expect(head.getByRole("checkbox", { name: "全选当前列表" })).toBeVisible();
-  await expect(head.locator("#organize-count")).toHaveText("共 4 本");
+  await expect(head.locator("#organize-count")).toHaveCount(0);
+  await expect(page.locator("[data-slot=card-header] #organize-count")).toHaveText("共 4 本相册");
   await expect(page.locator("[data-slot=card-header] #organize-view-list")).toHaveAttribute("aria-pressed", "true");
   await expect(page.locator("#organize-clear")).toHaveCount(0);
   // The titles line up with their columns.
@@ -613,4 +622,53 @@ test("organize 08 grid view, the compact title bar and the bars that stay on scr
   await expect(page.locator("#organize-batch .person-field")).toHaveCount(0);
   await page.locator("#organize-batch-close").click();
   await expect(page.locator("#organize-batch")).toHaveCount(0);
+});
+
+test("organize 09 grid cards line up their author and model boxes whatever the name length", async ({ page }) => {
+  // One album with a name long enough to wrap onto several lines.
+  await page.route("**/api/albums", async route => {
+    const response = await route.fetch(), data = await response.json();
+    data.albums = data.albums.map((album: { id: string; name: string }) => album.id === "misc" ? { ...album, name: "一本名字很长很长的相册，窄屏上要换成好几行才能放得下" } : album);
+    await route.fulfill({ response, json: data });
+  });
+  await page.goto("/?view=organize");
+  await page.locator("#organize-view-grid").click();
+  for (const width of [320, 375, 768, 1024, 1440]) {
+    await page.setViewportSize({ width, height: 900 });
+    if (width < 720 && await page.locator("#nav-scrim").isVisible()) await page.locator("#nav-scrim").click();
+    await expect(page.locator(".organize-row")).toHaveCount(4);
+    const cards = await page.locator(".organize-row").evaluateAll(rows => rows.map(row => {
+      const top = (selector: string) => Math.round(row.querySelector(selector)!.getBoundingClientRect().top);
+      return { cover: top(".organize-cover"), name: top(".organize-album"), author: top(".organize-author"), models: top(".organize-models") };
+    }));
+    // Two or four columns fill every line; with three the last card is alone.
+    for (const card of cards) {
+      const line = cards.filter(other => other.cover === card.cover);
+      if (width !== 768 && width !== 1024) expect(line.length, "cards beside each other at " + width).toBeGreaterThan(1);
+      for (const part of ["name", "author", "models"] as const) expect(new Set(line.map(other => other[part])).size, part + " at " + width).toBe(1);
+    }
+    if (width === 375 || width === 1440) await page.screenshot({ path: `${screenshots}/organize-grid-aligned-${width}.png`, fullPage: true });
+  }
+});
+
+test("organize 10 the people card shows a warning count only while album records are stale", async ({ page }) => {
+  await page.route("**/api/people", async route => {
+    const response = await route.fetch(), data = await response.json();
+    await route.fulfill({ response, json: { ...data, stale: 3 } });
+  });
+  await page.goto("/?view=organize");
+  const stale = page.locator("[data-slot=card-header] #people-stale-count");
+  await expect(stale).toHaveText("3 本相册的记录已失效");
+  await expect(stale).toHaveAttribute("title", "3 本相册的记录已失效");
+  await expect(stale).toHaveAttribute("data-alert", "true");
+  expect(await stale.evaluate(element => getComputedStyle(element).color)).toBe(await page.evaluate(() => {
+    const probe = document.createElement("span"); probe.style.color = "var(--color-error)"; document.body.append(probe);
+    const color = getComputedStyle(probe).color; probe.remove(); return color;
+  }));
+  // The counts share the title's line on a wide screen.
+  const title = (await page.locator("#people-card h2").boundingBox())!, count = (await page.locator("#people-authors-count").boundingBox())!;
+  expect(Math.abs(count.y + count.height / 2 - (title.y + title.height / 2))).toBeLessThan(4);
+  expect(count.x).toBeGreaterThan(title.x + title.width);
+  await page.locator("#people-toggle").click();
+  await expect(page.locator("#organize-stale")).toBeVisible();
 });

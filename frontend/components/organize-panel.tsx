@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState, useSyncExternalStore } from "react";
-import { ArrowDown, ArrowUp, Check, ChevronDown, ChevronUp, CircleAlert, Eraser, LayoutGrid, List, Pencil, RefreshCw, Sparkles, Trash2, UserRoundPen, Users, X } from "lucide-react";
+import { ArrowDown, ArrowUp, Building2, Check, ChevronDown, ChevronUp, CircleAlert, Eraser, FolderHeart, LayoutGrid, List, Pencil, RefreshCw, Sparkles, Trash2, UserRound, UserRoundPen, Users, X, type LucideIcon } from "lucide-react";
 import { api, type Album, type Person, type RecognizerView } from "@/lib/api";
 import { createAlbumOrganizer, type Change, type Message, type Role, type RowState } from "@/lib/album-organizer";
 import { organizeHTTP } from "@/lib/organize-http";
@@ -13,7 +13,7 @@ import { OptionSelect } from "@/components/option-select";
 import { PersonPicker } from "@/components/person-picker";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Card, CardAction, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardAction, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
@@ -26,6 +26,14 @@ const fillChoices = (Object.keys(fillLabels) as FillState[]).map(value => ({ val
 const columnLabels: Partial<Record<AlbumSortKey, string>> = { name: "相册", author: "作者", model: "模特" };
 // The root album's name says nothing about its people.
 const recognizable = (album: Album) => album.id !== "." && (!album.author || !album.models.length);
+
+// A count beside a card title: icon and number on screen, the whole phrase for
+// hover and screen readers.
+function Tally({ id, icon: Icon, before, value, after, alert, live }: { id?: string; icon: LucideIcon; before: string; value: string; after: string; alert?: boolean; live?: boolean }) {
+  return <span id={id} className="card-count" data-alert={alert || undefined} title={before + value + after} aria-live={live ? "polite" : undefined}>
+    <Icon aria-hidden="true" /><span className="sr-only">{before}</span>{value}<span className="sr-only">{after}</span>
+  </span>;
+}
 
 function RowStatus({ state }: { state?: RowState }) {
   return <p className="organize-status" data-kind={state?.kind} role="status">
@@ -274,7 +282,9 @@ export default function OrganizePanel() {
       {/* Visible overflow lets the column titles and the batch bar stick to the screen. */}
       <Card className="source-card overflow-visible">
         <CardHeader>
-          <CardTitle><h2><UserRoundPen aria-hidden="true" />整理相册</h2></CardTitle><CardDescription>给相册填写作者和模特：从下拉里选已有的名字，或输入新名字后按回车。修改会立即保存。</CardDescription>
+          <CardTitle className="card-title-row"><h2><UserRoundPen aria-hidden="true" />整理相册</h2>
+            {albums.length > 0 && <span className="card-counts"><Tally id="organize-count" icon={FolderHeart} live before={visible.length === albums.length ? "共 " : "显示 "} value={visible.length === albums.length ? albums.length.toLocaleString("zh-CN") : `${visible.length.toLocaleString("zh-CN")} / ${albums.length.toLocaleString("zh-CN")}`} after=" 本相册" /></span>}
+          </CardTitle>
           {albums.length > 0 && <CardAction><div className="organize-views" role="group" aria-label="显示方式">
             <Button id="organize-view-list" variant="ghost" size="icon" aria-pressed={view === "list"} aria-label="列表视图" title="列表视图" onClick={() => changeView("list")}><List aria-hidden="true" /></Button>
             <Button id="organize-view-grid" variant="ghost" size="icon" aria-pressed={view === "grid"} aria-label="网格视图" title="网格视图" onClick={() => changeView("grid")}><LayoutGrid aria-hidden="true" /></Button>
@@ -296,7 +306,6 @@ export default function OrganizePanel() {
             </div>
             <div id="organize-head" className="organize-head" role="group" aria-label="全选与排序">
               <span className="organize-check"><Checkbox id="organize-select-all" aria-label="全选当前列表" checked={allSelected} indeterminate={someSelected} disabled={!visible.length} onCheckedChange={toggleAll} /></span>
-              <span id="organize-count" className="organize-count" aria-live="polite">{visible.length === albums.length ? `共 ${albums.length} 本` : `显示 ${visible.length} / ${albums.length} 本`}</span>
               <span className="organize-sorts"><span className="organize-sort-label" aria-hidden="true">排序</span>{sortButton("name")}{sortButton("author")}{sortButton("model")}</span>
               {canRecognize && <span className="organize-head-ai" role="img" aria-label="识别建议" title="识别建议"><Sparkles aria-hidden="true" /></span>}
             </div>
@@ -340,8 +349,13 @@ export default function OrganizePanel() {
       </Dialog>
       <Card className="source-card" id="people-card">
         <CardHeader>
-          <CardTitle><h2><Users aria-hidden="true" />作者与模特名单</h2></CardTitle>
-          <CardDescription>{peopleOpen ? "改名会同步到所有相册，改成已有的名字会合并；删除只去掉名字，照片不受影响。" : `作者 ${people.authors.length} 位，模特 ${people.models.length} 位${people.stale ? `；${people.stale} 本相册的记录已失效` : ""}。展开后可以改名、合并和删除。`}</CardDescription>
+          <CardTitle className="card-title-row"><h2><Users aria-hidden="true" />作者与模特名单</h2>
+            <span className="card-counts">
+              <Tally id="people-authors-count" icon={Building2} before="作者 " value={people.authors.length.toLocaleString("zh-CN")} after=" 位" />
+              <Tally id="people-models-count" icon={UserRound} before="模特 " value={people.models.length.toLocaleString("zh-CN")} after=" 位" />
+              {people.stale > 0 && <Tally id="people-stale-count" icon={CircleAlert} alert before="" value={people.stale.toLocaleString("zh-CN")} after=" 本相册的记录已失效" />}
+            </span>
+          </CardTitle>
           <CardAction><Button id="people-toggle" variant="outline" aria-expanded={peopleOpen} aria-controls="people-content" onClick={() => setPeopleOpen(open => !open)}>{peopleOpen ? <ChevronUp data-icon="inline-start" aria-hidden="true" /> : <ChevronDown data-icon="inline-start" aria-hidden="true" />}{peopleOpen ? "收起名单" : "展开名单"}</Button></CardAction>
         </CardHeader>
         {peopleOpen && <CardContent id="people-content" className="organize-content">

@@ -9,7 +9,7 @@ const ticks = async () => { for (let n = 0; n < 12; n++) await new Promise(resol
 const idle = async batch => { for (let n = 0; n < 100 && batch.getSnapshot().running; n++) await ticks(); assert.equal(batch.getSnapshot().running, false, "batch did not settle"); };
 const task = (id, extra = {}) => ({ id, target: "local", path: "a.jpg", phase: "waiting", saved: false, retryable: true, transferRetryable: true, ...extra });
 const done = id => task(id, { phase: "done", saved: true, transferRetryable: false });
-function rig(overrides = {}, destination = { target: "local", directory: "旅行" }) {
+function rig(overrides = {}, target = "local") {
   let clock = 0, next = 0, row = 0;
   const calls = { prepare: [], transfer: [], status: [], confirm: [], verify: [], retryProcessing: [] };
   const base = {
@@ -20,7 +20,7 @@ function rig(overrides = {}, destination = { target: "local", directory: "旅行
     now: () => clock, wait: async (_signal, ms) => { clock += ms; }, ...overrides,
   };
   const adapter = Object.fromEntries(Object.entries(base).map(([name, fn]) => [name, (...args) => { calls[name]?.push(args); return fn(...args); }]));
-  const batch = createUploadBatch({ adapter, limits: { maxBytes: 50_000_000, maxFiles: 10_000 }, initialDestination: destination, newID: () => "row-" + ++row });
+  const batch = createUploadBatch({ adapter, limits: { maxBytes: 50_000_000, maxFiles: 10_000 }, initialTarget: target, newID: () => "row-" + ++row });
   return { batch, calls, advance: ms => { clock += ms; } };
 }
 async function add(batch, ...names) { await batch.select(() => selection(...names.map(name => photo(name)))); }
@@ -54,12 +54,12 @@ test("local saved receipt completes without a redundant confirmation or upload",
   assert.equal(batch.getSnapshot().rows[0].phase, "done");
   assert.equal(batch.getSnapshot().hasPending, false);
   assert.equal(calls.transfer.length, 1); assert.equal(calls.confirm.length, 0);
-  batch.setDestination({ target: "other", directory: "elsewhere" });
-  assert.equal(batch.getSnapshot().destination.target, "local");
+  batch.setTarget("other");
+  assert.equal(batch.getSnapshot().target, "local");
   batch.remove("row-1"); assert.equal(batch.getSnapshot().configurationLocked, false);
 });
 test("S3 transmission confirms the same task before showing completion", async () => {
-  const { batch, calls } = rig({ transfer: async () => undefined }, { target: "s3-1", directory: "" });
+  const { batch, calls } = rig({ transfer: async () => undefined }, "s3-1");
   await add(batch, "a.jpg"); batch.start(); await idle(batch);
   assert.equal(calls.confirm[0][0], "task-1"); assert.equal(batch.getSnapshot().ready, 1);
 });
@@ -70,7 +70,7 @@ test("lost PUT response recovers the saved original with no new preparation", as
   assert.equal(calls.transfer.length, 1); assert.equal(calls.verify.length, 1);
 });
 test("lost S3 confirmation recovers storage facts without another PUT", async () => {
-  const { batch, calls } = rig({ transfer: async () => undefined, confirm: async () => { throw new Error("confirmation lost"); } }, { target: "s3-1", directory: "" });
+  const { batch, calls } = rig({ transfer: async () => undefined, confirm: async () => { throw new Error("confirmation lost"); } }, "s3-1");
   await add(batch, "a.jpg"); batch.start(); await idle(batch);
   assert.equal(batch.getSnapshot().ready, 1); assert.equal(calls.confirm.length, 1);
   assert.equal(calls.verify.length, 1); assert.equal(calls.transfer.length, 1);
@@ -105,7 +105,7 @@ test("a failed consumed local PUT can prepare anew despite processing retryable=
   assert.equal(batch.getSnapshot().rows[0].canResume, true);
   batch.start("row-1"); await idle(batch);
   assert.equal(batch.getSnapshot().ready, 1); assert.equal(calls.prepare.length, 2);
-  assert.deepEqual(calls.prepare.map(call => call[0].directory), ["旅行", "旅行"]);
+  assert.deepEqual(calls.prepare.map(call => call[0]), [{ target: "local", path: "a.jpg", size: 8 }, { target: "local", path: "a.jpg", size: 8 }]);
 });
 test("an unconsumed local task retries its original PUT after verified absence", async () => {
   let puts = 0;
@@ -164,16 +164,16 @@ test("clear cancels pending directory reads and stale results cannot repopulate 
   const gate = later(); let signal;
   const reading = batch.select(value => { signal = value; return gate.promise; });
   assert.equal(batch.getSnapshot().reading, true); batch.clear(); assert.equal(signal.aborted, true);
-  batch.setDestination({ target: "other", directory: "new" }); await add(batch, "fresh.jpg");
+  batch.setTarget("other"); await add(batch, "fresh.jpg");
   gate.resolve(selection(photo("old.jpg"))); await reading;
   assert.deepEqual(batch.getSnapshot().rows.map(row => row.path), ["fresh.jpg"]);
-  assert.equal(batch.getSnapshot().destination.directory, "new");
+  assert.equal(batch.getSnapshot().target, "other");
 });
-test("running freezes selection, removal, clearing and the destination", async () => {
+test("running freezes selection, removal, clearing and the target", async () => {
   const gate = later(); const { batch } = rig({ transfer: () => gate.promise });
   await add(batch, "a.jpg"); batch.start(); await ticks();
-  await add(batch, "b.jpg"); batch.remove("row-1"); batch.clear(); batch.setDestination({ target: "other", directory: "new" });
-  assert.equal(batch.getSnapshot().rows.length, 1); assert.equal(batch.getSnapshot().destination.target, "local");
+  await add(batch, "b.jpg"); batch.remove("row-1"); batch.clear(); batch.setTarget("other");
+  assert.equal(batch.getSnapshot().rows.length, 1); assert.equal(batch.getSnapshot().target, "local");
   batch.stop(); gate.resolve(done("task-1")); await ticks();
 });
 for (const saved of [false, true]) test(`expired tasks preserve saved=${saved} without automatic recreation`, async () => {
@@ -195,7 +195,7 @@ test("selection validates size and duplicates, and an overfull addition preserve
   const { batch } = rig();
   await batch.select(() => selection(photo("a.jpg"), photo("a.jpg"), photo("empty.jpg", 0), photo("huge.jpg", 50_000_001)));
   assert.equal(batch.getSnapshot().rows.length, 1); assert.match(batch.getSnapshot().note, /重复选择/);
-  const small = createUploadBatch({ adapter: {}, limits: { maxBytes: 8, maxFiles: 1 }, initialDestination: { target: "local", directory: "" }, newID: () => "only" });
+  const small = createUploadBatch({ adapter: {}, limits: { maxBytes: 8, maxFiles: 1 }, initialTarget: "local", newID: () => "only" });
   await add(small, "first.jpg"); await add(small, "second.jpg");
   assert.equal(small.getSnapshot().rows.length, 1); assert.match(small.getSnapshot().error, /最多添加 1/);
 });

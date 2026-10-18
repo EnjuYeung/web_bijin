@@ -199,6 +199,12 @@ func TestUploadRejectsChildFoldersAndInvalidPathsBeforeWriting(t *testing.T) {
 			t.Errorf("size=%d status=%d", size, res.StatusCode)
 		}
 	}
+	// A photo lands at the storage root, or in its chosen folder's name; the
+	// browser cannot name any other directory.
+	res, _ := a.request(t, http.MethodPost, "/api/uploads", []byte(`{"target":"local","directory":"旅行","path":"a.jpg","size":10}`))
+	if res.StatusCode != 400 {
+		t.Errorf("directory field status=%d", res.StatusCode)
+	}
 	if rows, _ := os.ReadDir(a.cfg.PhotosDir); len(rows) != 0 {
 		t.Fatal("invalid request created files")
 	}

@@ -44,10 +44,12 @@ test("logout 01 sits at the bottom of the sidebar on desktop, collapsed and phon
   await expect(button).toHaveAttribute("title", "退出登录");
   const settings = (await page.locator("#nav-settings").boundingBox())!;
   const logout = (await button.boundingBox())!;
-  const foot = (await page.locator(".sidebar-foot").boundingBox())!;
-  // Kept apart from the five pages, near the bottom, above the footer line.
+  const sidebar = (await page.locator(".sidebar").boundingBox())!;
+  // Kept apart from the five pages, at the bottom of the sidebar with nothing under it.
   expect(logout.y).toBeGreaterThan(settings.y + settings.height + 200);
-  expect(logout.y + logout.height).toBeLessThanOrEqual(foot.y);
+  expect(logout.y + logout.height).toBeLessThanOrEqual(sidebar.y + sidebar.height);
+  expect(sidebar.y + sidebar.height - logout.y - logout.height).toBeLessThan(24);
+  await expect(page.locator(".sidebar")).not.toContainText("家里的回忆");
   expect(await page.locator(".sidebar-logout").evaluate(form => getComputedStyle(form).borderTopStyle)).toBe("solid");
   await page.screenshot({ path: resolve(output, `logout-sidebar-desktop-${browserName}.png`) });
 
@@ -91,6 +93,9 @@ test("logout 02 signs this browser out, shows the notice, and keeps preferences"
   await page.unrouteAll();
   await expect(page.locator("#gate-out")).toHaveText("已退出登录。");
   await expect(page.locator("#gate-err")).toHaveCount(0);
+  // The sign-in form carries only the wordmark, no tagline.
+  await expect(page.locator("#gate > p")).toHaveCount(0);
+  await expect(page.locator("#gate")).not.toContainText("家里的回忆");
   await page.screenshot({ path: resolve(output, `logout-login-page-${browserName}.png`) });
   expect(await signedIn(page)).toBe(false);
   expect((await page.request.get("/api/photos")).status()).toBe(401);
@@ -185,7 +190,6 @@ test("logout 05 during an upload asks first, and staying keeps the upload signed
   await page.goto("/?view=upload");
   await page.locator("#upload-target").click();
   await page.getByRole("option", { name: "本地 · 本地照片目录", exact: true }).click();
-  await page.locator("#upload-directory").fill("logout-ui-" + Date.now());
   await page.locator("#upload-file-input").setInputFiles({ name: "held.jpg", mimeType: "image/jpeg", buffer: await readFile(resolve("../photos/batch/01.jpg")) });
   await page.locator("#upload-start").click();
   await expect(page.locator("#upload-list li")).toHaveAttribute("data-phase", "uploading");

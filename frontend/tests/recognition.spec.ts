@@ -383,7 +383,7 @@ test("recognition 05 which albums a button covers, cancelling, and the 100-album
     await route.fulfill({ json: real });
   });
   await page.reload();
-  await expect(page.locator("#organize-count")).toHaveText("共 105 本");
+  await expect(page.locator("#organize-count")).toHaveText("共 105 本相册");
   await page.getByRole("checkbox", { name: "全选当前列表" }).check();
   await aiButton(page, "many 000").click();
   await expect(dialog.locator("[data-slot=dialog-title]")).toHaveText("识别所选的 105 本相册？");

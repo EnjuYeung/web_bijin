@@ -106,7 +106,6 @@ export function AlbumApp() {
           {leaving ? <Spinner aria-hidden="true" /> : <LogOut aria-hidden="true" />}<span>{leaving ? "正在退出…" : "退出登录"}</span>
         </button>
       </form>
-      <p className="sidebar-foot"><span>家里的回忆</span></p>
     </aside>
     <div className="app-main">
       <header className="top">
@@ -116,7 +115,7 @@ export function AlbumApp() {
           {view !== "settings" && view !== "upload" && view !== "organize" && <p id="count" aria-live="polite" aria-atomic="true" aria-label={count === null ? "正在读取数量" : `${count} ${view === "albums" ? "个相册" : "张照片"}`}>{count === null ? "—" : count.toLocaleString("zh-CN")}</p>}
         </div>
         <div className="top-actions">
-          {albumsActive && <Button id="share-toggle" variant="ghost" aria-pressed={sharing} aria-label="管理分享" title={sharing ? "管理分享：已打开；点击收起" : "管理分享：点击打开"} onClick={() => setSharing(on => !on)}><Link2 data-icon="inline-start" aria-hidden="true" /><span>管理分享</span></Button>}
+          {albumsActive && <Button id="share-toggle" variant="ghost" size="icon" aria-pressed={sharing} aria-label="管理分享" title={sharing ? "管理分享：已打开；点击收起" : "管理分享：点击打开"} onClick={() => setSharing(on => !on)}><Link2 aria-hidden="true" /></Button>}
           <Button id="theme-btn" variant="ghost" size="icon" aria-label={`显示模式：${modeLabels[mode]}；点击切换`} title={`显示模式：${modeLabels[mode]}；点击切换`} onClick={cycleMode}><ThemeIcon aria-hidden="true" /></Button>
         </div>
       </header>

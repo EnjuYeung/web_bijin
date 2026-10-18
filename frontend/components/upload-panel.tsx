@@ -7,9 +7,7 @@ import { dropSelection, folderSelection, photoSelection, type UploadTarget } fro
 import { createUploadBatch, type UploadPhase } from "@/lib/upload-batch";
 import { uploadHTTP } from "@/lib/upload-http";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { Field, FieldDescription, FieldLabel } from "@/components/ui/field";
-import { Input } from "@/components/ui/input";
+import { Card, CardAction, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Spinner } from "@/components/ui/spinner";
 import { OptionSelect } from "@/components/option-select";
@@ -41,9 +39,9 @@ export default function UploadPanel() {
 }
 
 function UploadContents({ settings }: { settings: Targets }) {
-  const [batch] = useState(() => createUploadBatch({ adapter: uploadHTTP, limits: settings, initialDestination: { target: settings.targets.find(item => item.kind === "s3")?.id || "local", directory: "" } }));
+  const [batch] = useState(() => createUploadBatch({ adapter: uploadHTTP, limits: settings, initialTarget: settings.targets.find(item => item.kind === "s3")?.id || "local" }));
   const state = useSyncExternalStore(batch.subscribe, batch.getSnapshot, batch.getSnapshot);
-  const { rows, destination: { target, directory }, running: busy, reading, configurationLocked, error, note, totalBytes, transferBytes, sentBytes, percent, ready, skipped, failed, canStart: pending } = state;
+  const { rows, target, running: busy, reading, configurationLocked, error, note, totalBytes, transferBytes, sentBytes, percent, ready, skipped, failed, canStart: pending } = state;
   const [dragging, setDragging] = useState(false);
   const [visible, setVisible] = useState(100);
   const fileInput = useRef<HTMLInputElement>(null);
@@ -82,22 +80,18 @@ function UploadContents({ settings }: { settings: Targets }) {
   return <div className="upload-panel">
     {error && <Alert variant="destructive" id="upload-error"><CircleAlert aria-hidden="true" /><AlertDescription>{error}</AlertDescription></Alert>}
     <Card className="source-card">
-      <CardHeader><CardTitle><h2><Upload aria-hidden="true" />上传图片</h2></CardTitle><CardDescription>选择保存位置，图片保存后会自动整理进相册。</CardDescription></CardHeader>
+      <CardHeader className="upload-head"><CardTitle><h2><Upload aria-hidden="true" />上传图片</h2></CardTitle>
+        <CardAction><OptionSelect id="upload-target" label="保存位置" value={target} choices={settings.targets.map(item => ({ value: item.id, label: (item.kind === "local" ? "本地 · " : "S3 · ") + item.name }))} disabled={configurationLocked} onChange={value => batch.setTarget(value)} /></CardAction></CardHeader>
       <CardContent className="upload-content">
-        <div className="upload-targets">
-          <Field><FieldLabel htmlFor="upload-target">保存位置</FieldLabel><OptionSelect id="upload-target" label="保存位置" value={target} choices={settings.targets.map(item => ({ value: item.id, label: (item.kind === "local" ? "本地 · " : "S3 · ") + item.name }))} disabled={configurationLocked} onChange={value => batch.setDestination({ target: value, directory })} /><FieldDescription>{target === "local" ? "保存到 .env 配置的本地照片目录。" : "使用现有对象存储配置及 Key 上传。"}</FieldDescription></Field>
-          <Field><FieldLabel htmlFor="upload-directory">目标子目录（可选）</FieldLabel><Input id="upload-directory" placeholder="例如 2026/旅行" value={directory} disabled={configurationLocked} onChange={event => batch.setDestination({ target, directory: event.target.value })} /><FieldDescription>留空保存到所选存储根目录。文件夹上传保留文件夹名。</FieldDescription></Field>
-        </div>
         <input id="upload-file-input" ref={fileInput} type="file" accept={accept} multiple hidden aria-label="选择图片" onChange={event => { const files = Array.from(event.target.files || []); void batch.select(() => photoSelection(files)); event.target.value = ""; }} />
         <input id="upload-folder-input" ref={folderInput} type="file" multiple hidden aria-label="添加文件夹" {...({ webkitdirectory: "" } as React.InputHTMLAttributes<HTMLInputElement>)} onChange={event => { const files = Array.from(event.target.files || []); void batch.select(() => photoSelection(files, true)); event.target.value = ""; }} />
         <div id="upload-drop" className={"upload-drop" + (dragging ? " is-dragging" : "")} onDrop={event => void drop(event)} onDragOver={event => { event.preventDefault(); if (!busy && !reading) setDragging(true); }} onDragLeave={event => { if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setDragging(false); }}>
           {target === "local" ? <HardDrive aria-hidden="true" /> : <Cloud aria-hidden="true" />}
           <p>拖入图片或多个文件夹</p>
-          <span>只取所选文件夹的直属图片，子文件夹会跳过。支持 JPG、JPEG、PNG、WebP、GIF，每张最多 50 MB。</span>
           <div className="upload-buttons"><Button id="upload-select-files" variant="outline" disabled={busy || reading} onClick={() => fileInput.current?.click()}><ImagePlus aria-hidden="true" data-icon="inline-start" />选择图片</Button><Button id="upload-select-folder" variant="outline" disabled={busy || reading} onClick={() => void selectFolder()}><FolderPlus aria-hidden="true" data-icon="inline-start" />添加文件夹</Button></div>
         </div>
         {reading && <p role="status"><Spinner aria-label="正在读取文件" />正在读取所选文件夹…</p>}
-        <p id="upload-note" className="upload-note" role="status" aria-live="polite">{note || "可连续添加图片或文件夹，最后统一上传。GIF 不生成壁纸。"}</p>
+        <p id="upload-note" className="upload-note" role="status" aria-live="polite">{note}</p>
       </CardContent>
     </Card>
     {rows.length > 0 && <Card className="source-card">
