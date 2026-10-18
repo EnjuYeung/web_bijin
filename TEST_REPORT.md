@@ -46,7 +46,22 @@
 - 第一轮全量（提交 `2384caf`）127 项通过、2 项失败，都是新测试自己的问题：写死了「4 本相册」，而全量时上传测试先留下了相册（WebKit 看到 7 本，Firefox 看到 10 本）。按项目约定改为从服务器取相册数，并逐张滚动让懒加载的封面都加载；「每一行都要有多张卡片」改为「至少有一行多张卡片」（总数为奇数时最后一张可以单独一行）。检查项没有放宽。之后以提交 `e4f7ec6` 在全新目录整体重跑（上表）。
 - 原 organize 09（只在 Chromium 跑的网格对齐测试）移入新的 `organize-grid.spec.ts`，并增加 Firefox、竖图大尺寸封面、识别服务、直接以网格打开和角落按钮的检查。
 
+## 发布与部署（2026-10-19 00:36:16 CST 记录）
+
+用户确认 23:38 的 1Panel 镜像清理是本人操作，并要求用新做的备份和回滚镜像发布。
+
+| 编号 | 实际操作 | 结果 |
+| --- | --- | --- |
+| D01 | `git push origin master` | GitHub master 为 `ff2da79`（修复提交 `e4f7ec6` 加验收记录） |
+| D02 | 发布前发现 10-17、10-18 两份部署前数据库备份和两个回滚镜像都已不在服务器上（回滚镜像由 CST 23:38 的 1Panel「清理容器 [镜像]」删除，释放 67.74 MB）。重新在线备份到 `/root/bijin-backup-20261018-1831-predeploy.db`（服务器时间，CST 00:31），当前镜像打标签 `bijin:rollback-20261019-predeploy` | 单个文件、0600、quick_check ok。photos 6758、photo_shares 6759（503 个已开启）、album_people 157、people 46、wallpapers 6806、storages 1、share_batches 3、share_batch_items 455、organize_receipts 82、recognizer 1 |
+| D03 | 部署目录 `git pull --ff-only` 到 `ff2da79`，`docker compose build && docker compose up -d` | 新镜像 `4eda428a8652` healthy，重启 0 次；启动扫描 6758 张、0 失败；日志只有 INFO |
+| D04 | 部署后只读核对数据库 | quick_check ok；各表行数与部署前备份完全一致，503 个分享保留，数据库仍为 0600 |
+| D05 | 公网核对 `https://csb.jgbman.cc` | health 200；登录页 200、标题「Juen's」；未登录访问首页 302 到登录页；7 个需登录的接口都是 401；随机壁纸 302 后取回 200 image/webp |
+| D06 | 随机抽 3 个已开启的分享链接；不存在的地址；检查部署后的程序 | 3 个都是 200（2 张 JPEG、1 张 PNG），字节数与记录一致；不存在的地址 404；程序里已有新的封面方框样式和角落按钮定位；部署后无 WARN / ERROR |
+
+保留：本次部署前数据库备份与回滚镜像 `bijin:rollback-20261019-predeploy`（注意：1Panel「清理镜像」会把它当作未使用的镜像删除）。测试目录、Go 与 Playwright 镜像和构建缓存已删除。
+
 ## 限制与结论
 
 - 没有在用户自己的 Firefox 版本上直接验证，用的是 Playwright 1.63 自带的 Firefox；也没有在 iPhone 真机上看。
-- 结论：提交 `e4f7ec6` 的构建、静态检查、Go（含 race）与三种浏览器的全量回归全部通过。
+- 结论：提交 `e4f7ec6` 的构建、静态检查、Go（含 race）与三种浏览器的全量回归全部通过；已推送并部署生产，生产 healthy，数据与 503 个分享保留，部署前备份与回滚镜像已保留。请在自己的 Firefox 里打开整理页网格看一眼。
