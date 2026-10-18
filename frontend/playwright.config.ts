@@ -18,8 +18,10 @@ export default defineConfig({
   projects: [
     { name: "chromium", use: { browserName: "chromium", launchOptions: { args: ["--no-sandbox"] } } },
     // Safari's engine (iPhone, Mac) for the flows that differ there: logging
-    // out, saving, uploads, clipboard sharing and recognition.
-    { name: "webkit", use: { browserName: "webkit" }, testMatch: /(logout|organize-saving|upload|upload-recovery|sharing|recognition)\.spec\.ts/ },
+    // out, saving, uploads, clipboard sharing, recognition and the organize grid.
+    { name: "webkit", use: { browserName: "webkit" }, testMatch: /(logout|organize-saving|organize-grid|upload|upload-recovery|sharing|recognition)\.spec\.ts/ },
+    // Firefox for layout that once broke only there: the organize grid.
+    { name: "firefox", use: { browserName: "firefox" }, testMatch: /organize-grid\.spec\.ts/ },
   ],
   webServer: [
     { command: "python3 tests/s3_fixture.py", port: 18093, reuseExistingServer: false },

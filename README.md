@@ -240,7 +240,7 @@ AUTH_USER=dev AUTH_PASS=dev-password go run -tags nodynamic .
 go run genphotos.go
 go build -tags nodynamic -o output/bijin-ui-test .
 cd frontend
-npx playwright install chromium webkit
+npx playwright install chromium webkit firefox
 npm run test:ui
 ```
 

@@ -312,7 +312,7 @@ export default function OrganizePanel() {
             <ul id="organize-list" className="organize-list" aria-label="相册的作者与模特">
               {visible.map(album => <li key={album.id} className="organize-row">
                 <span className="organize-check"><Checkbox checked={selected.includes(album.id)} onCheckedChange={checked => toggle(album.id, checked)} aria-label={`选择「${album.name}」`} /></span>
-                <img className="organize-cover" src={album.cover.thumb} alt="" width={album.cover.w} height={album.cover.h} loading="lazy" decoding="async" />
+                <span className="organize-cover"><img src={album.cover.thumb} alt="" width={album.cover.w} height={album.cover.h} loading="lazy" decoding="async" /></span>
                 <div className="organize-album"><strong title={album.id === "." ? album.name : album.id}>{album.name}</strong><small>{album.count.toLocaleString("zh-CN")} 张 · {album.addedDate}{album.id.includes("/") ? " · " + album.id : ""}</small><RowStatus state={rows[album.id]} /></div>
                 <div className="organize-author"><PersonPicker label={`「${album.name}」的作者`} placeholder="作者" people={people.authors} value={album.author ? [album.author.name] : []} onChange={names => saveRow(album, { author: names[0] ?? "" })} />
                   {shown(album).author && <SuggestionChip album={album} field="author" names={[shown(album).author!]} onAccept={() => accept(album, "author")} onDismiss={() => recognition.drop(album.id, "author")} />}</div>

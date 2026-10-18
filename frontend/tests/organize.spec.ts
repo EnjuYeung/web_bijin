@@ -624,33 +624,6 @@ test("organize 08 grid view, the compact title bar and the bars that stay on scr
   await expect(page.locator("#organize-batch")).toHaveCount(0);
 });
 
-test("organize 09 grid cards line up their author and model boxes whatever the name length", async ({ page }) => {
-  // One album with a name long enough to wrap onto several lines.
-  await page.route("**/api/albums", async route => {
-    const response = await route.fetch(), data = await response.json();
-    data.albums = data.albums.map((album: { id: string; name: string }) => album.id === "misc" ? { ...album, name: "一本名字很长很长的相册，窄屏上要换成好几行才能放得下" } : album);
-    await route.fulfill({ response, json: data });
-  });
-  await page.goto("/?view=organize");
-  await page.locator("#organize-view-grid").click();
-  for (const width of [320, 375, 768, 1024, 1440]) {
-    await page.setViewportSize({ width, height: 900 });
-    if (width < 720 && await page.locator("#nav-scrim").isVisible()) await page.locator("#nav-scrim").click();
-    await expect(page.locator(".organize-row")).toHaveCount(4);
-    const cards = await page.locator(".organize-row").evaluateAll(rows => rows.map(row => {
-      const top = (selector: string) => Math.round(row.querySelector(selector)!.getBoundingClientRect().top);
-      return { cover: top(".organize-cover"), name: top(".organize-album"), author: top(".organize-author"), models: top(".organize-models") };
-    }));
-    // Two or four columns fill every line; with three the last card is alone.
-    for (const card of cards) {
-      const line = cards.filter(other => other.cover === card.cover);
-      if (width !== 768 && width !== 1024) expect(line.length, "cards beside each other at " + width).toBeGreaterThan(1);
-      for (const part of ["name", "author", "models"] as const) expect(new Set(line.map(other => other[part])).size, part + " at " + width).toBe(1);
-    }
-    if (width === 375 || width === 1440) await page.screenshot({ path: `${screenshots}/organize-grid-aligned-${width}.png`, fullPage: true });
-  }
-});
-
 test("organize 10 the people card shows a warning count only while album records are stale", async ({ page }) => {
   await page.route("**/api/people", async route => {
     const response = await route.fetch(), data = await response.json();

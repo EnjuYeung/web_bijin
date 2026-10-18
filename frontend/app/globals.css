@@ -386,7 +386,8 @@ html[data-sidebar="collapsed"] .nav-item { justify-content: center; padding: 0; 
 .organize-content[data-view="list"] .organize-row { grid-template-columns: var(--organize-columns); grid-template-areas: var(--organize-areas); }
 .organize-check { grid-area: check; display: flex; align-items: center; justify-content: center; width: var(--control-size); height: var(--control-size); }
 .organize-check [data-slot="checkbox"]::after { inset: -14px; }
-.organize-cover { grid-area: cover; width: 3.5rem; height: 3.5rem; object-fit: cover; border-radius: var(--radius-xs); background: var(--color-paper-3); }
+.organize-cover { grid-area: cover; display: block; width: 3.5rem; height: 3.5rem; overflow: hidden; border-radius: var(--radius-xs); background: var(--color-paper-3); }
+.organize-cover > img { display: block; width: 100%; height: 100%; object-fit: cover; }
 .organize-album { grid-area: album; display: flex; flex-direction: column; min-width: 0; }
 .organize-album > strong { font-weight: 500; font-size: var(--text-sm); overflow-wrap: anywhere; }
 .organize-album > small { margin-top: var(--space-3xs); color: var(--color-muted); font-size: var(--text-xs); overflow-wrap: anywhere; }
@@ -405,11 +406,15 @@ html[data-sidebar="collapsed"] .nav-item { justify-content: center; padding: 0; 
 /* Each card takes four rows of the list, so the name, author and model boxes
    of the cards side by side line up whatever the length of each name. */
 .organize-content[data-view="grid"] .organize-row { position: relative; grid-row: span 4; grid-template-rows: subgrid; grid-template-columns: minmax(0, 1fr); grid-template-areas: none; align-items: start; padding: 0; border-bottom: 0; }
-.organize-content[data-view="grid"] .organize-cover { grid-area: 1 / 1; width: 100%; height: auto; aspect-ratio: 4/3; }
+/* The image sits in a box: Firefox sizes a subgrid row by an image's own pixel height,
+   which left a large gap under every cover; a plain box is sized by its column. */
+.organize-content[data-view="grid"] .organize-cover { grid-area: 1 / 1; width: auto; height: auto; }
+.organize-content[data-view="grid"] .organize-cover > img { height: auto; aspect-ratio: 4/3; }
 .organize-content[data-view="grid"] .organize-album { grid-area: 2 / 1; }
 .organize-content[data-view="grid"] .organize-author { grid-area: 3 / 1; }
 .organize-content[data-view="grid"] .organize-models { grid-area: 4 / 1; }
-.organize-content[data-view="grid"] :is(.organize-row > .organize-check, .organize-ai) { position: absolute; top: var(--space-2xs); z-index: 1; }
+/* Pinned to the cover's cell: Firefox placed them by the list's own areas, low on the card. */
+.organize-content[data-view="grid"] :is(.organize-row > .organize-check, .organize-ai) { position: absolute; grid-area: 1 / 1; top: var(--space-2xs); z-index: 1; }
 .organize-content[data-view="grid"] .organize-row > .organize-check { left: var(--space-2xs); width: var(--control-size); border: 1px solid var(--color-rule-2); border-radius: var(--radius-sm); background: var(--color-paper-2); }
 .organize-content[data-view="grid"] .organize-ai { right: var(--space-2xs); }
 .organize-content[data-view="grid"] .organize-ai-button { border-color: var(--color-rule-2); border-radius: var(--radius-sm); background: var(--color-paper-2); }
@@ -511,7 +516,7 @@ html[data-sidebar="collapsed"] .nav-item { justify-content: center; padding: 0; 
   .organize-content[data-view="list"] .organize-row { column-gap: var(--space-2xs); }
   .organize-content[data-view="list"] .organize-cover { width: 3rem; height: 3rem; }
   .organize-content[data-view="grid"] .organize-list { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .organize-content[data-view="grid"] .organize-cover { aspect-ratio: 3/4; }
+  .organize-content[data-view="grid"] .organize-cover > img { aspect-ratio: 3/4; }
   /* Phones keep the title bar on one line: tighter titles, no 排序 label. */
   .organize-sort-label, .organize-content[data-view="grid"] .organize-sort-label { display: none; }
   .organize-sort { gap: .125rem; padding-inline: var(--space-3xs); }
