@@ -15,7 +15,7 @@
 - 查询扩容：照片补充 `album_path` 与有效照片的部分索引；进程内复用图库 ID、按 seed 的随机顺序、相册汇总和壁纸候选。照片页按主键批量查本页详情，壁纸抽中后再验证当前版本；数据提交后更新对应缓存版本。缓存有数量、字节和空闲时间上限（随机顺序最多 8 份 / 32 MiB，壁纸筛选最多 16 份 / 16 MiB，空闲 30 分钟的条目在后续请求中清理；基础 ID 与候选元数据另计），可随进程重启重建；沿用单个 SQLite 连接和目录相册，不增加数据库、Redis 或持久缓存表。
 - 前端：Next.js App Router + React + Tailwind CSS + shadcn/ui（Base UI）。构建时静态导出 HTML / CSS / JS，再由 Go 内嵌提供；运行时不启动 Node 服务。根目录 `tokens.css` 继续作为共享设计令牌，保留「月雾樱紫」风格。
 - 壁纸编码：`github.com/gen2brain/webp`，libwebp 经 wasm2go 转成的纯 Go 代码，不需要 CGO；构建和测试固定加 `-tags nodynamic`，运行时不加载系统 libwebp。质量 80、method 4，与原 nas-background 的 Sharp 设置一致。
-- 构建：Docker 的 Node 构建阶段执行 `npm ci` 和静态导出（锁文件指向官方 npm 源），Go 1.27 构建阶段内嵌导出的 `web/`。前端源码与锁文件放在 `frontend/`，生成资源不提交 Git。
+- 构建：Docker 的 Node.js 24.22.1 构建阶段执行 `npm ci` 和静态导出（锁文件指向官方 npm 源），Go 1.27.3 构建阶段内嵌导出的 `web/`。前端源码与锁文件放在 `frontend/`，生成资源不提交 Git。
 - 静态资源：构建时同时生成 JavaScript / CSS 的 gzip 文件；Go 按浏览器的 `Accept-Encoding` 提供，保留原文件作为回退，并设置 `Vary` 与一年不可变缓存。压缩计算只发生在构建阶段。
 - 运行：一个 Docker Compose 文件、一个容器、一个进程。容器加入 1Panel 的 `1panel-network`，与 RustFS 走容器内网；`5001` 只映射到宿主机 `127.0.0.1`，由用户在 1Panel 网站中配置的 OpenResty 反代以 `https://csb.jgbman.cc` 提供；`5002` 是上传通知端口，只在容器网内可达，不映射。容器限 6 核、4 GB。
 - 识别服务：Claude 用官方 Go SDK `github.com/anthropics/anthropic-sdk-go` 调 Messages API；OpenAI / Gemini / Grok / 其他兼容服务共用标准库手写的 OpenAI 格式请求。配置在设置页，存 SQLite。

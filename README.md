@@ -222,9 +222,11 @@ docker compose down
 docker compose up -d --build
 ```
 
-本地开发需要 Node.js 24+ 与 Go 1.25+：
+开发与测试在 netcup 的隔离目录进行，使用 Node.js 24.22.1+ 与 Go 1.27.3+。临时构建文件放在磁盘目录（例如设置 `TMPDIR=/var/tmp/bijin-build`），避免占用内存盘；构建容器限制为 2 核、最多 6 GiB 内存。先创建临时目录，再执行：
 
 ```bash
+mkdir -p /var/tmp/bijin-build
+export TMPDIR=/var/tmp/bijin-build
 cd frontend
 npm ci
 npm run build
