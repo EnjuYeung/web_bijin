@@ -50,11 +50,17 @@ func testThumbnailError(p *photoProcessor, ctx context.Context, id int64) error 
 	return err
 }
 func prepareTestThumbnail(th *thumbCache, ctx context.Context, p photo) error {
-	if err := th.lock(ctx); err != nil {
+	if err := th.spool.Acquire(ctx, 1); err != nil {
 		return err
 	}
-	defer th.unlock()
-	d, err := th.prepareVersion(ctx, sourceObject{Key: p.sourceKey()}, 64_000_000)
+	defer th.spool.Release(1)
+	f, err := th.readVersion(ctx, sourceObject{Key: p.sourceKey()})
+	if err != nil {
+		return err
+	}
+	defer os.Remove(f.Name())
+	defer f.Close()
+	d, err := th.decodeVersion(ctx, f)
 	if err != nil {
 		return err
 	}

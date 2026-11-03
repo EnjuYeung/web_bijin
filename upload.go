@@ -355,8 +355,17 @@ func (a *uploadAPI) local(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	info, format, err := image.DecodeConfig(f)
-	if err != nil || "image/"+format != t.kind || info.Width < 1 || info.Height < 1 || int64(info.Height) > a.scanner.cfg.MaxPixels/int64(max(info.Width, 1)) {
-		fail(http.StatusBadRequest, "文件不是可显示的图片，或图片像素超过上限", false)
+	if err != nil || "image/"+format != t.kind {
+		fail(http.StatusBadRequest, "文件不是可显示的图片，或图片格式与上传声明不符", false)
+		return
+	}
+	if _, err := imageBudget(info, format, a.scanner.cfg.MaxPixels); err != nil {
+		var pixelErr *imagePixelLimitError
+		message := "图片尺寸无效"
+		if errors.As(err, &pixelErr) {
+			message = pixelErr.message()
+		}
+		fail(http.StatusBadRequest, message, false)
 		return
 	}
 	if err := f.Sync(); err != nil {
@@ -488,6 +497,9 @@ func (a *uploadAPI) start(t *uploadTask) {
 		// and encode inside has its own limit.
 		result := a.scanner.photos.SyncKey(context.Background(), t.key)
 		err := result.Err
+		if result.InvalidReason != "" {
+			err = errors.New(result.InvalidReason)
+		}
 		if errors.Is(err, context.DeadlineExceeded) {
 			err = errors.New("读取或处理这张图片超时，可以重试")
 		}

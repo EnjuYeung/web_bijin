@@ -40,7 +40,7 @@ func loadConfig() (config, error) {
 		AuthUser:  strings.TrimSpace(os.Getenv("AUTH_USER")),
 		AuthPass:  strings.TrimSpace(os.Getenv("AUTH_PASS")),
 		ScanEvery: 2 * time.Minute,
-		MaxPixels: 64_000_000,
+		MaxPixels: defaultMaxPixels,
 
 		PhotosHostDir: strings.TrimSpace(os.Getenv("PHOTOS_HOST_DIR")),
 		// Decoding one image keeps a core busy; leave the rest for requests.

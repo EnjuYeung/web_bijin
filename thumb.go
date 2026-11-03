@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/disintegration/imaging"
+	"golang.org/x/sync/semaphore"
 )
 
 type thumbCache struct {
@@ -21,13 +22,17 @@ type thumbCache struct {
 	wallDir string
 	source  imageOpener
 	edge    int
-	// gate bounds how many images are read and decoded at once; scanning,
-	// storage events and missing-thumbnail requests share it.
-	gate chan struct{}
+	// Separate limits bound spooled files and in-memory generation. Scanning,
+	// storage events and missing-thumbnail requests share both limits.
+	spool      *semaphore.Weighted
+	generation *semaphore.Weighted
+	workers    int
 }
 
 func newThumbCache(dir, wallDir string, source imageOpener, workers int) *thumbCache {
-	return &thumbCache{dir: dir, wallDir: wallDir, source: source, edge: 720, gate: make(chan struct{}, max(1, workers))}
+	workers = max(1, workers)
+	return &thumbCache{dir: dir, wallDir: wallDir, source: source, edge: 720,
+		spool: semaphore.NewWeighted(int64(workers)), generation: semaphore.NewWeighted(int64(workers)), workers: workers}
 }
 
 const imageReadTimeout = 45 * time.Second
@@ -37,16 +42,6 @@ type invalidImageError struct{ err error }
 
 func (e *invalidImageError) Error() string { return e.err.Error() }
 func (e *invalidImageError) Unwrap() error { return e.err }
-
-func (t *thumbCache) lock(ctx context.Context) error {
-	select {
-	case t.gate <- struct{}{}:
-		return nil
-	case <-ctx.Done():
-		return ctx.Err()
-	}
-}
-func (t *thumbCache) unlock() { <-t.gate }
 
 func (t *thumbCache) path(p photo) string {
 	return filepath.Join(t.dir, fmt.Sprintf("%d-%s.jpg", p.ID, photoVersion(p)))
@@ -81,20 +76,24 @@ type decoded struct {
 	w, h  int
 }
 
-// Caller holds a generation slot. Spooling to disk keeps remote I/O errors
+// Caller holds a spool slot. Spooling to disk keeps remote I/O errors
 // separate from invalid image bytes without retaining whole originals.
-func (t *thumbCache) prepareVersion(ctx context.Context, object sourceObject, maxPixels int64) (decoded, error) {
+func (t *thumbCache) readVersion(ctx context.Context, object sourceObject) (file *os.File, resultErr error) {
 	ctx, cancel := context.WithTimeout(ctx, imageReadTimeout)
 	defer cancel()
 	if err := os.MkdirAll(t.dir, 0o755); err != nil {
-		return decoded{}, err
+		return nil, err
 	}
 	f, err := os.CreateTemp(t.dir, ".source-*")
 	if err != nil {
-		return decoded{}, err
+		return nil, err
 	}
-	defer os.Remove(f.Name())
-	defer f.Close()
+	defer func() {
+		if resultErr != nil {
+			f.Close()
+			os.Remove(f.Name())
+		}
+	}()
 	var src readSeekCloser
 	var errOpen error
 	if source, ok := t.source.(interface {
@@ -106,31 +105,30 @@ func (t *thumbCache) prepareVersion(ctx context.Context, object sourceObject, ma
 	}
 	err = errOpen
 	if err != nil {
-		return decoded{}, err
+		return nil, err
 	}
 	_, err = io.Copy(f, src)
 	closeErr := src.Close()
 	if err != nil {
-		return decoded{}, err
+		return nil, err
 	}
 	if closeErr != nil {
-		return decoded{}, closeErr
+		return nil, closeErr
 	}
 	if err := ctx.Err(); err != nil {
-		return decoded{}, err
+		return nil, err
 	}
 	if _, err := f.Seek(0, io.SeekStart); err != nil {
+		return nil, err
+	}
+	return f, nil
+}
+
+func (t *thumbCache) decodeVersion(ctx context.Context, f *os.File) (decoded, error) {
+	ctx, cancel := context.WithTimeout(ctx, imageReadTimeout)
+	defer cancel()
+	if err := ctx.Err(); err != nil {
 		return decoded{}, err
-	}
-	cfg, _, err := image.DecodeConfig(f)
-	if err != nil {
-		return decoded{}, classifyDecodeError(err)
-	}
-	if maxPixels <= 0 {
-		maxPixels = 64_000_000
-	}
-	if cfg.Width <= 0 || cfg.Height <= 0 || int64(cfg.Width) > maxPixels/int64(cfg.Height) {
-		return decoded{}, &invalidImageError{errTooManyPixels}
 	}
 	if _, err := f.Seek(0, io.SeekStart); err != nil {
 		return decoded{}, err

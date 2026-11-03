@@ -2,6 +2,8 @@ package main
 
 import (
 	"bytes"
+	"context"
+	"encoding/binary"
 	"encoding/json"
 	"image/color"
 	"io"
@@ -194,5 +196,49 @@ func TestUploadVerificationUsesAuthenticationAndSameOriginJSON(t *testing.T) {
 		if response.StatusCode != scenario.status {
 			t.Fatalf("scenario %+v got %d", scenario, response.StatusCode)
 		}
+	}
+}
+
+func TestS3UploadShowsCachedPixelRejectionAfterOriginalSaved(t *testing.T) {
+	fake := newFakeS3(t, "family")
+	a := newUploadTestApp(t, fake)
+	data := uploadTestJPEG(t, color.RGBA{40, 110, 180, 255})
+	// An oversized SOF is rejected from the header before allocating pixels.
+	sof := bytes.Index(data, []byte{0xff, 0xc0})
+	if sof < 0 {
+		t.Fatal("missing JPEG frame")
+	}
+	binary.BigEndian.PutUint16(data[sof+5:sof+7], 1001)
+	binary.BigEndian.PutUint16(data[sof+7:sof+9], 1000)
+	p := a.prepare(t, "s3-1", "too-large.jpg", len(data))
+	request, err := http.NewRequest(http.MethodPut, p.URL, bytes.NewReader(data))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, value := range p.Headers {
+		request.Header.Set(name, value)
+	}
+	response, err := http.DefaultClient.Do(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	response.Body.Close()
+	if response.StatusCode != http.StatusOK {
+		t.Fatal(response.StatusCode)
+	}
+	// The storage event can finish before the browser confirms the upload.
+	key := a.scanner.sources.match("family", "too-large.jpg")[0].key
+	rejected := a.scanner.photos.SyncKey(context.Background(), key)
+	if !rejected.Invalid || rejected.Err == nil {
+		t.Fatalf("storage processing: %+v", rejected)
+	}
+	code, state, _ := verifyUploadTest(t, a, p.Task.ID)
+	if code != 200 || state != "saved" {
+		t.Fatalf("verification %d %s", code, state)
+	}
+	task := a.wait(t, p.Task.ID)
+	if !task.Saved || task.Retryable || task.Phase != "error" ||
+		!strings.Contains(task.Message, "1001000 像素") || !strings.Contains(task.Message, "1000000 像素上限") {
+		t.Fatalf("wrong upload rejection: %+v", task)
 	}
 }

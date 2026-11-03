@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strings"
 	"syscall"
 	"time"
@@ -67,6 +68,7 @@ func main() {
 	}
 
 	go scanner.loop(ctx)
+	go scanner.photos.recoverRejected(ctx, filepath.Join(cfg.DataDir, "retry-photos.json"))
 
 	errCh := make(chan error, len(servers))
 	for _, srv := range servers {

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"image"
 	"os"
 	"sync"
 )
@@ -15,6 +16,7 @@ type photoResult struct {
 	AlbumUsable     bool
 	WallpapersReady bool
 	Invalid         bool
+	InvalidReason   string
 	Missing         bool
 	Retryable       bool
 	Err             error
@@ -41,7 +43,7 @@ type photoLock struct {
 
 func newPhotoProcessor(st *store, thumbs *thumbCache, sources *sourceSet, maxPixels int64) *photoProcessor {
 	return &photoProcessor{store: st, thumbs: thumbs, sources: sources, maxPixels: maxPixels,
-		workers: cap(thumbs.gate), keys: make(map[string]*photoLock)}
+		workers: thumbs.workers, keys: make(map[string]*photoLock)}
 }
 
 func (p *photoProcessor) lock(ctx context.Context, key string) (func(), error) {
@@ -90,7 +92,7 @@ func (p *photoProcessor) ApplyListed(ctx context.Context, object sourceObject) p
 		return processingFailure(object.Version, err)
 	}
 	defer unlock()
-	return p.process(ctx, object, true)
+	return p.process(ctx, object, true, false)
 }
 
 // SyncKey resolves the current source state inside the photo lock, including
@@ -121,7 +123,7 @@ func (p *photoProcessor) sync(ctx context.Context, key string, wallpapers bool) 
 	if err != nil {
 		return processingFailure("", err)
 	}
-	return p.process(ctx, object, wallpapers)
+	return p.process(ctx, object, wallpapers, false)
 }
 
 func (p *photoProcessor) validate(ctx context.Context, object sourceObject) error {
@@ -137,7 +139,7 @@ func (p *photoProcessor) validate(ctx context.Context, object sourceObject) erro
 
 // process holds the photo lock. Thumbnail-only requests follow the same
 // validation and publication rules but leave wallpaper work to scans/events.
-func (p *photoProcessor) process(ctx context.Context, object sourceObject, wallpapers bool) photoResult {
+func (p *photoProcessor) process(ctx context.Context, object sourceObject, wallpapers bool, retryInvalid bool) photoResult {
 	result := photoResult{Version: object.Version}
 	fail := func(err error) photoResult {
 		result.Err, result.Retryable = err, true
@@ -148,8 +150,9 @@ func (p *photoProcessor) process(ctx context.Context, object sourceObject, wallp
 		return fail(err)
 	}
 	same := ok && existing.SourceVersion == object.Version
-	if same && existing.Broken {
+	if same && existing.Broken && !retryInvalid {
 		result.Invalid = true
+		result.InvalidReason = existing.InvalidReason
 		return result
 	}
 	cached := same && existing.Width > 0 && existing.Height > 0 && p.thumbs.exists(existing)
@@ -163,14 +166,44 @@ func (p *photoProcessor) process(ctx context.Context, object sourceObject, wallp
 			return result
 		}
 	}
-	if err := p.thumbs.lock(ctx); err != nil {
+	if err := p.thumbs.spool.Acquire(ctx, 1); err != nil {
 		return fail(err)
 	}
-	defer p.thumbs.unlock()
+	defer p.thumbs.spool.Release(1)
 	if err := p.validate(ctx, object); err != nil {
 		return fail(err)
 	}
-	d, processErr := p.thumbs.prepareVersion(ctx, object, p.maxPixels)
+	f, err := p.thumbs.readVersion(ctx, object)
+	if err != nil {
+		return fail(err)
+	}
+	defer os.Remove(f.Name())
+	defer f.Close()
+
+	var d decoded
+	info, format, headerErr := image.DecodeConfig(f)
+	processErr := headerErr
+	if headerErr != nil {
+		processErr = classifyDecodeError(headerErr)
+	} else {
+		exclusive, budgetErr := imageBudget(info, format, p.maxPixels)
+		if budgetErr != nil {
+			processErr = &invalidImageError{budgetErr}
+		} else {
+			slots := int64(1)
+			if exclusive {
+				slots = int64(p.workers)
+			}
+			if err := p.thumbs.generation.Acquire(ctx, slots); err != nil {
+				return fail(err)
+			}
+			defer p.thumbs.generation.Release(slots)
+			if err := p.validate(ctx, object); err != nil {
+				return fail(err)
+			}
+			d, processErr = p.thumbs.decodeVersion(ctx, f)
+		}
+	}
 	// Check successful reads and confirmed decode failures alike: obsolete
 	// bytes must not replace a usable photo or mark the new version as broken.
 	if err := p.validate(ctx, object); err != nil {
@@ -184,6 +217,11 @@ func (p *photoProcessor) process(ctx context.Context, object sourceObject, wallp
 			return fail(processErr)
 		}
 		target.Broken = true
+		var pixelErr *imagePixelLimitError
+		if errors.As(processErr, &pixelErr) {
+			target.InvalidReason = pixelErr.message()
+			result.InvalidReason = target.InvalidReason
+		}
 		id, err := p.store.upsert(target)
 		if err != nil {
 			return fail(err)

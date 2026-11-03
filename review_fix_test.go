@@ -158,7 +158,7 @@ func TestFixConcurrentMissingThumbnailAndCancelledWait(t *testing.T) {
 	if _, err := st.upsert(p); err != nil {
 		t.Fatal(err)
 	}
-	if err := th.lock(context.Background()); err != nil {
+	if err := th.spool.Acquire(context.Background(), 1); err != nil {
 		t.Fatal(err)
 	}
 	ctx, cancel := context.WithCancel(context.Background())
@@ -177,7 +177,7 @@ func TestFixConcurrentMissingThumbnailAndCancelledWait(t *testing.T) {
 			}
 		}()
 	}
-	th.unlock()
+	th.spool.Release(1)
 	wg.Wait()
 	if src.opens.Load() != 1 {
 		t.Fatalf("source opens = %d", src.opens.Load())
@@ -368,9 +368,9 @@ func TestFixS3DefaultDeadline(t *testing.T) {
 	if err == nil || time.Since(start) > imageReadTimeout+3*time.Second {
 		t.Fatalf("unbounded body read: %v after %s", err, time.Since(start))
 	}
-	if err := th.lock(context.Background()); err != nil {
+	if err := th.spool.Acquire(context.Background(), 1); err != nil {
 		t.Fatal(err)
 	}
-	th.unlock()
-	t.Logf("body failed after %s; generation gate released", time.Since(start))
+	th.spool.Release(1)
+	t.Logf("body failed after %s; spool slot released", time.Since(start))
 }

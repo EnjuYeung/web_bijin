@@ -249,5 +249,3 @@ func hiddenRel(rel string) bool {
 	}
 	return false
 }
-
-var errTooManyPixels = errors.New("image too many pixels")
